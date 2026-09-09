@@ -302,6 +302,16 @@ class RecordStorageTest(WorkspaceCase):
         self.assertEqual(second["record_id"], first["record_id"])
         self.assertEqual(len(list((self.records / "carry").glob("*.md"))), 1)
 
+    def test_a_replayed_event_reports_the_records_current_state(self):
+        record = store.write_record(self.workspace, "Cedar delivery", "October 15, 2026.",
+                                    event_id="evt-1")
+        store.set_state(self.workspace, record["record_id"], "accepted", 1)
+        replayed = store.write_record(self.workspace, "Cedar delivery", "October 15, 2026.",
+                                      event_id="evt-1")
+        self.assertTrue(replayed["duplicate"])
+        self.assertEqual(replayed["state"], "accepted")
+        self.assertEqual(replayed["revision"], 1)
+
     def test_a_distinct_event_with_identical_wording_is_a_distinct_record(self):
         first = store.write_record(self.workspace, "Cedar delivery", "October 15, 2026.",
                                    event_id="evt-1")
