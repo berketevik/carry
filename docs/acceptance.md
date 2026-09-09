@@ -27,6 +27,35 @@ the rest needs the capture adapters (C04) and the reviewed lifecycle (C05).
 | 7 | Interrupt indexing: the previous usable index survives and the state is explicitly stale or failed | met | `RebuildSafetyTest.test_failed_build_keeps_the_published_index_byte_for_byte`, `test_interrupted_build_keeps_serving_and_reports_stale`, `test_a_concurrent_build_is_refused_rather_than_interleaved` |
 | 8 | Pause capture: no new prompt persistence from that client | not started | Needs C04; status currently reports capture as `not_configured` |
 
+## Known gap: a record correcting an imported note
+
+Retrieval ranks by relevance. The current-version pointer hides superseded
+*revisions of the same record*, but nothing tells Carry that a record
+contradicts a claim in an imported file. In a mixed corpus, an accepted
+correction can therefore be returned below the older imported statement:
+
+```text
+records:  Cedar pilot delivery is October 22, 2026.   (rec_..., rev 2, accepted)
+imported: Cedar pilot delivery is October 15, 2026.   (Cedar Pilot Plan.md)
+query:    "Cedar pilot delivery date"  ->  imported passage ranks first
+```
+
+The specification's scenarios 3 and 4 pass because the decision there lives only
+in Carry records, which is why the suite did not catch this. The product case is
+unresolved and needs a policy decision before C05:
+
+1. Weight state and recency in the fusion so an accepted record outranks an
+   imported passage. Blunt: it also wins when the imported note is genuinely
+   more relevant.
+2. Let a correction name what it corrects (`carry_corrects: <source_id>:<path>`
+   or a record id), then demote or annotate that passage at retrieval time. This
+   matches the specification's requirement that a correction proposal carries a
+   target, and is the precise answer.
+3. Change no ranking and report the conflict in diagnostics, so the client model
+   sees that an accepted record may supersede an imported passage.
+
+Option 3 is the honest stopgap and option 2 the real fix. Neither is implemented.
+
 ## Deliberate non-claims
 
 - Retrieval quality is not evaluated here. The suite checks contracts and

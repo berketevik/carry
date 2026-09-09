@@ -125,7 +125,18 @@ def write_record(workspace, title, content, source_refs=(), event_id="", state="
     source = workspace.writable_source(source_id)
     ledger = _load_ledger(workspace)
     if event_id and event_id in ledger:
+        # Report what the record is now, not what it was when the event first
+        # arrived: it may have been accepted or corrected since.
         existing = ledger[event_id]
+        try:
+            path, frontmatter, holder = find_record(workspace, existing["record_id"])
+            existing = dict(existing, revision=int(frontmatter.get("carry_revision", 1) or 1),
+                            state=str(frontmatter.get("carry_state") or existing.get("state")),
+                            source_id=holder.source_id,
+                            path=str(path.relative_to(
+                                Path(holder.root).expanduser().resolve())))
+        except SourceError:
+            existing = dict(existing, state="missing")
         return dict(existing, duplicate=True)
 
     masked_content, categories = mask(content or "")
