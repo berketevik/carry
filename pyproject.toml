@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "carry"
+version = "0.1.0.dev0"
+description = "Portable local memory for coding agents: Markdown sources, a derived index and an MCP interface."
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+# Real semantic retrieval quality. Without these the core still runs and reports
+# the degradation instead of pretending the results are semantic.
+embed = ["numpy>=1.26,<3"]
+yaml = ["PyYAML>=6,<7"]
+rerank = ["sentence-transformers>=5,<6", "torch>=2,<3"]
+
+[project.scripts]
+carry = "carry.cli:main"
+carry-mcp = "carry.mcp_server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+carry = ["py.typed"]

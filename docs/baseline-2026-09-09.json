@@ -1,0 +1,73 @@
+{
+  "python": "3.13.12",
+  "measurements": [
+    {
+      "provider": "hashing",
+      "corpus_files": 8,
+      "chunks": 27,
+      "semantic": false,
+      "build_seconds": 0.012,
+      "incremental_rebuild_seconds": 0.004,
+      "cold_query_ms": {
+        "p50": 2,
+        "p95": 3,
+        "samples": [
+          3,
+          2,
+          2,
+          2
+        ]
+      },
+      "cold_process_wall_ms": {
+        "p50": 89,
+        "p95": 90,
+        "samples": [
+          89,
+          84,
+          86,
+          90
+        ]
+      },
+      "warm_query_ms": {
+        "p50": 1,
+        "p95": 1,
+        "mean": 1.1,
+        "n": 20
+      }
+    },
+    {
+      "provider": "ollama",
+      "corpus_files": 8,
+      "chunks": 27,
+      "semantic": true,
+      "build_seconds": 0.387,
+      "incremental_rebuild_seconds": 0.005,
+      "cold_query_ms": {
+        "p50": 32,
+        "p95": 40,
+        "samples": [
+          28,
+          40,
+          32,
+          31
+        ]
+      },
+      "cold_process_wall_ms": {
+        "p50": 128,
+        "p95": 136,
+        "samples": [
+          128,
+          136,
+          117,
+          119
+        ]
+      },
+      "warm_query_ms": {
+        "p50": 17,
+        "p95": 23,
+        "mean": 17.3,
+        "n": 20
+      }
+    }
+  ]
+}

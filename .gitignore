@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+build/
+dist/
+*.egg-info/
+# Local workspaces hold user Markdown and a derived index; never commit them.
+workspaces/
+*.db
+*.db.building
+*.db.lock
+*.status.json
