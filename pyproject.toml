@@ -24,4 +24,6 @@ carry-mcp = "carry.mcp_server:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-carry = ["py.typed"]
+# The synthetic corpus ships with the package: the demo and the acceptance run
+# must work from an installed wheel, with no network fetch.
+carry = ["py.typed", "fixtures/*/*.md", "fixtures/*/*/*.md"]
