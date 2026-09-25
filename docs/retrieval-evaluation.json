@@ -1,0 +1,2055 @@
+{
+  "model": "embeddinggemma",
+  "reranker": "cross",
+  "threshold": 0.45,
+  "scope": "synthetic evidence retrieval, not generated answer accuracy",
+  "metrics": {
+    "development": {
+      "positive": 10,
+      "hit1": 9,
+      "hit3": 9,
+      "negative": 2,
+      "abstained": 2,
+      "median_ms": 1669.5
+    },
+    "held_out": {
+      "positive": 12,
+      "hit1": 11,
+      "hit3": 11,
+      "negative": 6,
+      "abstained": 5,
+      "median_ms": 476.0
+    }
+  },
+  "results": [
+    {
+      "split": "development",
+      "kind": "exact_en",
+      "query": "When is the Orion release scheduled?",
+      "expected": "release.md",
+      "returned": [
+        "release.md",
+        "decoy.md"
+      ],
+      "hit1": true,
+      "hit3": true,
+      "abstained": false,
+      "scores": [
+        0.7326499819755554,
+        0.6192333102226257
+      ],
+      "rerank_scores": [
+        7.259306907653809,
+        0.6113750338554382
+      ],
+      "ms": 106899,
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [
+          "when"
+        ],
+        "semantic": true,
+        "answerability": "not_verified",
+        "relevance_gate": "cross_encoder_raw_logit",
+        "mode": "hybrid",
+        "reranker": "cross",
+        "relevance_threshold": -4.0,
+        "rejected_candidates": 7,
+        "github_sync": {},
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 16,
+          "corpus_files": 16,
+          "built_at": "1789382889.65243",
+          "last_build": {
+            "status": "built",
+            "at": 1789382889.657973,
+            "changed_files": 16,
+            "removed_files": 0,
+            "embedded_chunks": 16,
+            "reused_chunks": 0,
+            "files": 16,
+            "chunks": 16,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 3,
+          "max_chars": 7000,
+          "max_per_document": 1
+        },
+        "elapsed_ms": 106653,
+        "returned_chars": 307,
+        "candidates": 2,
+        "scoped_to": "all"
+      }
+    },
+    {
+      "split": "development",
+      "kind": "exact_tr",
+      "query": "Tedarikçi faturalarının ödeme onayını kim verir?",
+      "expected": "invoice.md",
+      "returned": [
+        "invoice.md"
+      ],
+      "hit1": true,
+      "hit3": true,
+      "abstained": false,
+      "scores": [
+        0.639880895614624
+      ],
+      "rerank_scores": [
+        6.19679594039917
+      ],
+      "ms": 51541,
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [
+          "faturalarının",
+          "kim"
+        ],
+        "semantic": true,
+        "answerability": "not_verified",
+        "relevance_gate": "cross_encoder_raw_logit",
+        "mode": "hybrid",
+        "reranker": "cross",
+        "relevance_threshold": -4.0,
+        "rejected_candidates": 8,
+        "github_sync": {},
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 16,
+          "corpus_files": 16,
+          "built_at": "1789382889.65243",
+          "last_build": {
+            "status": "built",
+            "at": 1789382889.657973,
+            "changed_files": 16,
+            "removed_files": 0,
+            "embedded_chunks": 16,
+            "reused_chunks": 0,
+            "files": 16,
+            "chunks": 16,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 3,
+          "max_chars": 7000,
+          "max_per_document": 1
+        },
+        "elapsed_ms": 51445,
+        "returned_chars": 122,
+        "candidates": 1,
+        "scoped_to": "all"
+      }
+    },
+    {
+      "split": "development",
+      "kind": "paraphrase_tr",
+      "query": "Ofise gitmeden hangi günlerde işimi yapabilirim?",
+      "expected": "remote.md",
+      "returned": [
+        "remote.md"
+      ],
+      "hit1": true,
+      "hit3": true,
+      "abstained": false,
+      "scores": [
+        0.6489660143852234
+      ],
+      "rerank_scores": [
+        -2.700610637664795
+      ],
+      "ms": 3793,
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [
+          "gitmeden",
+          "hangi",
+          "günlerde",
+          "işimi",
+          "yapabilirim"
+        ],
+        "semantic": true,
+        "answerability": "not_verified",
+        "relevance_gate": "cross_encoder_raw_logit",
+        "mode": "hybrid",
+        "reranker": "cross",
+        "relevance_threshold": -4.0,
+        "rejected_candidates": 8,
+        "github_sync": {},
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 16,
+          "corpus_files": 16,
+          "built_at": "1789382889.65243",
+          "last_build": {
+            "status": "built",
+            "at": 1789382889.657973,
+            "changed_files": 16,
+            "removed_files": 0,
+            "embedded_chunks": 16,
+            "reused_chunks": 0,
+            "files": 16,
+            "chunks": 16,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 3,
+          "max_chars": 7000,
+          "max_per_document": 1
+        },
+        "elapsed_ms": 3793,
+        "returned_chars": 115,
+        "candidates": 1,
+        "scoped_to": "all"
+      }
+    },
+    {
+      "split": "development",
+      "kind": "paraphrase_tr",
+      "query": "Müşteriler alışverişi neden bitiremiyor?",
+      "expected": "checkout.md",
+      "returned": [],
+      "hit1": false,
+      "hit3": false,
+      "abstained": true,
+      "scores": [],
+      "rerank_scores": [],
+      "ms": 6671,
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [
+          "müşteriler",
+          "alışverişi",
+          "neden",
+          "bitiremiyor"
+        ],
+        "semantic": true,
+        "answerability": "not_verified",
+        "relevance_gate": "cross_encoder_raw_logit",
+        "mode": "vector",
+        "reranker": "cross",
+        "relevance_threshold": -4.0,
+        "rejected_candidates": 9,
+        "github_sync": {},
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 16,
+          "corpus_files": 16,
+          "built_at": "1789382889.65243",
+          "last_build": {
+            "status": "built",
+            "at": 1789382889.657973,
+            "changed_files": 16,
+            "removed_files": 0,
+            "embedded_chunks": 16,
+            "reused_chunks": 0,
+            "files": 16,
+            "chunks": 16,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 3,
+          "max_chars": 7000,
+          "max_per_document": 1
+        },
+        "elapsed_ms": 6667,
+        "returned_chars": 0,
+        "candidates": 0,
+        "scoped_to": "all"
+      }
+    },
+    {
+      "split": "development",
+      "kind": "cross_en_tr",
+      "query": "Who approves vendor invoice payments?",
+      "expected": "invoice.md",
+      "returned": [
+        "invoice.md"
+      ],
+      "hit1": true,
+      "hit3": true,
+      "abstained": false,
+      "scores": [
+        0.4945843517780304
+      ],
+      "rerank_scores": [
+        -1.0050864219665527
+      ],
+      "ms": 2591,
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [
+          "who",
+          "approves",
+          "vendor",
+          "payments"
+        ],
+        "semantic": true,
+        "answerability": "not_verified",
+        "relevance_gate": "cross_encoder_raw_logit",
+        "mode": "hybrid",
+        "reranker": "cross",
+        "relevance_threshold": -4.0,
+        "rejected_candidates": 8,
+        "github_sync": {},
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 16,
+          "corpus_files": 16,
+          "built_at": "1789382889.65243",
+          "last_build": {
+            "status": "built",
+            "at": 1789382889.657973,
+            "changed_files": 16,
+            "removed_files": 0,
+            "embedded_chunks": 16,
+            "reused_chunks": 0,
+            "files": 16,
+            "chunks": 16,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 3,
+          "max_chars": 7000,
+          "max_per_document": 1
+        },
+        "elapsed_ms": 2591,
+        "returned_chars": 122,
+        "candidates": 1,
+        "scoped_to": "all"
+      }
+    },
+    {
+      "split": "development",
+      "kind": "cross_tr_en",
+      "query": "Satın aldığım ürünü geri vermek için kaç günüm var?",
+      "expected": "refund.md",
+      "returned": [
+        "refund.md"
+      ],
+      "hit1": true,
+      "hit3": true,
+      "abstained": false,
+      "scores": [
+        0.5534055829048157
+      ],
+      "rerank_scores": [
+        2.232656955718994
+      ],
+      "ms": 2333,
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [
+          "satın",
+          "aldığım",
+          "ürünü",
+          "geri",
+          "vermek",
+          "için",
+          "kaç",
+          "günüm",
+          "var"
+        ],
+        "semantic": true,
+        "answerability": "not_verified",
+        "relevance_gate": "cross_encoder_raw_logit",
+        "mode": "vector",
+        "reranker": "cross",
+        "relevance_threshold": -4.0,
+        "rejected_candidates": 8,
+        "github_sync": {},
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 16,
+          "corpus_files": 16,
+          "built_at": "1789382889.65243",
+          "last_build": {
+            "status": "built",
+            "at": 1789382889.657973,
+            "changed_files": 16,
+            "removed_files": 0,
+            "embedded_chunks": 16,
+            "reused_chunks": 0,
+            "files": 16,
+            "chunks": 16,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 3,
+          "max_chars": 7000,
+          "max_per_document": 1
+        },
+        "elapsed_ms": 2332,
+        "returned_chars": 144,
+        "candidates": 1,
+        "scoped_to": "all"
+      }
+    },
+    {
+      "split": "development",
+      "kind": "cross_tr_en",
+      "query": "Her sipariş için tek kayıt hangi tabloda tutuluyor?",
+      "expected": "warehouse.md",
+      "returned": [
+        "warehouse.md"
+      ],
+      "hit1": true,
+      "hit3": true,
+      "abstained": false,
+      "scores": [
+        0.5378419160842896
+      ],
+      "rerank_scores": [
+        -1.0398924350738525
+      ],
+      "ms": 384,
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [
+          "sipariş",
+          "için",
+          "tek",
+          "kayıt",
+          "hangi",
+          "tabloda",
+          "tutuluyor"
+        ],
+        "semantic": true,
+        "answerability": "not_verified",
+        "relevance_gate": "cross_encoder_raw_logit",
+        "mode": "hybrid",
+        "reranker": "cross",
+        "relevance_threshold": -4.0,
+        "rejected_candidates": 8,
+        "github_sync": {},
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 16,
+          "corpus_files": 16,
+          "built_at": "1789382889.65243",
+          "last_build": {
+            "status": "built",
+            "at": 1789382889.657973,
+            "changed_files": 16,
+            "removed_files": 0,
+            "embedded_chunks": 16,
+            "reused_chunks": 0,
+            "files": 16,
+            "chunks": 16,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 3,
+          "max_chars": 7000,
+          "max_per_document": 1
+        },
+        "elapsed_ms": 384,
+        "returned_chars": 157,
+        "candidates": 1,
+        "scoped_to": "all"
+      }
+    },
+    {
+      "split": "development",
+      "kind": "cross_tr_en",
+      "query": "Uygulama günlükleri ne kadar süre saklanıyor?",
+      "expected": "retention.md",
+      "returned": [
+        "retention.md"
+      ],
+      "hit1": true,
+      "hit3": true,
+      "abstained": false,
+      "scores": [
+        0.4939201772212982
+      ],
+      "rerank_scores": [
+        -0.7465757131576538
+      ],
+      "ms": 331,
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [
+          "uygulama",
+          "günlükleri",
+          "kadar",
+          "saklanıyor"
+        ],
+        "semantic": true,
+        "answerability": "not_verified",
+        "relevance_gate": "cross_encoder_raw_logit",
+        "mode": "hybrid",
+        "reranker": "cross",
+        "relevance_threshold": -4.0,
+        "rejected_candidates": 8,
+        "github_sync": {},
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 16,
+          "corpus_files": 16,
+          "built_at": "1789382889.65243",
+          "last_build": {
+            "status": "built",
+            "at": 1789382889.657973,
+            "changed_files": 16,
+            "removed_files": 0,
+            "embedded_chunks": 16,
+            "reused_chunks": 0,
+            "files": 16,
+            "chunks": 16,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 3,
+          "max_chars": 7000,
+          "max_per_document": 1
+        },
+        "elapsed_ms": 331,
+        "returned_chars": 160,
+        "candidates": 1,
+        "scoped_to": "all"
+      }
+    },
+    {
+      "split": "development",
+      "kind": "paraphrase_en",
+      "query": "Why did the pilot launch slip?",
+      "expected": "release.md",
+      "returned": [
+        "release.md"
+      ],
+      "hit1": true,
+      "hit3": true,
+      "abstained": false,
+      "scores": [
+        0.2862089276313782
+      ],
+      "rerank_scores": [
+        -3.158970594406128
+      ],
+      "ms": 1006,
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [
+          "why",
+          "did",
+          "launch",
+          "slip"
+        ],
+        "semantic": true,
+        "answerability": "not_verified",
+        "relevance_gate": "cross_encoder_raw_logit",
+        "mode": "hybrid",
+        "reranker": "cross",
+        "relevance_threshold": -4.0,
+        "rejected_candidates": 8,
+        "github_sync": {},
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 16,
+          "corpus_files": 16,
+          "built_at": "1789382889.65243",
+          "last_build": {
+            "status": "built",
+            "at": 1789382889.657973,
+            "changed_files": 16,
+            "removed_files": 0,
+            "embedded_chunks": 16,
+            "reused_chunks": 0,
+            "files": 16,
+            "chunks": 16,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 3,
+          "max_chars": 7000,
+          "max_per_document": 1
+        },
+        "elapsed_ms": 1006,
+        "returned_chars": 164,
+        "candidates": 1,
+        "scoped_to": "all"
+      }
+    },
+    {
+      "split": "development",
+      "kind": "cross_en_tr",
+      "query": "Who replenishes the office coffee beans?",
+      "expected": "coffee.md",
+      "returned": [
+        "coffee.md"
+      ],
+      "hit1": true,
+      "hit3": true,
+      "abstained": false,
+      "scores": [
+        0.5622973442077637
+      ],
+      "rerank_scores": [
+        -2.1199607849121094
+      ],
+      "ms": 804,
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [
+          "who",
+          "replenishes",
+          "office",
+          "beans"
+        ],
+        "semantic": true,
+        "answerability": "not_verified",
+        "relevance_gate": "cross_encoder_raw_logit",
+        "mode": "hybrid",
+        "reranker": "cross",
+        "relevance_threshold": -4.0,
+        "rejected_candidates": 8,
+        "github_sync": {},
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 16,
+          "corpus_files": 16,
+          "built_at": "1789382889.65243",
+          "last_build": {
+            "status": "built",
+            "at": 1789382889.657973,
+            "changed_files": 16,
+            "removed_files": 0,
+            "embedded_chunks": 16,
+            "reused_chunks": 0,
+            "files": 16,
+            "chunks": 16,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 3,
+          "max_chars": 7000,
+          "max_per_document": 1
+        },
+        "elapsed_ms": 802,
+        "returned_chars": 102,
+        "candidates": 1,
+        "scoped_to": "all"
+      }
+    },
+    {
+      "split": "development",
+      "kind": "missing",
+      "query": "What is the annual salary of the Orion project manager?",
+      "expected": null,
+      "returned": [],
+      "hit1": null,
+      "hit3": null,
+      "abstained": true,
+      "scores": [],
+      "rerank_scores": [],
+      "ms": 943,
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [
+          "what",
+          "annual",
+          "salary",
+          "project"
+        ],
+        "semantic": true,
+        "answerability": "not_verified",
+        "relevance_gate": "cross_encoder_raw_logit",
+        "mode": "hybrid",
+        "reranker": "cross",
+        "relevance_threshold": -4.0,
+        "rejected_candidates": 9,
+        "github_sync": {},
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 16,
+          "corpus_files": 16,
+          "built_at": "1789382889.65243",
+          "last_build": {
+            "status": "built",
+            "at": 1789382889.657973,
+            "changed_files": 16,
+            "removed_files": 0,
+            "embedded_chunks": 16,
+            "reused_chunks": 0,
+            "files": 16,
+            "chunks": 16,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 3,
+          "max_chars": 7000,
+          "max_per_document": 1
+        },
+        "elapsed_ms": 943,
+        "returned_chars": 0,
+        "candidates": 0,
+        "scoped_to": "all"
+      }
+    },
+    {
+      "split": "development",
+      "kind": "missing",
+      "query": "Şirketin Mars kolonisi için roket yakıtı bütçesi kaç dolar?",
+      "expected": null,
+      "returned": [],
+      "hit1": null,
+      "hit3": null,
+      "abstained": true,
+      "scores": [],
+      "rerank_scores": [],
+      "ms": 528,
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [
+          "şirketin",
+          "mars",
+          "kolonisi",
+          "için",
+          "roket",
+          "yakıtı",
+          "bütçesi",
+          "kaç",
+          "dolar"
+        ],
+        "semantic": true,
+        "answerability": "not_verified",
+        "relevance_gate": "cross_encoder_raw_logit",
+        "mode": "vector",
+        "reranker": "cross",
+        "relevance_threshold": -4.0,
+        "rejected_candidates": 9,
+        "github_sync": {},
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 16,
+          "corpus_files": 16,
+          "built_at": "1789382889.65243",
+          "last_build": {
+            "status": "built",
+            "at": 1789382889.657973,
+            "changed_files": 16,
+            "removed_files": 0,
+            "embedded_chunks": 16,
+            "reused_chunks": 0,
+            "files": 16,
+            "chunks": 16,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 3,
+          "max_chars": 7000,
+          "max_per_document": 1
+        },
+        "elapsed_ms": 528,
+        "returned_chars": 0,
+        "candidates": 0,
+        "scoped_to": "all"
+      }
+    },
+    {
+      "split": "held_out",
+      "kind": "cross_tr_en",
+      "query": "Stok bilgisi önbellekte kaç saniye kalıyor?",
+      "expected": "cache.md",
+      "returned": [
+        "cache.md"
+      ],
+      "hit1": true,
+      "hit3": true,
+      "abstained": false,
+      "scores": [
+        0.5086358785629272
+      ],
+      "rerank_scores": [
+        0.5801421999931335
+      ],
+      "ms": 310,
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [
+          "stok",
+          "bilgisi",
+          "önbellekte",
+          "kaç",
+          "saniye",
+          "kalıyor"
+        ],
+        "semantic": true,
+        "answerability": "not_verified",
+        "relevance_gate": "cross_encoder_raw_logit",
+        "mode": "vector",
+        "reranker": "cross",
+        "relevance_threshold": -4.0,
+        "rejected_candidates": 8,
+        "github_sync": {},
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 16,
+          "corpus_files": 16,
+          "built_at": "1789382889.65243",
+          "last_build": {
+            "status": "built",
+            "at": 1789382889.657973,
+            "changed_files": 16,
+            "removed_files": 0,
+            "embedded_chunks": 16,
+            "reused_chunks": 0,
+            "files": 16,
+            "chunks": 16,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 3,
+          "max_chars": 7000,
+          "max_per_document": 1
+        },
+        "elapsed_ms": 310,
+        "returned_chars": 180,
+        "candidates": 1,
+        "scoped_to": "all"
+      }
+    },
+    {
+      "split": "held_out",
+      "kind": "cross_tr_en",
+      "query": "Ürün fiyatı değişirse önbelleğe ne oluyor?",
+      "expected": "cache.md",
+      "returned": [],
+      "hit1": false,
+      "hit3": false,
+      "abstained": true,
+      "scores": [],
+      "rerank_scores": [],
+      "ms": 1995,
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [
+          "ürün",
+          "fiyatı",
+          "değişirse",
+          "önbelleğe",
+          "oluyor"
+        ],
+        "semantic": true,
+        "answerability": "not_verified",
+        "relevance_gate": "cross_encoder_raw_logit",
+        "mode": "vector",
+        "reranker": "cross",
+        "relevance_threshold": -4.0,
+        "rejected_candidates": 9,
+        "github_sync": {},
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 16,
+          "corpus_files": 16,
+          "built_at": "1789382889.65243",
+          "last_build": {
+            "status": "built",
+            "at": 1789382889.657973,
+            "changed_files": 16,
+            "removed_files": 0,
+            "embedded_chunks": 16,
+            "reused_chunks": 0,
+            "files": 16,
+            "chunks": 16,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 3,
+          "max_chars": 7000,
+          "max_per_document": 1
+        },
+        "elapsed_ms": 1994,
+        "returned_chars": 0,
+        "candidates": 0,
+        "scoped_to": "all"
+      }
+    },
+    {
+      "split": "held_out",
+      "kind": "cross_tr_en",
+      "query": "Veri aktarımı başarısız olunca tüm geçmişi yeniden yüklemeli miyim?",
+      "expected": "incident.md",
+      "returned": [
+        "incident.md"
+      ],
+      "hit1": true,
+      "hit3": true,
+      "abstained": false,
+      "scores": [
+        0.40653854608535767
+      ],
+      "rerank_scores": [
+        -2.0632433891296387
+      ],
+      "ms": 3239,
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [
+          "veri",
+          "aktarımı",
+          "başarısız",
+          "olunca",
+          "tüm",
+          "geçmişi",
+          "yeniden",
+          "yüklemeli",
+          "miyim"
+        ],
+        "semantic": true,
+        "answerability": "not_verified",
+        "relevance_gate": "cross_encoder_raw_logit",
+        "mode": "vector",
+        "reranker": "cross",
+        "relevance_threshold": -4.0,
+        "rejected_candidates": 8,
+        "github_sync": {},
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 16,
+          "corpus_files": 16,
+          "built_at": "1789382889.65243",
+          "last_build": {
+            "status": "built",
+            "at": 1789382889.657973,
+            "changed_files": 16,
+            "removed_files": 0,
+            "embedded_chunks": 16,
+            "reused_chunks": 0,
+            "files": 16,
+            "chunks": 16,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 3,
+          "max_chars": 7000,
+          "max_per_document": 1
+        },
+        "elapsed_ms": 3235,
+        "returned_chars": 187,
+        "candidates": 1,
+        "scoped_to": "all"
+      }
+    },
+    {
+      "split": "held_out",
+      "kind": "cross_tr_en",
+      "query": "Üretim ortamı erişim bilgileri kaç günde bir yenilenir?",
+      "expected": "credentials.md",
+      "returned": [
+        "credentials.md"
+      ],
+      "hit1": true,
+      "hit3": true,
+      "abstained": false,
+      "scores": [
+        0.4548628330230713
+      ],
+      "rerank_scores": [
+        -1.650355577468872
+      ],
+      "ms": 2271,
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [
+          "üretim",
+          "ortamı",
+          "erişim",
+          "bilgileri",
+          "kaç",
+          "günde",
+          "bir",
+          "yenilenir"
+        ],
+        "semantic": true,
+        "answerability": "not_verified",
+        "relevance_gate": "cross_encoder_raw_logit",
+        "mode": "vector",
+        "reranker": "cross",
+        "relevance_threshold": -4.0,
+        "rejected_candidates": 8,
+        "github_sync": {},
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 16,
+          "corpus_files": 16,
+          "built_at": "1789382889.65243",
+          "last_build": {
+            "status": "built",
+            "at": 1789382889.657973,
+            "changed_files": 16,
+            "removed_files": 0,
+            "embedded_chunks": 16,
+            "reused_chunks": 0,
+            "files": 16,
+            "chunks": 16,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 3,
+          "max_chars": 7000,
+          "max_per_document": 1
+        },
+        "elapsed_ms": 2271,
+        "returned_chars": 179,
+        "candidates": 1,
+        "scoped_to": "all"
+      }
+    },
+    {
+      "split": "held_out",
+      "kind": "cross_en_tr",
+      "query": "How far in advance do I need to request annual leave?",
+      "expected": "leave.md",
+      "returned": [
+        "leave.md"
+      ],
+      "hit1": true,
+      "hit3": true,
+      "abstained": false,
+      "scores": [
+        0.5756544470787048
+      ],
+      "rerank_scores": [
+        1.9833736419677734
+      ],
+      "ms": 1079,
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [
+          "how",
+          "far",
+          "advance",
+          "need",
+          "request",
+          "annual"
+        ],
+        "semantic": true,
+        "answerability": "not_verified",
+        "relevance_gate": "cross_encoder_raw_logit",
+        "mode": "hybrid",
+        "reranker": "cross",
+        "relevance_threshold": -4.0,
+        "rejected_candidates": 8,
+        "github_sync": {},
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 16,
+          "corpus_files": 16,
+          "built_at": "1789382889.65243",
+          "last_build": {
+            "status": "built",
+            "at": 1789382889.657973,
+            "changed_files": 16,
+            "removed_files": 0,
+            "embedded_chunks": 16,
+            "reused_chunks": 0,
+            "files": 16,
+            "chunks": 16,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 3,
+          "max_chars": 7000,
+          "max_per_document": 1
+        },
+        "elapsed_ms": 1079,
+        "returned_chars": 150,
+        "candidates": 1,
+        "scoped_to": "all"
+      }
+    },
+    {
+      "split": "held_out",
+      "kind": "cross_en_tr",
+      "query": "When should I place an express order for same-day dispatch?",
+      "expected": "shipping.md",
+      "returned": [
+        "shipping.md"
+      ],
+      "hit1": true,
+      "hit3": true,
+      "abstained": false,
+      "scores": [
+        0.5194324254989624
+      ],
+      "rerank_scores": [
+        0.5534815788269043
+      ],
+      "ms": 935,
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [
+          "when",
+          "should",
+          "place",
+          "express",
+          "same",
+          "day",
+          "dispatch"
+        ],
+        "semantic": true,
+        "answerability": "not_verified",
+        "relevance_gate": "cross_encoder_raw_logit",
+        "mode": "hybrid",
+        "reranker": "cross",
+        "relevance_threshold": -4.0,
+        "rejected_candidates": 8,
+        "github_sync": {},
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 16,
+          "corpus_files": 16,
+          "built_at": "1789382889.65243",
+          "last_build": {
+            "status": "built",
+            "at": 1789382889.657973,
+            "changed_files": 16,
+            "removed_files": 0,
+            "embedded_chunks": 16,
+            "reused_chunks": 0,
+            "files": 16,
+            "chunks": 16,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 3,
+          "max_chars": 7000,
+          "max_per_document": 1
+        },
+        "elapsed_ms": 935,
+        "returned_chars": 159,
+        "candidates": 1,
+        "scoped_to": "all"
+      }
+    },
+    {
+      "split": "held_out",
+      "kind": "paraphrase_tr",
+      "query": "Hastalanınca izin için bir hafta önceden haber vermem mi gerekiyor?",
+      "expected": "leave.md",
+      "returned": [
+        "leave.md"
+      ],
+      "hit1": true,
+      "hit3": true,
+      "abstained": false,
+      "scores": [
+        0.6339609622955322
+      ],
+      "rerank_scores": [
+        -0.24746930599212646
+      ],
+      "ms": 822,
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [
+          "hastalanınca",
+          "için",
+          "bir",
+          "hafta",
+          "önceden",
+          "haber",
+          "vermem",
+          "gerekiyor"
+        ],
+        "semantic": true,
+        "answerability": "not_verified",
+        "relevance_gate": "cross_encoder_raw_logit",
+        "mode": "hybrid",
+        "reranker": "cross",
+        "relevance_threshold": -4.0,
+        "rejected_candidates": 8,
+        "github_sync": {},
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 16,
+          "corpus_files": 16,
+          "built_at": "1789382889.65243",
+          "last_build": {
+            "status": "built",
+            "at": 1789382889.657973,
+            "changed_files": 16,
+            "removed_files": 0,
+            "embedded_chunks": 16,
+            "reused_chunks": 0,
+            "files": 16,
+            "chunks": 16,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 3,
+          "max_chars": 7000,
+          "max_per_document": 1
+        },
+        "elapsed_ms": 821,
+        "returned_chars": 150,
+        "candidates": 1,
+        "scoped_to": "all"
+      }
+    },
+    {
+      "split": "held_out",
+      "kind": "cross_tr_en",
+      "query": "Satın alma olayında hangi iki alan zorunlu?",
+      "expected": "schema.md",
+      "returned": [
+        "schema.md",
+        "checkout.md"
+      ],
+      "hit1": true,
+      "hit3": true,
+      "abstained": false,
+      "scores": [
+        0.3663575351238251,
+        0.37230682373046875
+      ],
+      "rerank_scores": [
+        -2.8456203937530518,
+        -3.298682689666748
+      ],
+      "ms": 450,
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [
+          "satın",
+          "alma",
+          "olayında",
+          "hangi",
+          "alan"
+        ],
+        "semantic": true,
+        "answerability": "not_verified",
+        "relevance_gate": "cross_encoder_raw_logit",
+        "mode": "hybrid",
+        "reranker": "cross",
+        "relevance_threshold": -4.0,
+        "rejected_candidates": 7,
+        "github_sync": {},
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 16,
+          "corpus_files": 16,
+          "built_at": "1789382889.65243",
+          "last_build": {
+            "status": "built",
+            "at": 1789382889.657973,
+            "changed_files": 16,
+            "removed_files": 0,
+            "embedded_chunks": 16,
+            "reused_chunks": 0,
+            "files": 16,
+            "chunks": 16,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 3,
+          "max_chars": 7000,
+          "max_per_document": 1
+        },
+        "elapsed_ms": 450,
+        "returned_chars": 293,
+        "candidates": 2,
+        "scoped_to": "all"
+      }
+    },
+    {
+      "split": "held_out",
+      "kind": "paraphrase_en",
+      "query": "Which timezone should we use when recording events?",
+      "expected": "schema.md",
+      "returned": [
+        "schema.md"
+      ],
+      "hit1": true,
+      "hit3": true,
+      "abstained": false,
+      "scores": [
+        0.4346950650215149
+      ],
+      "rerank_scores": [
+        -1.7456512451171875
+      ],
+      "ms": 430,
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [
+          "which",
+          "timezone",
+          "should",
+          "when",
+          "recording"
+        ],
+        "semantic": true,
+        "answerability": "not_verified",
+        "relevance_gate": "cross_encoder_raw_logit",
+        "mode": "hybrid",
+        "reranker": "cross",
+        "relevance_threshold": -4.0,
+        "rejected_candidates": 8,
+        "github_sync": {},
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 16,
+          "corpus_files": 16,
+          "built_at": "1789382889.65243",
+          "last_build": {
+            "status": "built",
+            "at": 1789382889.657973,
+            "changed_files": 16,
+            "removed_files": 0,
+            "embedded_chunks": 16,
+            "reused_chunks": 0,
+            "files": 16,
+            "chunks": 16,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 3,
+          "max_chars": 7000,
+          "max_per_document": 1
+        },
+        "elapsed_ms": 430,
+        "returned_chars": 151,
+        "candidates": 1,
+        "scoped_to": "all"
+      }
+    },
+    {
+      "split": "held_out",
+      "kind": "cross_tr_en",
+      "query": "6000 avroluk altyapı alımını kimler onaylamalı?",
+      "expected": "approval.md",
+      "returned": [
+        "approval.md"
+      ],
+      "hit1": true,
+      "hit3": true,
+      "abstained": false,
+      "scores": [
+        0.4523772597312927
+      ],
+      "rerank_scores": [
+        0.10236870497465134
+      ],
+      "ms": 291,
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [
+          "6000",
+          "avroluk",
+          "altyapı",
+          "alımını",
+          "kimler",
+          "onaylamalı"
+        ],
+        "semantic": true,
+        "answerability": "not_verified",
+        "relevance_gate": "cross_encoder_raw_logit",
+        "mode": "vector",
+        "reranker": "cross",
+        "relevance_threshold": -4.0,
+        "rejected_candidates": 8,
+        "github_sync": {},
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 16,
+          "corpus_files": 16,
+          "built_at": "1789382889.65243",
+          "last_build": {
+            "status": "built",
+            "at": 1789382889.657973,
+            "changed_files": 16,
+            "removed_files": 0,
+            "embedded_chunks": 16,
+            "reused_chunks": 0,
+            "files": 16,
+            "chunks": 16,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 3,
+          "max_chars": 7000,
+          "max_per_document": 1
+        },
+        "elapsed_ms": 291,
+        "returned_chars": 176,
+        "candidates": 1,
+        "scoped_to": "all"
+      }
+    },
+    {
+      "split": "held_out",
+      "kind": "paraphrase_en",
+      "query": "Can my team lead alone approve a 4000 euro infrastructure purchase?",
+      "expected": "approval.md",
+      "returned": [
+        "approval.md"
+      ],
+      "hit1": true,
+      "hit3": true,
+      "abstained": false,
+      "scores": [
+        0.7762577533721924
+      ],
+      "rerank_scores": [
+        2.8114378452301025
+      ],
+      "ms": 1327,
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [
+          "alone",
+          "approve",
+          "4000",
+          "euro"
+        ],
+        "semantic": true,
+        "answerability": "not_verified",
+        "relevance_gate": "cross_encoder_raw_logit",
+        "mode": "hybrid",
+        "reranker": "cross",
+        "relevance_threshold": -4.0,
+        "rejected_candidates": 8,
+        "github_sync": {},
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 16,
+          "corpus_files": 16,
+          "built_at": "1789382889.65243",
+          "last_build": {
+            "status": "built",
+            "at": 1789382889.657973,
+            "changed_files": 16,
+            "removed_files": 0,
+            "embedded_chunks": 16,
+            "reused_chunks": 0,
+            "files": 16,
+            "chunks": 16,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 3,
+          "max_chars": 7000,
+          "max_per_document": 1
+        },
+        "elapsed_ms": 1326,
+        "returned_chars": 176,
+        "candidates": 1,
+        "scoped_to": "all"
+      }
+    },
+    {
+      "split": "held_out",
+      "kind": "exact_en",
+      "query": "When did the Orion mobile experiment start?",
+      "expected": "decoy.md",
+      "returned": [
+        "decoy.md",
+        "release.md"
+      ],
+      "hit1": true,
+      "hit3": true,
+      "abstained": false,
+      "scores": [
+        0.7461740970611572,
+        0.5098825693130493
+      ],
+      "rerank_scores": [
+        6.535209655761719,
+        -2.682896614074707
+      ],
+      "ms": 330,
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [
+          "when",
+          "did",
+          "start"
+        ],
+        "semantic": true,
+        "answerability": "not_verified",
+        "relevance_gate": "cross_encoder_raw_logit",
+        "mode": "hybrid",
+        "reranker": "cross",
+        "relevance_threshold": -4.0,
+        "rejected_candidates": 7,
+        "github_sync": {},
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 16,
+          "corpus_files": 16,
+          "built_at": "1789382889.65243",
+          "last_build": {
+            "status": "built",
+            "at": 1789382889.657973,
+            "changed_files": 16,
+            "removed_files": 0,
+            "embedded_chunks": 16,
+            "reused_chunks": 0,
+            "files": 16,
+            "chunks": 16,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 3,
+          "max_chars": 7000,
+          "max_per_document": 1
+        },
+        "elapsed_ms": 330,
+        "returned_chars": 307,
+        "candidates": 2,
+        "scoped_to": "all"
+      }
+    },
+    {
+      "split": "held_out",
+      "kind": "missing",
+      "query": "What is the annual salary of the on-call data engineer?",
+      "expected": null,
+      "returned": [],
+      "hit1": null,
+      "hit3": null,
+      "abstained": true,
+      "scores": [],
+      "rerank_scores": [],
+      "ms": 698,
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [
+          "what",
+          "annual",
+          "salary"
+        ],
+        "semantic": true,
+        "answerability": "not_verified",
+        "relevance_gate": "cross_encoder_raw_logit",
+        "mode": "hybrid",
+        "reranker": "cross",
+        "relevance_threshold": -4.0,
+        "rejected_candidates": 9,
+        "github_sync": {},
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 16,
+          "corpus_files": 16,
+          "built_at": "1789382889.65243",
+          "last_build": {
+            "status": "built",
+            "at": 1789382889.657973,
+            "changed_files": 16,
+            "removed_files": 0,
+            "embedded_chunks": 16,
+            "reused_chunks": 0,
+            "files": 16,
+            "chunks": 16,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 3,
+          "max_chars": 7000,
+          "max_per_document": 1
+        },
+        "elapsed_ms": 698,
+        "returned_chars": 0,
+        "candidates": 0,
+        "scoped_to": "all"
+      }
+    },
+    {
+      "split": "held_out",
+      "kind": "missing",
+      "query": "Hangi şirket bizim ekspres kargolarımızı taşıyor?",
+      "expected": null,
+      "returned": [],
+      "hit1": null,
+      "hit3": null,
+      "abstained": true,
+      "scores": [],
+      "rerank_scores": [],
+      "ms": 502,
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [
+          "hangi",
+          "şirket",
+          "bizim",
+          "kargolarımızı",
+          "taşıyor"
+        ],
+        "semantic": true,
+        "answerability": "not_verified",
+        "relevance_gate": "cross_encoder_raw_logit",
+        "mode": "hybrid",
+        "reranker": "cross",
+        "relevance_threshold": -4.0,
+        "rejected_candidates": 9,
+        "github_sync": {},
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 16,
+          "corpus_files": 16,
+          "built_at": "1789382889.65243",
+          "last_build": {
+            "status": "built",
+            "at": 1789382889.657973,
+            "changed_files": 16,
+            "removed_files": 0,
+            "embedded_chunks": 16,
+            "reused_chunks": 0,
+            "files": 16,
+            "chunks": 16,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 3,
+          "max_chars": 7000,
+          "max_per_document": 1
+        },
+        "elapsed_ms": 502,
+        "returned_chars": 0,
+        "candidates": 0,
+        "scoped_to": "all"
+      }
+    },
+    {
+      "split": "held_out",
+      "kind": "missing",
+      "query": "What is the production database password?",
+      "expected": null,
+      "returned": [],
+      "hit1": null,
+      "hit3": null,
+      "abstained": true,
+      "scores": [],
+      "rerank_scores": [],
+      "ms": 302,
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [
+          "what",
+          "database",
+          "password"
+        ],
+        "semantic": true,
+        "answerability": "not_verified",
+        "relevance_gate": "cross_encoder_raw_logit",
+        "mode": "hybrid",
+        "reranker": "cross",
+        "relevance_threshold": -4.0,
+        "rejected_candidates": 9,
+        "github_sync": {},
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 16,
+          "corpus_files": 16,
+          "built_at": "1789382889.65243",
+          "last_build": {
+            "status": "built",
+            "at": 1789382889.657973,
+            "changed_files": 16,
+            "removed_files": 0,
+            "embedded_chunks": 16,
+            "reused_chunks": 0,
+            "files": 16,
+            "chunks": 16,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 3,
+          "max_chars": 7000,
+          "max_per_document": 1
+        },
+        "elapsed_ms": 302,
+        "returned_chars": 0,
+        "candidates": 0,
+        "scoped_to": "all"
+      }
+    },
+    {
+      "split": "held_out",
+      "kind": "missing",
+      "query": "İzin talebi hangi insan kaynakları uygulamasından gönderiliyor?",
+      "expected": null,
+      "returned": [],
+      "hit1": null,
+      "hit3": null,
+      "abstained": true,
+      "scores": [],
+      "rerank_scores": [],
+      "ms": 293,
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [
+          "zin",
+          "hangi",
+          "insan",
+          "kaynakları",
+          "uygulamasından",
+          "gönderiliyor"
+        ],
+        "semantic": true,
+        "answerability": "not_verified",
+        "relevance_gate": "cross_encoder_raw_logit",
+        "mode": "hybrid",
+        "reranker": "cross",
+        "relevance_threshold": -4.0,
+        "rejected_candidates": 9,
+        "github_sync": {},
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 16,
+          "corpus_files": 16,
+          "built_at": "1789382889.65243",
+          "last_build": {
+            "status": "built",
+            "at": 1789382889.657973,
+            "changed_files": 16,
+            "removed_files": 0,
+            "embedded_chunks": 16,
+            "reused_chunks": 0,
+            "files": 16,
+            "chunks": 16,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 3,
+          "max_chars": 7000,
+          "max_per_document": 1
+        },
+        "elapsed_ms": 293,
+        "returned_chars": 0,
+        "candidates": 0,
+        "scoped_to": "all"
+      }
+    },
+    {
+      "split": "held_out",
+      "kind": "missing",
+      "query": "What is the purchase event schema version number?",
+      "expected": null,
+      "returned": [
+        "schema.md"
+      ],
+      "hit1": null,
+      "hit3": null,
+      "abstained": false,
+      "scores": [
+        0.6193787455558777
+      ],
+      "rerank_scores": [
+        0.5695286989212036
+      ],
+      "ms": 262,
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [
+          "what",
+          "version",
+          "number"
+        ],
+        "semantic": true,
+        "answerability": "not_verified",
+        "relevance_gate": "cross_encoder_raw_logit",
+        "mode": "hybrid",
+        "reranker": "cross",
+        "relevance_threshold": -4.0,
+        "rejected_candidates": 8,
+        "github_sync": {},
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 16,
+          "corpus_files": 16,
+          "built_at": "1789382889.65243",
+          "last_build": {
+            "status": "built",
+            "at": 1789382889.657973,
+            "changed_files": 16,
+            "removed_files": 0,
+            "embedded_chunks": 16,
+            "reused_chunks": 0,
+            "files": 16,
+            "chunks": 16,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 3,
+          "max_chars": 7000,
+          "max_per_document": 1
+        },
+        "elapsed_ms": 262,
+        "returned_chars": 151,
+        "candidates": 1,
+        "scoped_to": "all"
+      }
+    },
+    {
+      "split": "held_out",
+      "kind": "missing",
+      "query": "Orion projesinin toplam gelir hedefi nedir?",
+      "expected": null,
+      "returned": [],
+      "hit1": null,
+      "hit3": null,
+      "abstained": true,
+      "scores": [],
+      "rerank_scores": [],
+      "ms": 248,
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [
+          "projesinin",
+          "toplam",
+          "gelir",
+          "hedefi",
+          "nedir"
+        ],
+        "semantic": true,
+        "answerability": "not_verified",
+        "relevance_gate": "cross_encoder_raw_logit",
+        "mode": "hybrid",
+        "reranker": "cross",
+        "relevance_threshold": -4.0,
+        "rejected_candidates": 9,
+        "github_sync": {},
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 16,
+          "corpus_files": 16,
+          "built_at": "1789382889.65243",
+          "last_build": {
+            "status": "built",
+            "at": 1789382889.657973,
+            "changed_files": 16,
+            "removed_files": 0,
+            "embedded_chunks": 16,
+            "reused_chunks": 0,
+            "files": 16,
+            "chunks": 16,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 3,
+          "max_chars": 7000,
+          "max_per_document": 1
+        },
+        "elapsed_ms": 247,
+        "returned_chars": 0,
+        "candidates": 0,
+        "scoped_to": "all"
+      }
+    }
+  ]
+}

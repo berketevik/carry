@@ -1,0 +1,70 @@
+{
+  "verified_on": "2026-09-10",
+  "clients": {
+    "claude": {
+      "keys": [
+        "cwd",
+        "hook_event_name",
+        "permission_mode",
+        "prompt",
+        "prompt_id",
+        "session_id",
+        "transcript_path"
+      ],
+      "receipt": {
+        "client": "claude",
+        "state": "duplicate",
+        "at": "2026-09-09T23:25:04.428+00:00",
+        "last_success_at": "2026-09-09T23:25:04.428+00:00",
+        "event_id": "evt_5a7a5c82a47106e911255ae9fa1da9012f06b98ea23c6334e91ff72c101197a9",
+        "source_id": "records",
+        "event_path": "carry/.events/evt_5a7a5c82a47106e911255ae9fa1da9012f06b98ea23c6334e91ff72c101197a9.md",
+        "proposal_id": "rec_5cb50266f3304572",
+        "proposal_path": "carry/2026-09-10-captured-prompt-review-required-5cb50266.md",
+        "proposal_state": "draft",
+        "masked": [],
+        "write_owner": "hook"
+      },
+      "silent": true,
+      "pause_verified": true,
+      "fresh_mcp_recall_verified": true,
+      "client_version": "2.1.267",
+      "method": "native UserPromptSubmit; unchanged carry.hook invoked twice; synthetic prompt blocked by test wrapper",
+      "raw_event_count": 1,
+      "linked_proposal_count": 1
+    },
+    "codex": {
+      "keys": [
+        "cwd",
+        "hook_event_name",
+        "model",
+        "permission_mode",
+        "prompt",
+        "session_id",
+        "transcript_path",
+        "turn_id"
+      ],
+      "receipt": {
+        "client": "codex",
+        "state": "duplicate",
+        "at": "2026-09-09T23:28:40.891+00:00",
+        "last_success_at": "2026-09-09T23:28:40.891+00:00",
+        "event_id": "evt_1067eadc5630d59b3bb62d3b2cb89cecbfdc3aed9a427cc780c92beddbcadcd0",
+        "source_id": "records",
+        "event_path": "carry/.events/evt_1067eadc5630d59b3bb62d3b2cb89cecbfdc3aed9a427cc780c92beddbcadcd0.md",
+        "proposal_id": "rec_6dd97d98d63144bb",
+        "proposal_path": "carry/2026-09-10-captured-prompt-review-required-6dd97d98.md",
+        "proposal_state": "draft",
+        "masked": [],
+        "write_owner": "hook"
+      },
+      "silent": true,
+      "pause_verified": true,
+      "fresh_mcp_recall_verified": true,
+      "client_version": "0.153.4",
+      "method": "native UserPromptSubmit; unchanged carry.hook invoked twice; synthetic prompt blocked by test wrapper",
+      "raw_event_count": 1,
+      "linked_proposal_count": 1
+    }
+  }
+}

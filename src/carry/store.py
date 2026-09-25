@@ -7,14 +7,14 @@ produces a conflict instead of a silent overwrite.
 """
 import datetime as dt
 import json
-import os
 import re
 from pathlib import Path
 
-from .errors import RevisionConflict, SourceError
+from .errors import CarryError, RevisionConflict, SourceError
 from .mask import mask
 from .markdown import parse_frontmatter
-from .paths import resolve_within
+from .paths import resolve_within, walk_markdown
+from .persistence import atomic_text, writer_lock
 from .records import STATES, new_record_id
 
 EVENT_LEDGER = "events.json"
@@ -37,9 +37,7 @@ def _load_ledger(workspace):
 def _save_ledger(workspace, data):
     path = Path(workspace.state_dir) / EVENT_LEDGER
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
-    os.replace(tmp, path)
+    atomic_text(path, json.dumps(data, ensure_ascii=False, indent=1))
 
 
 def _frontmatter_block(fields):
@@ -51,11 +49,15 @@ def _frontmatter_block(fields):
             lines.append(f"{key}: {'true' if value else 'false'}")
         elif isinstance(value, (list, tuple)):
             lines.append(f"{key}:")
-            lines.extend(f"  - {item}" for item in value)
-        elif isinstance(value, str) and (":" in value or value.startswith(("[", "{"))):
-            lines.append(f'{key}: "{value}"')
+            lines.extend("  - " + json.dumps(item, ensure_ascii=False) for item in value)
         else:
-            lines.append(f"{key}: {value}")
+            # JSON string quoting is valid YAML and prevents metadata injection.
+            encoded = str(value)
+            if isinstance(value, str) and (not re.fullmatch(r"[A-Za-z0-9_./-]+", value)
+                    or value.lower() in ("true", "false", "null", "yes", "no", "on", "off")
+                    or re.fullmatch(r"[-+]?\d+(?:\.\d+)?", value)):
+                encoded = json.dumps(value, ensure_ascii=False)
+            lines.append(f"{key}: {encoded}")
     lines.append("---")
     return "\n".join(lines)
 
@@ -96,10 +98,10 @@ def find_record(workspace, record_id):
     hits = []
     for source in workspace.sources:
         root = Path(source.root).expanduser().resolve()
-        directory = root / source.records_dir
+        directory = resolve_within(root, source.records_dir)
         if not directory.is_dir():
             continue
-        for path in sorted(directory.rglob("*.md")):
+        for _, path in walk_markdown(directory):
             if path.is_symlink():
                 continue
             frontmatter, _ = parse_frontmatter(path.read_text(encoding="utf-8", errors="replace"))
@@ -112,7 +114,12 @@ def find_record(workspace, record_id):
     return chosen
 
 
-def write_record(workspace, title, content, source_refs=(), event_id="", state="draft",
+def write_record(workspace, *args, **kwargs):
+    with writer_lock(workspace):
+        return _write_record(workspace, *args, **kwargs)
+
+
+def _write_record(workspace, title, content, source_refs=(), event_id="", state="draft",
                  author="", surface="", source_id=None, summary=""):
     """Create a record file. Returns a dict describing what was written.
 
@@ -124,17 +131,32 @@ def write_record(workspace, title, content, source_refs=(), event_id="", state="
         raise ValueError("invalid_state")
     source = workspace.writable_source(source_id)
     ledger = _load_ledger(workspace)
+    # The Markdown event link is canonical. Recover a write whose ledger
+    # publication was interrupted, or whose disposable ledger was removed.
+    if event_id and event_id not in ledger:
+        for holder in workspace.sources:
+            root = Path(holder.root).expanduser().resolve()
+            directory = resolve_within(root, holder.records_dir)
+            for _, candidate in walk_markdown(directory):
+                fm, _ = parse_frontmatter(candidate.read_text(encoding="utf-8"))
+                if fm.get("carry_event") == event_id and fm.get("carry_record"):
+                    ledger[event_id] = dict(record_id=fm["carry_record"],
+                        revision=fm.get("carry_revision", 1), state=fm.get("carry_state", "draft"),
+                        source_id=holder.source_id, path=str(candidate.relative_to(root)), masked=[])
+                    _save_ledger(workspace, ledger)
+                    break
     if event_id and event_id in ledger:
         # Report what the record is now, not what it was when the event first
         # arrived: it may have been accepted or corrected since.
         existing = ledger[event_id]
         try:
             path, frontmatter, holder = find_record(workspace, existing["record_id"])
-            existing = dict(existing, revision=int(frontmatter.get("carry_revision", 1) or 1),
-                            state=str(frontmatter.get("carry_state") or existing.get("state")),
-                            source_id=holder.source_id,
-                            path=str(path.relative_to(
-                                Path(holder.root).expanduser().resolve())))
+            relative = str(path.relative_to(Path(holder.root).expanduser().resolve()))
+            from .lifecycle import catalog
+            effective = catalog(workspace)[(holder.source_id, relative)]
+            existing = dict(existing, revision=effective['revision'], state=effective['state'],
+                            superseded_by=effective['superseded_by'],
+                            source_id=holder.source_id, path=relative)
         except SourceError:
             existing = dict(existing, state="missing")
         return dict(existing, duplicate=True)
@@ -143,23 +165,23 @@ def write_record(workspace, title, content, source_refs=(), event_id="", state="
     masked_title, title_categories = mask(title or "Record")
     record_id = new_record_id()
     path = record_path(workspace, source, record_id, masked_title, 1)
-    now = dt.datetime.now().isoformat(timespec="seconds")
+    now = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
     frontmatter = {
         "carry_record": record_id,
         "carry_revision": 1,
         "carry_state": state,
         "carry_current": True,
         "carry_event": event_id,
-        "carry_author": author,
-        "carry_surface": surface,
+        "carry_author": mask(author)[0],
+        "carry_surface": mask(surface)[0],
         "type": "record",
-        "summary": summary or masked_title,
+        "summary": mask(summary)[0] if summary else masked_title,
         "created": now,
         "updated": now,
-        "sources": list(source_refs),
+        "sources": [mask(ref)[0] for ref in source_refs],
     }
     body = f"{_frontmatter_block(frontmatter)}\n\n# {masked_title}\n\n{masked_content.strip()}\n"
-    path.write_text(body, encoding="utf-8")
+    atomic_text(path, body)
     result = dict(record_id=record_id, revision=1, state=state,
                   source_id=source.source_id,
                   path=str(path.relative_to(Path(source.root).expanduser().resolve())),
@@ -171,47 +193,65 @@ def write_record(workspace, title, content, source_refs=(), event_id="", state="
 
 
 def set_state(workspace, record_id, state, expected_revision):
+    with writer_lock(workspace):
+        return _set_state(workspace, record_id, state, expected_revision)
+
+
+def _set_state(workspace, record_id, state, expected_revision):
     """Change a record's state under a revision precondition."""
     if state not in STATES:
         raise ValueError("invalid_state")
     path, frontmatter, source = find_record(workspace, record_id)
+    workspace.writable_source(source.source_id)
+    from .lifecycle import ensure_current
+    ensure_current(workspace, record_id)
     _assert_correctable(frontmatter)
     revision = int(frontmatter.get("carry_revision", 1) or 1)
     if int(expected_revision) != revision:
         raise RevisionConflict(f"expected_revision_{expected_revision}_found_{revision}")
+    if frontmatter.get('carry_proposal'):
+        raise CarryError('use_review_with_token_for_proposal')
     text = path.read_text(encoding="utf-8")
     updated = re.sub(r"(?m)^carry_state:.*$", f"carry_state: {state}", text, count=1)
     if updated == text:
         raise SourceError("record_frontmatter_unwritable")
-    path.write_text(updated, encoding="utf-8")
+    atomic_text(path, updated)
     return dict(record_id=record_id, revision=revision, state=state,
                 source_id=source.source_id,
                 path=str(path.relative_to(Path(source.root).expanduser().resolve())))
 
 
-def supersede(workspace, record_id, content, expected_revision, title=None, event_id="",
+def supersede(workspace, *args, **kwargs):
+    with writer_lock(workspace):
+        return _supersede(workspace, *args, **kwargs)
+
+
+def _supersede(workspace, record_id, content, expected_revision, title=None, event_id="",
               author="", surface=""):
     """Publish a corrected revision. History is retained: the previous file stays
     on disk, marked not current and pointing at its replacement."""
     path, frontmatter, source = find_record(workspace, record_id)
+    workspace.writable_source(source.source_id)
+    from .lifecycle import ensure_current
+    ensure_current(workspace, record_id)
     _assert_correctable(frontmatter)
     revision = int(frontmatter.get("carry_revision", 1) or 1)
     if int(expected_revision) != revision:
         raise RevisionConflict(f"expected_revision_{expected_revision}_found_{revision}")
 
     masked_content, categories = mask(content or "")
-    heading = title or str(frontmatter.get("summary") or path.stem)
+    heading = mask(title or str(frontmatter.get("summary") or path.stem))[0]
     new_id = new_record_id()
     new_path = record_path(workspace, source, new_id, heading, revision + 1)
-    now = dt.datetime.now().isoformat(timespec="seconds")
+    now = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
     new_frontmatter = {
         "carry_record": new_id,
         "carry_revision": revision + 1,
         "carry_state": "accepted",
         "carry_current": True,
         "carry_event": event_id,
-        "carry_author": author,
-        "carry_surface": surface,
+        "carry_author": mask(author)[0],
+        "carry_surface": mask(surface)[0],
         "carry_supersedes": record_id,
         "type": "record",
         "summary": heading,
@@ -219,9 +259,8 @@ def supersede(workspace, record_id, content, expected_revision, title=None, even
         "updated": now,
         "sources": frontmatter.get("sources") or [],
     }
-    new_path.write_text(
-        f"{_frontmatter_block(new_frontmatter)}\n\n# {heading}\n\n{masked_content.strip()}\n",
-        encoding="utf-8")
+    atomic_text(new_path,
+        f"{_frontmatter_block(new_frontmatter)}\n\n# {heading}\n\n{masked_content.strip()}\n")
 
     old = path.read_text(encoding="utf-8")
     old = re.sub(r"(?m)^carry_current:.*$", "carry_current: false", old, count=1)
@@ -230,7 +269,7 @@ def supersede(workspace, record_id, content, expected_revision, title=None, even
         old = re.sub(r"(?m)^carry_superseded_by:.*$", f"carry_superseded_by: {new_id}", old, count=1)
     else:
         old = old.replace("carry_current: false", f"carry_current: false\ncarry_superseded_by: {new_id}", 1)
-    path.write_text(old, encoding="utf-8")
+    atomic_text(path, old)
     return dict(record_id=new_id, revision=revision + 1, state="accepted",
                 supersedes=record_id, source_id=source.source_id,
                 path=str(new_path.relative_to(Path(source.root).expanduser().resolve())),

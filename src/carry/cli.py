@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 from . import index as index_module
-from . import store
+from . import store, capture, lifecycle
 from .config import EmbeddingConfig, RetrievalConfig, SourceConfig, Workspace, open_workspace
 from .errors import CarryError, RevisionConflict
 from .fixtures import install_fixture
@@ -81,6 +81,7 @@ def cmd_status(args):
              f"embedding: {payload['embedding']['name']} "
              f"(semantic={payload['embedding'].get('semantic')})",
              f"sources: {len(payload['workspace']['sources'])}",
+             f"capture: {payload['capture']['state']}",
              f"degradation: {', '.join(payload['degradation']) or 'none'}"]
     _print(payload, args.json, lines)
     return EXIT_OK if payload["ok"] else EXIT_FAILED
@@ -89,12 +90,12 @@ def cmd_status(args):
 def cmd_recall(args):
     workspace = open_workspace(args.workspace)
     budget = {}
-    if args.top_k:
+    if args.top_k is not None:
         budget["top_k"] = args.top_k
-    if args.max_chars:
+    if args.max_chars is not None:
         budget["max_chars"] = args.max_chars
     result = recall(workspace, args.query, source_ids=args.source or None,
-                    budget=budget or None, include_history=args.history)
+                    budget=budget or None, include_history=args.history, include_drafts=args.drafts)
     lines = [f"status: {result['status']}"]
     for number, item in enumerate(result.get("evidence", []), 1):
         lines.append(f"[{number}] {item['citation']} > {item['heading']} "
@@ -132,12 +133,57 @@ def cmd_record(args):
             result = store.set_state(workspace, args.id, "accepted", args.expect_revision)
         else:
             content = args.content if args.content is not None else sys.stdin.read()
-            result = store.supersede(workspace, args.id, content, args.expect_revision,
-                                     title=args.title)
+            result = lifecycle.propose(workspace, content, args.event,
+                title=args.title or "Proposed correction", target_id=args.id,
+                expected_revision=args.expect_revision, source_id=args.source)
+
     except RevisionConflict as exc:
         _print(dict(status="conflict", detail=str(exc)), args.json, ["conflict: " + str(exc)])
         return EXIT_FAILED
     _print(result, args.json, [json.dumps(result, ensure_ascii=False, default=str)])
+    return EXIT_OK
+
+
+def cmd_proposal(args):
+    workspace = open_workspace(args.workspace)
+    command = args.proposal_command
+    if command in ("enable", "disable"):
+        result = lifecycle.configure_client(workspace, args.client, args.source, command == "enable")
+    elif command == "add":
+        content = args.content if args.content is not None else sys.stdin.read()
+        result = lifecycle.propose(workspace, content, args.event, args.source_ref or [],
+            title=args.title, source_id=args.source, target_id=args.target,
+            expected_revision=args.expect_target_revision, target_source_id=args.target_source,
+            expected_proposal_revision=args.expect_revision)
+    elif command == "list":
+        result = lifecycle.list_proposals(workspace, include_reviewed=args.all)
+    elif command == "show":
+        result = lifecycle.review(workspace, args.id)
+    else:
+        operation = lifecycle.accept if command == "accept" else lifecycle.reject
+        result = operation(workspace, args.id, args.expect_revision, args.review_token)
+    lines = [json.dumps(result, ensure_ascii=False, indent=2, default=str)]
+    if command == "show" and not args.json:
+        lines = [f"{result['record_id']} r{result['revision']} {result['state']}",
+                 result['diff'], "review token: " + result['review_token']]
+        if result['conflict']:
+            lines.append("conflict: " + result['conflict'])
+    _print(result, args.json, lines)
+    return EXIT_FAILED if isinstance(result, dict) and result.get('status') == 'accepted_index_pending' else EXIT_OK
+
+
+def cmd_capture(args):
+    workspace = open_workspace(args.workspace)
+    if args.capture_command == "configure":
+        result = capture.configure(workspace, args.client, args.source,
+                                   args.opt_in_prompts, args.client_bin)
+    elif args.capture_command in ("pause", "resume"):
+        result = capture.set_paused(workspace, args.client, args.capture_command == "pause")
+    elif args.capture_command == "settings":
+        result = capture.settings_fragment(workspace, args.client)
+    else:
+        result = capture.capture_status(workspace)
+    _print(result, args.json, [json.dumps(result, ensure_ascii=False, indent=2)])
     return EXIT_OK
 
 
@@ -158,6 +204,41 @@ def cmd_demo(args):
            [f"corpus installed at {notes}", f"workspace at {workspace.state_dir}",
             "index: " + json.dumps(result, default=str)])
     return EXIT_OK if result["status"] == "built" else EXIT_FAILED
+
+
+def cmd_github(args):
+    from . import github
+    from .maintenance import run, start, job_status
+    ws = open_workspace(args.workspace)
+    if args.github_command == 'account':
+        result = github.account()
+    elif args.github_command == 'repos':
+        result = github.repositories(args.page)
+    elif args.github_command == 'add':
+        fields = dict(source_id=args.id, repository=args.repository, branch=args.branch, folder=args.folder)
+        result = run(ws, 'github_connect', fields) if args.wait else start(ws, 'github_connect', **fields)
+    elif args.github_command == 'sync':
+        fields = dict(source_id=args.id)
+        result = run(ws, 'github_sync', fields) if args.wait else start(ws, 'github_sync', **fields)
+    else:
+        result = job_status(ws)
+    _print(result, args.json, [json.dumps(result, ensure_ascii=False)])
+    return EXIT_FAILED if result.get('status') == 'failed' or result.get('state') in ('failed', 'unavailable') else EXIT_OK
+
+
+def cmd_maintain(args):
+    from .maintenance import run
+    result = run(open_workspace(args.workspace), 'maintain', {})
+    _print(result, args.json, [json.dumps(result)])
+    return EXIT_FAILED if result.get('status') == 'failed' else EXIT_OK
+
+
+def cmd_model(args):
+    from .maintenance import run, start
+    ws = open_workspace(args.workspace)
+    result = run(ws, 'model_setup', dict(model=args.model)) if args.wait else start(ws, 'model_setup', model=args.model)
+    _print(result, args.json, [json.dumps(result)])
+    return EXIT_FAILED if result.get('status') == 'failed' else EXIT_OK
 
 
 def build_parser():
@@ -197,7 +278,29 @@ def build_parser():
     rc.add_argument("--top-k", type=int)
     rc.add_argument("--max-chars", type=int)
     rc.add_argument("--history", action="store_true", help="include superseded revisions")
+    rc.add_argument("--drafts", action="store_true", help="explicitly include unaccepted proposals")
     rc.set_defaults(func=cmd_recall)
+
+    sub.add_parser('maintain', help='synchronize GitHub and refresh the index').set_defaults(func=cmd_maintain)
+    gh = sub.add_parser('github', help='read-only GitHub knowledge sources')
+    ghsub = gh.add_subparsers(dest='github_command', required=True)
+    ghsub.add_parser('account')
+    ghsub.add_parser('repos').add_argument('--page', type=int, default=1)
+    ghsub.add_parser('status')
+    add = ghsub.add_parser('add')
+    add.add_argument('--id', required=True)
+    add.add_argument('--repository', required=True)
+    add.add_argument('--branch', default='')
+    add.add_argument('--folder', default='')
+    add.add_argument('--wait', action='store_true')
+    sync = ghsub.add_parser('sync')
+    sync.add_argument('--id', required=True)
+    sync.add_argument('--wait', action='store_true')
+    gh.set_defaults(func=cmd_github)
+    model = sub.add_parser('model', help='download and activate a local embedding model')
+    model.add_argument('model', choices=('accurate_multilingual', 'embeddinggemma', 'qwen3-embedding:0.6b', 'nomic-embed-text'))
+    model.add_argument('--wait', action='store_true')
+    model.set_defaults(func=cmd_model)
 
     record = sub.add_parser("record", help="write and review records")
     record_sub = record.add_subparsers(dest="record_command", required=True)
@@ -217,7 +320,46 @@ def build_parser():
     cor.add_argument("--expect-revision", type=int, required=True)
     cor.add_argument("--content")
     cor.add_argument("--title")
+    cor.add_argument("--event", required=True, help="idempotent proposal event id")
+    cor.add_argument("--source", help="writable proposal destination")
     record.set_defaults(func=cmd_record)
+
+    prop = sub.add_parser("proposal", help="create, inspect and review decision proposals")
+    psub = prop.add_subparsers(dest="proposal_command", required=True)
+    for name in ("enable", "disable"):
+        cmd = psub.add_parser(name, help="configure optional MCP proposal writes for a client")
+        cmd.add_argument("--client", choices=lifecycle.CLIENTS, required=True)
+        cmd.add_argument("--source", required=True)
+    add = psub.add_parser("add", help="create a draft or refine the existing captured-event draft")
+    add.add_argument("--content", help="synthesized decision text, or read stdin")
+    add.add_argument("--title", default="Proposed decision")
+    add.add_argument("--event", required=True)
+    add.add_argument("--source")
+    add.add_argument("--source-ref", action="append")
+    add.add_argument("--target")
+    add.add_argument("--target-source")
+    add.add_argument("--expect-target-revision", type=int)
+    add.add_argument("--expect-revision", type=int, help="required when refining an existing draft")
+    psub.add_parser("list").add_argument("--all", action="store_true")
+    psub.add_parser("show").add_argument("--id", required=True)
+    for name in ("accept", "reject"):
+        cmd = psub.add_parser(name)
+        cmd.add_argument("--id", required=True)
+        cmd.add_argument("--expect-revision", type=int, required=True)
+        cmd.add_argument("--review-token", required=True, help="token returned by proposal show")
+    prop.set_defaults(func=cmd_proposal)
+
+    cap = sub.add_parser("capture", help="opt-in prompt capture and diagnostic receipts")
+    cap_sub = cap.add_subparsers(dest="capture_command", required=True)
+    cfg = cap_sub.add_parser("configure", help="check client capability and opt in; does not edit client settings")
+    cfg.add_argument("--client", required=True, choices=capture.CLIENTS)
+    cfg.add_argument("--source", required=True, help="personal writable source id")
+    cfg.add_argument("--opt-in-prompts", action="store_true")
+    cfg.add_argument("--client-bin", help="CLI executable to probe")
+    for name in ("pause", "resume", "settings"):
+        cap_sub.add_parser(name).add_argument("--client", required=True, choices=capture.CLIENTS)
+    cap_sub.add_parser("status")
+    cap.set_defaults(func=cmd_capture)
 
     demo = sub.add_parser("demo", help="install the synthetic corpus and index it")
     demo.add_argument("--into", required=True, help="folder for the synthetic corpus")
@@ -233,6 +375,9 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)
+    except RevisionConflict as exc:
+        _print(dict(status="conflict", detail=str(exc)), args.json, ["conflict: " + str(exc)])
+        return EXIT_FAILED
     except CarryError as exc:
         payload = dict(status="error", error=type(exc).__name__, detail=str(exc))
         _print(payload, args.json, [f"error: {type(exc).__name__}: {exc}"])

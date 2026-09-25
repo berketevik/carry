@@ -1,0 +1,8 @@
+{
+  "accept_via_app_model_and_worker" : true,
+  "mcp_probe" : true,
+  "mouse_keyboard_ui_automation" : false,
+  "native_view_rendering" : true,
+  "review_diff" : true,
+  "worker_restart" : true
+}

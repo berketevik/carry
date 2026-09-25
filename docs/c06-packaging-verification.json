@@ -1,0 +1,61 @@
+{
+  "environment": "dependency-isolated process on development Mac; not a pristine OS",
+  "model_downloaded": false,
+  "real_clean_machine_test": false,
+  "app_logical_bytes": 49025027,
+  "deflated_payload_bytes": 18843246,
+  "archive_note": "Size estimate only, not a distribution archive; symlinks excluded.",
+  "dependencies": {
+    "python": "3.13.12",
+    "sqlite": "3.50.4",
+    "optional": {
+      "numpy": false,
+      "yaml": false,
+      "mcp": false
+    }
+  },
+  "fresh_process_snapshot": {
+    "samples": 20,
+    "p50_ms": 202.53,
+    "p95_ms": 206.22
+  },
+  "worker_snapshot": {
+    "samples": 40,
+    "p50_ms": 2.34,
+    "p95_ms": 3.01
+  },
+  "worker_lexical_recall": {
+    "samples": 30,
+    "p50_ms": 2.5,
+    "p95_ms": 2.92
+  },
+  "worker_peak_rss_bytes": 38240256,
+  "mcp_local_test": "passed",
+  "absent_provider_probe": [
+    false,
+    "ollama_unreachable:URLError"
+  ],
+  "relocated_without_checkout_or_path_python": true,
+  "ollama": {
+    "model": "nomic-embed-text:latest",
+    "installed_model_bytes": 274302450,
+    "already_loaded_before_probe": false,
+    "index_ms": 500.01,
+    "first_provider_probe_ms": 852.62,
+    "provider_available": true,
+    "index_status": "built",
+    "download_time": "not measured; already installed",
+    "worker_warm_recall": {
+      "samples": 30,
+      "p50_ms": 19.42,
+      "p95_ms": 30.97
+    },
+    "resident_size_bytes": 370031984,
+    "resident_vram_bytes": 370031984
+  },
+  "worker_exits_on_parent_pipe_close": true,
+  "final_app_logical_bytes": 49024739,
+  "timing_build_native_sha256": "bd02aeb9d40600652025693e866b1f649d85efcb1b7803be785e366f0bbc493f",
+  "final_native_sha256": "38244b20df3de9eccdd0429c1b138a1e5872f23ef16e9841c3abd0e005ede4dd",
+  "timing_note": "Core/packaging timings precede UI-only error-message and opaque review-footer changes. Native startup was remeasured after error-message changes and before the footer-only change."
+}

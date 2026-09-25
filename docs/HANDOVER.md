@@ -1,3 +1,130 @@
+# Current addendum: GitHub internal pilot (2026-09-14)
+
+Read [PILOT.md](PILOT.md). Managed GitHub snapshots, background maintenance,
+model downloads, multilingual prompt contracts, real cross-encoder ranking,
+source exclusions and file inspection, commit-pinned citations and native setup
+are implemented. Earlier sections below are historical delivery records.
+
+The user chose an unsigned internal pilot. Developer ID signing/notarization is
+not a gate for this iteration. New-user and second-machine testing remain
+explicit external acceptance checks. No repository writes or pilot invitations
+were performed. Runtime/package validation and fixed synthetic retrieval results
+are recorded separately; do not equate retrieval scores with final answer accuracy.
+
+---
+
+# Current addendum: local semantic activation (2026-09-10)
+
+The personal workspace now uses the existing local Ollama provider with
+`nomic-embed-text`, replacing its hashing configuration. This is a configuration
+activation, not a new retrieval implementation. Original source permissions and
+other settings were preserved; the previous workspace configuration was backed
+up before changing it.
+
+- Rebuilt 554 files / 7,089 chunks; semantic index fresh, about 36 MB. First build
+  plus two queries took 314.5 seconds on this Mac with the model already installed.
+- Actual project-configured, bundled MCP command returned `semantic: true`,
+  `mode: hybrid`, cited evidence and no degradation warnings. Three real-corpus
+  query samples took 557–613 ms; this is not a latency benchmark.
+- 71 storage/recall/MCP regression tests passed in this pass. Four synthetic
+  English/Turkish paraphrases found an expected topic in the first three results;
+  only two ranked it first. Broader ranking quality is still unverified.
+- Capture and automatic index refresh remain off. Legacy `legacy personal recall` and the
+  vault's instructions remain installed; duplicate tool selection is not fixed
+  by enabling semantics. No publish or push.
+
+See [semantic-setup.md](semantic-setup.md) and the sanitized
+[verification report](semantic-verification.json). Earlier setup statements
+below describe their dated delivery runs, not this updated personal setup.
+
+---
+
+# Current addendum: C06 local app and packaging spike (2026-09-10)
+
+Read [C06.md](C06.md). C01–C05 changes are preserved. **C06 implementation is
+present; its pristine-machine and interactive acceptance gates remain open.**
+
+- Native SwiftUI app, bundled standalone Python, private-pipe supervised worker.
+  Local final artifact: `build/c06/Carry.app`. This is an arm64 development
+  build, not a signed/notarized pilot release.
+- Source/workspace setup, exact client-settings preview/apply/rollback, opt-in
+  prompt capture and proposals, per-client pause, separate MCP/capture/index
+  states, activity and revision/token-checked graphical review.
+- Settings changes are journaled and compared before writing. Rollback refuses
+  later edits. Normal personal client configurations were not installed/modified.
+- 19 C06 tests; full suite 166: all pass in the project environment, 165 pass plus
+  one optional SDK skip on standard Python. Bundled hook/MCP commands passed
+  synthetic-payload replay/accept/pause checks for both supported clients.
+- Native view/bridge tests rendered SwiftUI screens and accepted a synthetic
+  correction via the actual app model/worker. Worker restart and local MCP passed.
+  Computer-use's native pipe did not start, so mouse/keyboard navigation, folder
+  panels and actual editor-opening remain unverified interactively.
+- App about 49 MB; worker snapshot p50 2.34 ms versus fresh Python-process p50
+  202.53 ms. Optional model 274 MB, reported resident model size about 370 MB.
+  Raw packaging and native startup measurements are linked in C06.md.
+- Relocated app works outside the checkout without PATH Python or optional Python
+  packages. **This was the development Mac, not a pristine macOS machine.** Model
+  download duration, minimum-OS installation and Gatekeeper still need validation.
+- Next: close the two C06 external acceptance gaps, then C07 signed pilot build,
+  disconnect/export and user-tested setup. No publication, push or pilot invites.
+
+---
+
+# Current addendum: C05 reviewed lifecycle (2026-09-10)
+
+Read [C05.md](C05.md) for commands, acceptance semantics and remaining limits.
+The C04 changes below are preserved. No publication, push or personal client
+configuration installation was performed.
+
+- Optional, per-client MCP `carry_propose`; captured events refine their one
+  existing draft. Client/manual synthesis stays unaccepted until local review.
+- CLI proposal activity, source inspection, unified diff, token/revision checked
+  accept/reject, and automatic reindex with explicit `accepted_index_pending`.
+- Corrections target a source/record/revision/content snapshot. One accepted
+  Markdown file commits the correction; the target remains immutable. Effective
+  current/history pointers are derived from accepted links, including imports.
+- Pending and rejected proposals cannot change default recall. History is
+  explicit. A stale index cannot reintroduce an accepted correction's old answer.
+- Clean wheel installed without optional dependencies; installed CLI review and
+  both client-bound MCP correction/history flows passed outside the checkout.
+- 32 C05 tests added; full suite: 147 tests, all passing with project dependencies;
+  standard Python: 146 pass and one optional SDK skip.
+- Native Claude/Codex events plus deterministic synthesis over fresh MCP sessions
+  verified pending, accept, correction, replay and history. This is protocol
+  validation, not a model answer-quality evaluation. See the sanitized evidence
+  in `c05-native-verification.json`.
+- Remaining: model-driven synthesis/quality evaluation, paragraph-level targets,
+  and the C06 packaging/minimal macOS app spike. Legacy low-level `supersede`
+  retains its C02 API; reviewed CLI corrections now always create a draft first.
+
+---
+
+# Current addendum: C04 and independent revalidation (2026-09-10)
+
+Read [C04.md](C04.md) for setup, storage, diagnostics and current limits. The
+original handover below is historical; its results were rechecked, not assumed.
+
+- Before changes: 80 tests rerun in both environments (79 pass + SDK skip on
+  standard Python, 80 pass in the project environment).
+- Independent checks exposed six gaps in C02/C03; all are reproduced and fixed.
+  The exact findings and regression tests are described in C04.md.
+- C04: native Claude Code and Codex adapters, explicit whole-prompt opt-in,
+  per-client pause, one raw Markdown event and linked draft, safe receipts,
+  bounded locking, replay recovery and actionable unsupported states.
+- Actual Claude Code 2.1.267 and Codex CLI 0.153.4 emitted native events, persisted
+  exactly once on replay, and stopped persisting prompts when paused. Explicit
+  acceptance followed by fresh MCP processes returned cited native records.
+- No client settings were installed into the owner's normal configuration. Only
+  isolated synthetic connection-test settings were used. No publication or push.
+- The automatic review/synthesis UI, correction-target policy, model-driven
+  cross-client quality evaluation and packaging spike remain open for C05/C06.
+- Updated full suite: 115 tests; standard Python passes 114 with one optional SDK
+  skip; project Python passes all 115. Wheel built offline and installed into a
+  clean environment; installed CLI demo and cited recall verified outside the
+  checkout. The installed hook/MCP checks are included in the final local audit.
+
+---
+
 # Carry handover: C01 to C03
 
 Written 2026-09-09. Everything below is verified on this machine, not planned.

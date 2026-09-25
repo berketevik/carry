@@ -41,7 +41,7 @@ class WorkspaceCase(unittest.TestCase):
             self.base / "state",
             sources=[SourceConfig("corpus", self.corpus),
                      SourceConfig("records", self.records, writable=True)],
-            embedding=HASHING, retrieval=RetrievalConfig(top_k=6))
+            embedding=HASHING, retrieval=RetrievalConfig(top_k=6, auto_refresh=False))
         self.addCleanup(self.tmp.cleanup)
 
     def note(self, name, body="evidence body", summary=None, folder=None, root=None):

@@ -1,0 +1,74 @@
+{
+  "native_clients": {
+    "claude": "2.1.267",
+    "codex": "0.153.4"
+  },
+  "native_events": [
+    {
+      "keys": [
+        "cwd",
+        "hook_event_name",
+        "permission_mode",
+        "prompt",
+        "prompt_id",
+        "session_id",
+        "transcript_path"
+      ],
+      "receipt": {
+        "client": "claude",
+        "state": "duplicate",
+        "at": "2026-09-09T23:56:57.689+00:00",
+        "last_success_at": "2026-09-09T23:56:57.689+00:00",
+        "event_id": "evt_6d8865e053c3ea770948648ac34203768c79252244de3cf5c87c80b2a0dc0b34",
+        "source_id": "c05",
+        "event_path": "carry/.events/evt_6d8865e053c3ea770948648ac34203768c79252244de3cf5c87c80b2a0dc0b34.md",
+        "proposal_id": "rec_73e63399719448d2",
+        "proposal_path": "carry/2026-09-10-captured-prompt-review-required-73e63399.md",
+        "proposal_state": "draft",
+        "proposal_revision": 1,
+        "masked": [],
+        "write_owner": "hook"
+      },
+      "silent": true
+    },
+    {
+      "keys": [
+        "cwd",
+        "hook_event_name",
+        "model",
+        "permission_mode",
+        "prompt",
+        "session_id",
+        "transcript_path",
+        "turn_id"
+      ],
+      "receipt": {
+        "client": "codex",
+        "state": "duplicate",
+        "at": "2026-09-09T23:56:58.309+00:00",
+        "last_success_at": "2026-09-09T23:56:58.309+00:00",
+        "event_id": "evt_14604670c56cf2e316310d5c3726963ffbabc8077c7d749ee7f794e99249c2c8",
+        "source_id": "c05",
+        "event_path": "carry/.events/evt_14604670c56cf2e316310d5c3726963ffbabc8077c7d749ee7f794e99249c2c8.md",
+        "proposal_id": "rec_34c3a205da6f4bda",
+        "proposal_path": "carry/2026-09-10-captured-prompt-review-required-34c3a205.md",
+        "proposal_state": "draft",
+        "proposal_revision": 1,
+        "masked": [],
+        "write_owner": "hook"
+      },
+      "silent": true
+    }
+  ],
+  "synthesized_by": "deterministic test driver over fresh MCP sessions, not a model quality evaluation",
+  "current_record_id": "rec_34c3a205da6f4bda",
+  "current_revision": 3,
+  "native_capture_exactly_once": true,
+  "refines_same_draft": true,
+  "pending_does_not_change_answer": true,
+  "diff_reviewed": true,
+  "both_mcp_clients_see_correction": true,
+  "history_preserved": true,
+  "proposal_replay_idempotent": true,
+  "verified_on": "2026-09-10"
+}

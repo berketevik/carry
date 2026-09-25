@@ -1,0 +1,30 @@
+{
+  "native_event_emission": false,
+  "synthetic_vendor_payloads": true,
+  "clients": {
+    "claude": {
+      "capability": {
+        "version": "2.1.267",
+        "state": "supported"
+      },
+      "generated_command_silent": true,
+      "replay_one_event_one_draft": true,
+      "bundled_mcp_proposals": true,
+      "app_bridge_accept": true,
+      "paused_no_new_markdown": true,
+      "rollback": "not_attempted_after_state_edits"
+    },
+    "codex": {
+      "capability": {
+        "version": "0.153.4",
+        "state": "supported"
+      },
+      "generated_command_silent": true,
+      "replay_one_event_one_draft": true,
+      "bundled_mcp_proposals": true,
+      "app_bridge_accept": true,
+      "paused_no_new_markdown": true,
+      "rollback": "not_attempted_after_state_edits"
+    }
+  }
+}

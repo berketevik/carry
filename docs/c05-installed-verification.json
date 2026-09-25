@@ -1,0 +1,14 @@
+{
+  "installed_wheel": true,
+  "optional_dependencies": false,
+  "working_directory_outside_checkout": true,
+  "client_bound_mcp_sessions": [
+    "claude",
+    "codex"
+  ],
+  "cli_review_token_conflict": true,
+  "pending_keeps_accepted_answer": true,
+  "correction_and_history_verified": true,
+  "automatic_index": true,
+  "verified_on": "2026-09-10"
+}

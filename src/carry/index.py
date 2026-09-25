@@ -97,7 +97,7 @@ def corpus_snapshot(workspace):
         root = Path(source.root).expanduser().resolve()
         if not root.is_dir():
             continue
-        for relative, path in walk_markdown(root, extensions=tuple(source.extensions)):
+        for relative, path in walk_markdown(root, extensions=tuple(source.extensions), exclude=source.exclude):
             try:
                 data = path.read_bytes()
             except OSError:

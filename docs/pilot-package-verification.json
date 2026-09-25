@@ -1,0 +1,11 @@
+{
+  "installed_cli": true,
+  "mcp": true,
+  "bundled_reranker_dependencies": true,
+  "bundled_github_cli": true,
+  "bundled_ollama_runtime": true,
+  "automatic_initial_index": true,
+  "source_unchanged": true,
+  "files": 1,
+  "scope": "relocated app, isolated PATH on development Mac; not a second-machine test"
+}

@@ -1,0 +1,413 @@
+{
+  "date": "2026-09-10",
+  "scope": "Activation of existing local Ollama provider on the development Mac; no new retrieval implementation.",
+  "model": "nomic-embed-text:latest",
+  "model_digest": "0a109f422b47e3a30ba2b10eca18548e944e8a23073ee3f3e947efcf3c45e59f",
+  "model_bytes": 274302450,
+  "downloaded": false,
+  "build": {
+    "status": "built",
+    "at": 1789050454.946387,
+    "changed_files": 554,
+    "removed_files": 0,
+    "embedded_chunks": 7089,
+    "reused_chunks": 0,
+    "files": 554,
+    "chunks": 7089,
+    "provider": "ollama",
+    "semantic": true,
+    "needs_reconciliation": 0
+  },
+  "build_and_two_queries_seconds": 314.5,
+  "index_bytes": 36061184,
+  "actual_corpus_checks": [
+    {
+      "query": "Carry nasıl çalışır?",
+      "status": "evidence",
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [],
+        "semantic": true,
+        "mode": "hybrid",
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 554,
+          "corpus_files": 554,
+          "built_at": "1789050454.660512",
+          "last_build": {
+            "status": "built",
+            "at": 1789050454.946387,
+            "changed_files": 554,
+            "removed_files": 0,
+            "embedded_chunks": 7089,
+            "reused_chunks": 0,
+            "files": 554,
+            "chunks": 7089,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 6,
+          "max_chars": 7000,
+          "max_per_document": 2
+        },
+        "elapsed_ms": 581,
+        "returned_chars": 3430,
+        "candidates": 18,
+        "scoped_to": "all"
+      },
+      "source_count": 4
+    },
+    {
+      "query": "Geçmiş kararları farklı asistanlarda nasıl hatırlarım?",
+      "status": "evidence",
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [
+          "asistanlarda",
+          "hatırlarım"
+        ],
+        "semantic": true,
+        "mode": "hybrid",
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 554,
+          "corpus_files": 554,
+          "built_at": "1789050454.660512",
+          "last_build": {
+            "status": "built",
+            "at": 1789050454.946387,
+            "changed_files": 554,
+            "removed_files": 0,
+            "embedded_chunks": 7089,
+            "reused_chunks": 0,
+            "files": 554,
+            "chunks": 7089,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 6,
+          "max_chars": 7000,
+          "max_per_document": 2
+        },
+        "elapsed_ms": 557,
+        "returned_chars": 3222,
+        "candidates": 18,
+        "scoped_to": "all"
+      },
+      "source_count": 5
+    }
+  ],
+  "synthetic_checks": [
+    {
+      "query": "Why are shoppers failing to complete purchases?",
+      "expected": [
+        "a.md",
+        "d.md"
+      ],
+      "returned": [
+        "c.md",
+        "a.md",
+        "b.md"
+      ],
+      "expected_in_top_3": true,
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [
+          "why",
+          "shoppers",
+          "failing",
+          "complete",
+          "purchases"
+        ],
+        "semantic": true,
+        "mode": "hybrid",
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 6,
+          "corpus_files": 6,
+          "built_at": "1789050474.809016",
+          "last_build": {
+            "status": "built",
+            "at": 1789050474.8105202,
+            "changed_files": 6,
+            "removed_files": 0,
+            "embedded_chunks": 6,
+            "reused_chunks": 0,
+            "files": 6,
+            "chunks": 6,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 3,
+          "max_chars": 7000,
+          "max_per_document": 2
+        },
+        "elapsed_ms": 18,
+        "returned_chars": 220,
+        "candidates": 6,
+        "scoped_to": "all"
+      }
+    },
+    {
+      "query": "Satın alma neden tamamlanmıyor?",
+      "expected": [
+        "d.md",
+        "a.md"
+      ],
+      "returned": [
+        "d.md",
+        "f.md",
+        "e.md"
+      ],
+      "expected_in_top_3": true,
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [
+          "satın",
+          "alma",
+          "tamamlanmıyor"
+        ],
+        "semantic": true,
+        "mode": "hybrid",
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 6,
+          "corpus_files": 6,
+          "built_at": "1789050474.809016",
+          "last_build": {
+            "status": "built",
+            "at": 1789050474.8105202,
+            "changed_files": 6,
+            "removed_files": 0,
+            "embedded_chunks": 6,
+            "reused_chunks": 0,
+            "files": 6,
+            "chunks": 6,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 3,
+          "max_chars": 7000,
+          "max_per_document": 2
+        },
+        "elapsed_ms": 15,
+        "returned_chars": 226,
+        "candidates": 6,
+        "scoped_to": "all"
+      }
+    },
+    {
+      "query": "Ofise gelmeden hangi günlerde iş yapabilirim?",
+      "expected": [
+        "e.md",
+        "b.md"
+      ],
+      "returned": [
+        "a.md",
+        "d.md",
+        "e.md"
+      ],
+      "expected_in_top_3": true,
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [
+          "ofise",
+          "gelmeden",
+          "hangi",
+          "günlerde",
+          "yapabilirim"
+        ],
+        "semantic": true,
+        "mode": "hybrid",
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 6,
+          "corpus_files": 6,
+          "built_at": "1789050474.809016",
+          "last_build": {
+            "status": "built",
+            "at": 1789050474.8105202,
+            "changed_files": 6,
+            "removed_files": 0,
+            "embedded_chunks": 6,
+            "reused_chunks": 0,
+            "files": 6,
+            "chunks": 6,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 3,
+          "max_chars": 7000,
+          "max_per_document": 2
+        },
+        "elapsed_ms": 18,
+        "returned_chars": 252,
+        "candidates": 6,
+        "scoped_to": "all"
+      }
+    },
+    {
+      "query": "Kaybolan verileri geri getirmek için ne tutuluyor?",
+      "expected": [
+        "f.md",
+        "c.md"
+      ],
+      "returned": [
+        "f.md",
+        "d.md",
+        "e.md"
+      ],
+      "expected_in_top_3": true,
+      "diagnostics": {
+        "warnings": [],
+        "pending_proposals": 0,
+        "unmatched_terms": [
+          "kaybolan",
+          "verileri",
+          "geri",
+          "getirmek",
+          "için",
+          "tutuluyor"
+        ],
+        "semantic": true,
+        "mode": "vector",
+        "index": {
+          "state": "fresh",
+          "compatible": true,
+          "changed_files": 0,
+          "removed_files": 0,
+          "indexed_files": 6,
+          "corpus_files": 6,
+          "built_at": "1789050474.809016",
+          "last_build": {
+            "status": "built",
+            "at": 1789050474.8105202,
+            "changed_files": 6,
+            "removed_files": 0,
+            "embedded_chunks": 6,
+            "reused_chunks": 0,
+            "files": 6,
+            "chunks": 6,
+            "provider": "ollama",
+            "semantic": true,
+            "needs_reconciliation": 0
+          }
+        },
+        "budget": {
+          "top_k": 3,
+          "max_chars": 7000,
+          "max_per_document": 2
+        },
+        "elapsed_ms": 17,
+        "returned_chars": 226,
+        "candidates": 6,
+        "scoped_to": "all"
+      }
+    }
+  ],
+  "installed_mcp": {
+    "embedding": {
+      "name": "ollama",
+      "semantic": true,
+      "configured": true,
+      "available": true,
+      "detail": "ok"
+    },
+    "index_state": "fresh",
+    "search_state": {
+      "status": "evidence",
+      "warnings": [],
+      "pending_proposals": 0,
+      "unmatched_terms": [],
+      "semantic": true,
+      "mode": "hybrid",
+      "index": {
+        "state": "fresh",
+        "compatible": true,
+        "changed_files": 0,
+        "removed_files": 0,
+        "indexed_files": 554,
+        "corpus_files": 554,
+        "built_at": "1789050454.660512",
+        "last_build": {
+          "status": "built",
+          "at": 1789050454.946387,
+          "changed_files": 554,
+          "removed_files": 0,
+          "embedded_chunks": 7089,
+          "reused_chunks": 0,
+          "files": 554,
+          "chunks": 7089,
+          "provider": "ollama",
+          "semantic": true,
+          "needs_reconciliation": 0
+        }
+      },
+      "budget": {
+        "top_k": 3,
+        "max_chars": 3000,
+        "max_per_document": 2
+      },
+      "elapsed_ms": 613,
+      "returned_chars": 2084,
+      "candidates": 9,
+      "scoped_to": "all",
+      "refresh": "off"
+    }
+  },
+  "regression_tests": {
+    "storage": 36,
+    "recall_and_mcp": 35,
+    "passed": 71
+  },
+  "synthetic_corpus": {
+    "a.md": "Customers abandon their baskets during payment because the checkout form is too complicated.",
+    "b.md": "Employees can work from home on Tuesdays and Thursdays.",
+    "c.md": "Database snapshots are stored nightly and retained for thirty days.",
+    "d.md": "Müşteriler ödeme adımında işlemi yarıda bırakıyor. Kart bilgisi formunun uzunluğu buna neden oluyor.",
+    "e.md": "Çalışanlar salı ve perşembe günleri evden çalışabilir.",
+    "f.md": "Veritabanı yedekleri her gece alınır ve otuz gün boyunca saklanır."
+  },
+  "limits": [
+    "Synthetic smoke check only: four questions, six documents, expected topic in top three for 4/4 and first for 2/4.",
+    "No cross encoder reranker.",
+    "Automatic refresh remains off.",
+    "Legacy legacy personal recall connection and assistant instructions unchanged.",
+    "No private note text or source filenames in this report."
+  ]
+}

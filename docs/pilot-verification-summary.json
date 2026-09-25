@@ -1,0 +1,16 @@
+{
+  "run": 184,
+  "passed": 183,
+  "skipped": 1,
+  "skipped_reason": "optional official MCP SDK not installed; installed stdio protocol checks separately pass",
+  "native_ui_automation": "blocked: computer-use native pipe closed before response",
+  "github_live": {
+    "source_files": 86,
+    "chunks": 855,
+    "read_only": true,
+    "provider_for_connection_smoke": "hashing"
+  },
+  "distribution": "unsigned internal Apple silicon pilot",
+  "native_view_rendering": true,
+  "app_model_acceptance_and_worker_restart": true
+}

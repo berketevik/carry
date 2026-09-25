@@ -1,0 +1,13 @@
+{
+  "environment": "same development Mac, new process, warm OS caches",
+  "native_view_appeared": {
+    "samples": 10,
+    "p50_ms": 232.77,
+    "p95_ms": 709.66
+  },
+  "workspace_response": {
+    "samples": 10,
+    "p50_ms": 527.52,
+    "p95_ms": 1016.72
+  }
+}
