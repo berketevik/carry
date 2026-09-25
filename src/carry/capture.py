@@ -21,6 +21,8 @@ from .persistence import atomic_text, writer_lock
 from . import store
 
 CLIENTS = ('claude', 'codex')
+# Clients deliver background-task notices and subagent reports through UserPromptSubmit.
+HARNESS_PREFIXES = ('<task-notification>', '<agent-message')
 MAX_INPUT_BYTES = 262144
 REMEDIES = {
     'not_configured': 'Run carry capture configure with an explicit writable source and prompt opt-in.',
@@ -32,6 +34,7 @@ REMEDIES = {
     'client_unavailable': 'Install the supported CLI or pass its executable with --client-bin.',
     'missing_event_identity': 'Upgrade the client: Claude must supply prompt_id, Codex must supply turn_id. Text deduplication is not safe.',
     'unsupported_event': 'Connect only the UserPromptSubmit command hook.',
+    'harness_event': 'Nothing to do: background-task and subagent reports are not user prompts and are not captured.',
     'invalid_payload': 'Check the hook JSON contract; stdin must contain a supported user-prompt event.',
     'payload_too_large': 'Submit a smaller prompt; this adapter accepts at most 256 KiB of input.',
     'event_identity_conflict': 'The same native event ID arrived with different text; inspect the client before retrying.',
@@ -196,6 +199,8 @@ def normalize(client, payload):
     prompt = payload.get('prompt')
     if not isinstance(prompt, str) or not prompt.strip():
         raise CaptureError('invalid_payload')
+    if prompt.lstrip().startswith(HARNESS_PREFIXES):
+        raise CaptureError('harness_event')
     event_id = 'evt_' + hashlib.sha256(json.dumps([client, session, native_id]).encode()).hexdigest()
     content, categories = mask(prompt)
     return dict(event_id=event_id, content=content, masked=categories,

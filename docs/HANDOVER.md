@@ -1,3 +1,37 @@
+# Current addendum: vault bootstrap (2026-09-24)
+
+Carry can now create a vault in one step. The design and the Continuity feature
+that follows it are in the owner's vault log, "Carry Continuity and Vault
+Bootstrap Specification" (2026-09-24). Named features, not numbered: C07 stays
+the signed pilot build.
+
+- `carry [--workspace S] vault init <path> [--dry-run] [--language L] [--no-git]`
+  plans the template pack, writes safe changes, reports conflicts (exit 1) and
+  never overwrites an edited managed file. With `--workspace` it also creates the
+  workspace with the vault as its source and writes device-local, gitignored
+  `.mcp.json` / `.codex/config.toml`. `carry vault rollback <path> --id ID` undoes one apply.
+- Managed files (guide, adapters, setup guide, client wiring) are hashed in the
+  committed stamp `.carry/vault.json`; an upgrade rewrites only files that still
+  match it. Seeds (`Home.md`, `.gitignore`, `x/Templates/`, `.gitkeep`) are
+  written when absent and then belong to the owner.
+- Only an empty folder (or one holding just `.git`) or a previously bootstrapped
+  one is accepted. Existing notes are never reorganized.
+- New: `src/carry/vault.py`, `src/carry/templates/vault/`, `tests/test_vault.py`
+  (20 tests as of 2026-09-25). Edited: `cli.py`, `pyproject.toml` (package data; the wheel ships
+  all eight template files). Full suite: 201 tests pass in the project environment.
+- 2026-09-25: `vault init --capture` wires both clients' prompt hooks (device-local,
+  gitignored), makes the vault source writable and opts both clients in; records
+  land in `sources/carry/`. The bootstrapped source excludes `+`, `workbench`, `x`,
+  `tools`, `*_index.md` and root rule files. A measured comparison on a real vault
+  showed an unscoped whole-root source returning about one in five passages from
+  policy folders and indexes. Suite: 204 tests pass.
+- Open: index generation and a pre-commit hook are not shipped; the app has no
+  "create a new vault" entry yet; no real client session or second machine has
+  used a bootstrapped vault. Continuity (transcript harvesting, handoffs,
+  session-start injection) is not started. Uncommitted, like the work below.
+
+---
+
 # Current addendum: GitHub internal pilot (2026-09-14)
 
 Read [PILOT.md](PILOT.md). Managed GitHub snapshots, background maintenance,

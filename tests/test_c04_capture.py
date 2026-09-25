@@ -54,6 +54,16 @@ class CaptureTest(WorkspaceCase):
             self.assertIn('October 15', body)
         self.assertEqual(len(list(self.records.rglob('*.md'))), 4)
 
+    def test_harness_events_are_not_captured_as_prompts(self):
+        before = sorted(self.records.rglob('*.md'))
+        for prompt in ('<task-notification>\n<task-id>x</task-id>\n</task-notification>',
+                       '<agent-message from="helper">\nreport\n</agent-message>'):
+            for client in capture.CLIENTS:
+                self.assertEqual(self.send(client, prompt=prompt)['state'], 'harness_event')
+        self.assertEqual(sorted(self.records.rglob('*.md')), before)
+        self.assertEqual(self.send('codex', event='two', prompt='<pasted_content>notes</pasted_content> özetle')['state'],
+                         'captured')
+
     def test_replay_is_exactly_once(self):
         for client in capture.CLIENTS:
             first = self.send(client)
