@@ -35,12 +35,18 @@ class SourceConfig:
     scope: str = "personal"
     records_dir: str = "carry"
     extensions: tuple = (".md",)
+    github: dict = field(default_factory=dict)
+    exclude: tuple = ()
 
     def validate(self):
         if not SOURCE_ID_RE.match(self.source_id or ""):
             raise WorkspaceError("invalid_source_id")
         if self.scope not in SCOPES:
             raise WorkspaceError("invalid_scope")
+        if self.github and self.writable:
+            raise WorkspaceError("github_source_must_be_read_only")
+        if not isinstance(self.exclude, (list, tuple)) or not all(isinstance(p, str) for p in self.exclude):
+            raise WorkspaceError("invalid_source_exclusions")
         resolve_root(self.root)
         if self.writable and not os.access(self.root, os.W_OK):
             raise WorkspaceError("source_not_writable")
@@ -49,7 +55,7 @@ class SourceConfig:
     def to_json(self):
         return dict(source_id=self.source_id, root=str(self.root), writable=self.writable,
                     scope=self.scope, records_dir=self.records_dir,
-                    extensions=list(self.extensions))
+                    extensions=list(self.extensions), github=self.github, exclude=list(self.exclude))
 
     @staticmethod
     def from_json(data):
@@ -57,7 +63,8 @@ class SourceConfig:
             source_id=data["source_id"], root=Path(data["root"]).expanduser(),
             writable=bool(data.get("writable", False)), scope=data.get("scope", "personal"),
             records_dir=data.get("records_dir", "carry"),
-            extensions=tuple(data.get("extensions", (".md",))))
+            extensions=tuple(data.get("extensions", (".md",))),
+            github=dict(data.get("github", {})), exclude=tuple(data.get("exclude", ())))
 
 
 @dataclass(frozen=True)
@@ -93,6 +100,12 @@ class RetrievalConfig:
     max_chars: int = 7000
     max_per_document: int = 2
     reranker: str = "off"            # off | cross
+    reranker_model: str = "BAAI/bge-reranker-v2-m3"
+    reranker_min_score: float = -4.0
+    vector_min_score: float = 0.45
+    auto_refresh: bool = True
+    refresh_seconds: int = 60
+    github_sync_seconds: int = 300
 
     def to_json(self):
         return {f: getattr(self, f) for f in self.__dataclass_fields__}
@@ -107,7 +120,8 @@ class RetrievalConfig:
 class Workspace:
     """State directory plus configured sources.
 
-    The state directory holds only derived data (index, status, sidecar). It must
+    The state directory holds configuration and derived data (index, receipts,
+    status, sidecar). Canonical records and captured events live in sources. It must
     live outside every source root so a rebuild can never touch user files.
     """
     state_dir: Path
@@ -172,6 +186,12 @@ class Workspace:
                 if is_contained(other, root) or is_contained(root, other):
                     raise WorkspaceError("nested_source_roots")
             roots.append(root)
+        if self.retrieval.reranker not in ("off", "cross"):
+            raise WorkspaceError("invalid_reranker")
+        if not -1 <= self.retrieval.vector_min_score <= 1:
+            raise WorkspaceError("invalid_vector_threshold")
+        if self.retrieval.refresh_seconds < 10 or self.retrieval.github_sync_seconds < 30:
+            raise WorkspaceError("invalid_refresh_interval")
         if self.retrieval.chunk_overlap >= self.retrieval.chunk_chars:
             raise WorkspaceError("invalid_chunking")
         return self

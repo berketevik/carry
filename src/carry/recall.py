@@ -35,12 +35,11 @@ def normalize_budget(retrieval, budget=None):
     for key, value in (budget or {}).items():
         if key not in resolved:
             raise ValueError("unknown_budget_key:" + str(key))
-        try:
-            number = int(value)
-        except (TypeError, ValueError):
+        if type(value) is not int or value <= 0:
             raise ValueError("invalid_budget_value:" + str(key))
-        low, high = BUDGET_LIMITS[key]
-        resolved[key] = max(low, min(number, high, resolved[key]))
+        number = value
+        _, high = BUDGET_LIMITS[key]
+        resolved[key] = min(number, high, resolved[key])
     return resolved
 
 
@@ -71,7 +70,7 @@ def unmatched_terms(con, query, limit=12):
     return missing
 
 
-def _cosine_ranking(rows, query_vector, limit):
+def _cosine_ranking(rows, query_vector, limit, min_score=-1.0, scores_out=None):
     if _np is not None:
         matrix = _np.array([unpack(r["vec"], r["dim"]) for r in rows], dtype="float32")
         matrix /= _np.linalg.norm(matrix, axis=1, keepdims=True) + 1e-9
@@ -79,7 +78,9 @@ def _cosine_ranking(rows, query_vector, limit):
         vector /= _np.linalg.norm(vector) + 1e-9
         scores = matrix @ vector
         order = _np.argsort(-scores)[:limit]
-        return [rows[i]["id"] for i in order]
+        if scores_out is not None:
+            scores_out.update({rows[i]["id"]: float(scores[i]) for i in order})
+        return [rows[i]["id"] for i in order if float(scores[i]) >= min_score]
     norm = math.sqrt(sum(v * v for v in query_vector)) or 1.0
     scored = []
     for row in rows:
@@ -87,10 +88,12 @@ def _cosine_ranking(rows, query_vector, limit):
         length = math.sqrt(sum(v * v for v in vec)) or 1.0
         scored.append((sum(a * b for a, b in zip(vec, query_vector)) / (length * norm), row["id"]))
     scored.sort(key=lambda pair: -pair[0])
-    return [cid for _, cid in scored[:limit]]
+    if scores_out is not None:
+        scores_out.update({cid: score for score, cid in scored[:limit]})
+    return [cid for score, cid in scored[:limit] if score >= min_score]
 
 
-def search(workspace, query, con, limit, source_ids=None, diagnostics=None):
+def search(workspace, query, con, limit, source_ids=None, diagnostics=None, eligible=None):
     """Independent lexical and vector branches fused with RRF."""
     diagnostics = diagnostics if diagnostics is not None else {}
     diagnostics.setdefault("warnings", [])
@@ -103,6 +106,8 @@ def search(workspace, query, con, limit, source_ids=None, diagnostics=None):
                  text=r[5], dim=r[6], vec=r[7])
             for r in con.execute(
                 "SELECT id,source_id,path,title,heading,text,dim,vec FROM chunks" + where, params)]
+    if eligible is not None:
+        rows = [r for r in rows if (r['source_id'], r['path']) in eligible]
     if not rows:
         diagnostics["mode"] = "none"
         return []
@@ -114,13 +119,14 @@ def search(workspace, query, con, limit, source_ids=None, diagnostics=None):
         try:
             lexical = [r[0] for r in con.execute(
                 "SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH ? ORDER BY rank LIMIT ?",
-                (match, retrieval.branch_candidates * (3 if source_ids else 1)))
-                if r[0] in allowed]
+                (match, -1))
+                if r[0] in allowed][:retrieval.branch_candidates]
             diagnostics["unmatched_terms"] = unmatched_terms(con, query)
         except sqlite3.Error:
             diagnostics["warnings"].append("fts_unavailable")
 
     vector = []
+    vector_scores = {}
     try:
         provider = build_provider(workspace.embedding)
         config, _ = read_manifest(con)
@@ -129,12 +135,17 @@ def search(workspace, query, con, limit, source_ids=None, diagnostics=None):
         query_vector = provider.embed_query(query)
         if not query_vector or not all(math.isfinite(x) for x in query_vector):
             raise ProviderUnavailable("invalid_query_embedding")
-        vector = _cosine_ranking(rows, query_vector, retrieval.branch_candidates)
+        vector = _cosine_ranking(rows, query_vector, retrieval.branch_candidates,
+                                 (-1.0 if retrieval.reranker == "cross" else retrieval.vector_min_score) if provider.semantic else 0.01, vector_scores)
+        if not provider.semantic:
+            vector = [cid for cid in vector if cid in lexical]
         diagnostics["semantic"] = bool(provider.semantic)
     except Exception as exc:
         diagnostics["warnings"].append("vector_unavailable:" + type(exc).__name__)
         diagnostics["semantic"] = False
 
+    diagnostics["answerability"] = "not_verified"
+    diagnostics["relevance_gate"] = "vector_similarity_and_lexical_candidates"
     diagnostics["mode"] = ("hybrid" if lexical and vector else "vector" if vector
                            else "lexical" if lexical else "none")
     scores = {}
@@ -143,7 +154,11 @@ def search(workspace, query, con, limit, source_ids=None, diagnostics=None):
             scores[chunk_id] = scores.get(chunk_id, 0.0) + 1.0 / (retrieval.rrf_k + rank)
     ordered = sorted(scores, key=lambda cid: -scores[cid])[:limit]
     by_id = {r["id"]: r for r in rows}
-    return [by_id[cid] for cid in ordered]
+    candidates = [dict(by_id[cid], vector_score=vector_scores.get(cid)) for cid in ordered]
+    # Do not call a lexical overlap a verified answer; final grounding remains
+    # the assistant's responsibility. An installed cross encoder adds a gate.
+    from .rerank import rerank
+    return rerank(query, candidates, retrieval, diagnostics)
 
 
 def select_evidence(rows, budget):
@@ -156,6 +171,8 @@ def select_evidence(rows, budget):
             continue
         if size + len(row["text"]) > budget["max_chars"] and selected:
             continue
+        if len(row["text"]) > budget["max_chars"] - size:
+            row = dict(row, text=row["text"][:budget["max_chars"] - size], truncated=True)
         seen.add(normalized)
         per_document[key] = per_document.get(key, 0) + 1
         size += len(row["text"])
@@ -172,7 +189,7 @@ def _file_records(con, source_ids=None):
         params = list(source_ids)
     result = {}
     for row in con.execute(
-            "SELECT source_id,path,metadata,record_id,revision,state,current,superseded_by"
+            "SELECT source_id,path,metadata,record_id,revision,state,current,superseded_by,digest"
             " FROM files" + where, params):
         try:
             metadata = json.loads(row[2])
@@ -181,7 +198,7 @@ def _file_records(con, source_ids=None):
         result[(row[0], row[1])] = dict(
             metadata={k: metadata[k] for k in METADATA_KEYS if k in metadata},
             record_id=row[3], revision=row[4], state=row[5],
-            current=bool(row[6]), superseded_by=row[7] or "")
+            current=bool(row[6]), superseded_by=row[7] or "", digest=row[8])
     return result
 
 
@@ -189,7 +206,7 @@ def citation(source_id, path, title):
     return f"{title} ({source_id}:{path})"
 
 
-def recall(workspace, query, source_ids=None, budget=None, include_history=False):
+def recall(workspace, query, source_ids=None, budget=None, include_history=False, include_drafts=False):
     """Return cited evidence, or an explicit no-evidence / unavailable state."""
     started = time.monotonic()
     workspace.validate()
@@ -218,9 +235,33 @@ def recall(workspace, query, source_ids=None, budget=None, include_history=False
     try:
         with closing(open_readonly(workspace.db_path)) as con:
             index_health = health(workspace, con)
-            candidates = search(workspace, query, con, limits["top_k"] * 3,
-                                source_ids=source_ids, diagnostics=diagnostics)
             files = _file_records(con, source_ids)
+            # Resolve accepted target links from canonical Markdown even if the
+            # last build failed. Never serve old bytes as the current decision.
+            from .lifecycle import catalog
+            live = catalog(workspace)
+            eligible = set()
+            diagnostics['warnings'] = []
+            for key, record in files.items():
+                current = live.get(key)
+                if current is None or current['digest'] != record['digest']:
+                    continue
+                record.update(state=current['state'], current=current['current'],
+                              superseded_by=current['superseded_by'])
+                if current.get('correction_conflict'):
+                    record['correction_conflict'] = current['correction_conflict']
+                    diagnostics['warnings'].append('correction_target_conflict')
+                if current['state'] == 'rejected':
+                    continue
+                if current['state'] == 'draft' and not include_drafts:
+                    continue
+                if not current['current'] and not include_history:
+                    continue
+                eligible.add(key)
+            diagnostics['pending_proposals'] = sum(f['state'] == 'draft' for f in live.values()
+                if not source_ids or f['source_id'] in source_ids)
+            candidates = search(workspace, query, con, limits['top_k'] * 3,
+                                source_ids=source_ids, diagnostics=diagnostics, eligible=eligible)
     except (OSError, sqlite3.Error, ValueError) as exc:
         return dict(ok=False, status="unavailable", error="index_read_failed:" + type(exc).__name__,
                     evidence=[], sources=[], budget=limits,
@@ -231,22 +272,31 @@ def recall(workspace, query, source_ids=None, budget=None, include_history=False
                       if files.get((r["source_id"], r["path"]), {}).get("current", True)]
     hits = select_evidence(candidates, limits)
 
+    from .github import citation_url
     evidence = []
     for row in hits:
         record = files.get((row["source_id"], row["path"]), {})
         evidence.append(dict(
             source_id=row["source_id"], path=row["path"], title=row["title"],
-            heading=row["heading"], text=row["text"],
+            heading=row["heading"], text=row["text"], truncated=row.get("truncated", False),
             citation=citation(row["source_id"], row["path"], row["title"]),
+            url=citation_url(workspace.source(row["source_id"]), row["path"]),
+            relevance_score=row.get("relevance_score"), vector_score=row.get("vector_score"),
             record_id=record.get("record_id", ""), revision=record.get("revision", 1),
             state=record.get("state", "imported"), current=record.get("current", True),
             superseded_by=record.get("superseded_by", ""),
+            correction_conflict=record.get("correction_conflict"),
             metadata=record.get("metadata", {})))
     sources = list({(e["source_id"], e["path"]): dict(
         source_id=e["source_id"], path=e["path"], title=e["title"],
         citation=e["citation"], record_id=e["record_id"], revision=e["revision"],
         state=e["state"]) for e in evidence}.values())
 
+    from .maintenance import sync_status
+    remote_states = sync_status(workspace)
+    diagnostics['github_sync'] = {s.source_id: dict(remote_states.get(s.source_id, {}), commit=s.github.get('commit'), synced_at=s.github.get('synced_at')) for s in workspace.sources if s.github and (not source_ids or s.source_id in source_ids)}
+    if any(v.get('status') == 'failed' for v in diagnostics['github_sync'].values()):
+        diagnostics['warnings'].append('github_sync_failed_using_last_successful_snapshot')
     diagnostics.update(index=index_health, budget=limits,
                        elapsed_ms=round((time.monotonic() - started) * 1000),
                        returned_chars=sum(len(e["text"]) for e in evidence),

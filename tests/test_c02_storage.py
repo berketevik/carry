@@ -90,7 +90,8 @@ class PathContainmentTest(WorkspaceCase):
         self.build()
         result = recall(self.workspace, "secret sentinel")
         self.assertNotIn("sentinel", json.dumps(result["evidence"], default=str))
-        self.assertEqual({e["path"] for e in result["evidence"]}, {"Inside.md"})
+        self.assertEqual(result["evidence"], [])
+        self.assertEqual({e["path"] for e in recall(self.workspace, "Inside")["evidence"]}, {"Inside.md"})
 
 
 class IsolationTest(WorkspaceCase):
@@ -186,7 +187,8 @@ class RebuildSafetyTest(WorkspaceCase):
         self.assertEqual(result["removed_files"], 1, result)
         evidence = recall(self.workspace, "alpha sentinel")["evidence"]
         self.assertNotIn("sentinel", json.dumps(evidence, default=str))
-        self.assertEqual({e["path"] for e in evidence}, {"Beta.md"})
+        self.assertEqual(evidence, [])
+        self.assertEqual({e["path"] for e in recall(self.workspace, "beta evidence")["evidence"]}, {"Beta.md"})
 
     def test_failed_build_keeps_the_published_index_byte_for_byte(self):
         self.note("Alpha", body="alpha evidence")

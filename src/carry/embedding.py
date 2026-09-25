@@ -100,10 +100,24 @@ class OllamaEmbedding(EmbeddingProvider):
         return vector
 
     def embed_document(self, text):
-        return self._embed(("search_document: " if self.prefixes else "") + text)
+        prefix = ''
+        if self.prefixes:
+            if self.model.startswith('embeddinggemma'):
+                prefix = 'title: none | text: '
+            elif self.model.startswith('nomic-embed-text'):
+                prefix = 'search_document: '
+        return self._embed(prefix + text)
 
     def embed_query(self, text):
-        return self._embed(("search_query: " if self.prefixes else "") + text)
+        prefix = ''
+        if self.prefixes:
+            if self.model.startswith('embeddinggemma'):
+                prefix = 'task: search result | query: '
+            elif self.model.startswith('qwen3-embedding'):
+                prefix = 'Instruct: Given a search query, retrieve relevant passages that answer the query\nQuery: '
+            elif self.model.startswith('nomic-embed-text'):
+                prefix = 'search_query: '
+        return self._embed(prefix + text)
 
     def probe(self):
         try:

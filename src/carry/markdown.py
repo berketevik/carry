@@ -5,6 +5,7 @@ shapes Carry writes and the common scalar/list forms found in user notes; it
 reports the shapes it cannot represent instead of guessing.
 """
 import re
+import json
 from pathlib import Path
 
 FRONTMATTER_RE = re.compile(r"\A---[ \t]*\n(.*?)\n---[ \t]*(?:\n|$)", re.S)
@@ -21,6 +22,11 @@ def _scalar(raw):
     if not text:
         return ""
     if text[0] in "\"'" and text[-1] == text[0] and len(text) > 1:
+        if text[0] == '"':
+            try:
+                return json.loads(text)
+            except ValueError:
+                pass
         return text[1:-1]
     if text in ("true", "True"):
         return True

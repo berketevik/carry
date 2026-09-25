@@ -8,7 +8,7 @@ import re
 import uuid
 from dataclasses import dataclass
 
-STATES = ("draft", "accepted", "corrected", "superseded")
+STATES = ("draft", "accepted", "corrected", "superseded", "rejected")
 RECORD_ID_RE = re.compile(r"^(rec|imp)_[0-9a-f]{12,32}$")
 
 FRONTMATTER_KEYS = (

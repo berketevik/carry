@@ -19,6 +19,7 @@ rerank = ["sentence-transformers>=5,<6", "torch>=2,<3"]
 [project.scripts]
 carry = "carry.cli:main"
 carry-mcp = "carry.mcp_server:main"
+carry-hook = "carry.hook:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

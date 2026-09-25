@@ -1,0 +1,202 @@
+{
+  "documents": {
+    "refund.md": "# Refunds\nCustomers can return unused products within 30 days. Refunds are sent to the original payment method within five business days.",
+    "remote.md": "# Çalışma düzeni\nEkip salı ve perşembe günleri evden çalışabilir. Pazartesi, çarşamba ve cuma ofise gelinir.",
+    "checkout.md": "# Ödeme hatası\nSepetten ödeme adımına geçerken adres alanının boş kalması işlemi durduruyor. Çözüm, teslimat adresini zorunlu yapmak.",
+    "release.md": "# Release decision\nThe Orion release is scheduled for 22 October 2026. Mina owns the release checklist. The pilot was postponed because mobile login failed.",
+    "warehouse.md": "# Warehouse model\nThe orders table has one row per order, keyed by order_id. Session counts belong in the sessions table, with one row per session.",
+    "invoice.md": "# Fatura süreci\nTedarikçi faturaları her ayın son iş gününde finans ekibine gönderilir. Ödeme onayını Deniz verir.",
+    "retention.md": "# Log retention\nApplication logs are deleted after 14 days. Backups are retained for 90 days. Raw payment card data must never enter application logs.",
+    "coffee.md": "# Ofis mutfağı\nKahve çekirdeği siparişini Ece verir. Filtre kahve makinesi her cuma temizlenir.",
+    "cache.md": "# Cache policy\nInventory availability is cached for 45 seconds. Product descriptions are cached for six hours. A price update invalidates the product price cache immediately.",
+    "incident.md": "# Incident escalation\nFor a failed warehouse ingestion job, contact the on-call data engineer in the data-ops channel. Rerun only the failed partition; do not reload all history.",
+    "leave.md": "# İzin başvurusu\nYıllık izin talebi başlangıç tarihinden en az yedi iş günü önce ekip liderine iletilir. Hastalık izninde bu süre şartı aranmaz.",
+    "credentials.md": "# Service access\nProduction service credentials rotate every 60 days. Staging credentials rotate every 120 days. Credentials are stored in the approved secret manager.",
+    "shipping.md": "# Teslimat politikası\nStandart kargo siparişleri iki iş gününde depodan çıkar. Ekspres siparişler aynı gün 14:00 öncesinde verilirse o gün kargolanır.",
+    "schema.md": "# Event contract\nThe purchase event requires transaction_id and currency. Event timestamps use UTC. Test events must set environment to staging.",
+    "approval.md": "# Approval limits\nInfrastructure purchases above 5000 euros require both finance and engineering approval. Purchases at or below 5000 euros require the team lead only.",
+    "decoy.md": "# Orion experiment\nThe Orion mobile experiment started on 8 September 2026. This experiment is separate from the Orion release milestone."
+  },
+  "queries": [
+    {
+      "split": "development",
+      "kind": "exact_en",
+      "query": "When is the Orion release scheduled?",
+      "expected": "release.md"
+    },
+    {
+      "split": "development",
+      "kind": "exact_tr",
+      "query": "Tedarikçi faturalarının ödeme onayını kim verir?",
+      "expected": "invoice.md"
+    },
+    {
+      "split": "development",
+      "kind": "paraphrase_tr",
+      "query": "Ofise gitmeden hangi günlerde işimi yapabilirim?",
+      "expected": "remote.md"
+    },
+    {
+      "split": "development",
+      "kind": "paraphrase_tr",
+      "query": "Müşteriler alışverişi neden bitiremiyor?",
+      "expected": "checkout.md"
+    },
+    {
+      "split": "development",
+      "kind": "cross_en_tr",
+      "query": "Who approves vendor invoice payments?",
+      "expected": "invoice.md"
+    },
+    {
+      "split": "development",
+      "kind": "cross_tr_en",
+      "query": "Satın aldığım ürünü geri vermek için kaç günüm var?",
+      "expected": "refund.md"
+    },
+    {
+      "split": "development",
+      "kind": "cross_tr_en",
+      "query": "Her sipariş için tek kayıt hangi tabloda tutuluyor?",
+      "expected": "warehouse.md"
+    },
+    {
+      "split": "development",
+      "kind": "cross_tr_en",
+      "query": "Uygulama günlükleri ne kadar süre saklanıyor?",
+      "expected": "retention.md"
+    },
+    {
+      "split": "development",
+      "kind": "paraphrase_en",
+      "query": "Why did the pilot launch slip?",
+      "expected": "release.md"
+    },
+    {
+      "split": "development",
+      "kind": "cross_en_tr",
+      "query": "Who replenishes the office coffee beans?",
+      "expected": "coffee.md"
+    },
+    {
+      "split": "development",
+      "kind": "missing",
+      "query": "What is the annual salary of the Orion project manager?",
+      "expected": null
+    },
+    {
+      "split": "development",
+      "kind": "missing",
+      "query": "Şirketin Mars kolonisi için roket yakıtı bütçesi kaç dolar?",
+      "expected": null
+    },
+    {
+      "split": "held_out",
+      "kind": "cross_tr_en",
+      "query": "Stok bilgisi önbellekte kaç saniye kalıyor?",
+      "expected": "cache.md"
+    },
+    {
+      "split": "held_out",
+      "kind": "cross_tr_en",
+      "query": "Ürün fiyatı değişirse önbelleğe ne oluyor?",
+      "expected": "cache.md"
+    },
+    {
+      "split": "held_out",
+      "kind": "cross_tr_en",
+      "query": "Veri aktarımı başarısız olunca tüm geçmişi yeniden yüklemeli miyim?",
+      "expected": "incident.md"
+    },
+    {
+      "split": "held_out",
+      "kind": "cross_tr_en",
+      "query": "Üretim ortamı erişim bilgileri kaç günde bir yenilenir?",
+      "expected": "credentials.md"
+    },
+    {
+      "split": "held_out",
+      "kind": "cross_en_tr",
+      "query": "How far in advance do I need to request annual leave?",
+      "expected": "leave.md"
+    },
+    {
+      "split": "held_out",
+      "kind": "cross_en_tr",
+      "query": "When should I place an express order for same-day dispatch?",
+      "expected": "shipping.md"
+    },
+    {
+      "split": "held_out",
+      "kind": "paraphrase_tr",
+      "query": "Hastalanınca izin için bir hafta önceden haber vermem mi gerekiyor?",
+      "expected": "leave.md"
+    },
+    {
+      "split": "held_out",
+      "kind": "cross_tr_en",
+      "query": "Satın alma olayında hangi iki alan zorunlu?",
+      "expected": "schema.md"
+    },
+    {
+      "split": "held_out",
+      "kind": "paraphrase_en",
+      "query": "Which timezone should we use when recording events?",
+      "expected": "schema.md"
+    },
+    {
+      "split": "held_out",
+      "kind": "cross_tr_en",
+      "query": "6000 avroluk altyapı alımını kimler onaylamalı?",
+      "expected": "approval.md"
+    },
+    {
+      "split": "held_out",
+      "kind": "paraphrase_en",
+      "query": "Can my team lead alone approve a 4000 euro infrastructure purchase?",
+      "expected": "approval.md"
+    },
+    {
+      "split": "held_out",
+      "kind": "exact_en",
+      "query": "When did the Orion mobile experiment start?",
+      "expected": "decoy.md"
+    },
+    {
+      "split": "held_out",
+      "kind": "missing",
+      "query": "What is the annual salary of the on-call data engineer?",
+      "expected": null
+    },
+    {
+      "split": "held_out",
+      "kind": "missing",
+      "query": "Hangi şirket bizim ekspres kargolarımızı taşıyor?",
+      "expected": null
+    },
+    {
+      "split": "held_out",
+      "kind": "missing",
+      "query": "What is the production database password?",
+      "expected": null
+    },
+    {
+      "split": "held_out",
+      "kind": "missing",
+      "query": "İzin talebi hangi insan kaynakları uygulamasından gönderiliyor?",
+      "expected": null
+    },
+    {
+      "split": "held_out",
+      "kind": "missing",
+      "query": "What is the purchase event schema version number?",
+      "expected": null
+    },
+    {
+      "split": "held_out",
+      "kind": "missing",
+      "query": "Orion projesinin toplam gelir hedefi nedir?",
+      "expected": null
+    }
+  ]
+}

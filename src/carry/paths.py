@@ -1,5 +1,6 @@
 """Path containment. A configured root is a boundary, not a hint."""
 import os
+import fnmatch
 from pathlib import Path
 
 from .errors import SourceError
@@ -40,7 +41,7 @@ def is_contained(root, other):
     return root == other or root in other.parents
 
 
-def walk_markdown(root, extensions=(".md",), max_bytes=2_000_000):
+def walk_markdown(root, extensions=(".md",), max_bytes=2_000_000, exclude=()):
     """Yield (relative_path, absolute_path) for indexable files under `root`.
 
     Symlinked files and directories are skipped rather than followed: a link can
@@ -57,6 +58,9 @@ def walk_markdown(root, extensions=(".md",), max_bytes=2_000_000):
         for name in sorted(filenames):
             path = current / name
             if path.is_symlink() or path.suffix.lower() not in extensions:
+                continue
+            relative = path.relative_to(root).as_posix()
+            if any(fnmatch.fnmatchcase(relative, pattern) or relative.startswith(pattern.rstrip("/") + "/") for pattern in exclude):
                 continue
             try:
                 if path.stat().st_size > max_bytes:

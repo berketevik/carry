@@ -8,10 +8,15 @@ Markdown files are canonical. The search index is derived state that can be
 deleted and rebuilt at any time. Nothing leaves the machine except the passages
 a client model asks for.
 
-**Status: private alpha, milestones C01 to C03.** Configured sources, Markdown
-record storage, a derived hybrid index, a CLI and a stdio MCP server with recall
-and status. Capture adapters, the review interface and packaging are not built
-yet; see [Limits](#limits).
+**Status: internal pilot under verification.** Local folders and read-only GitHub
+repositories, background synchronization/indexing, multilingual search with an
+optional relevance model, and a native macOS interface. Existing capture/review
+features remain opt-in. See [pilot setup and limits](docs/PILOT.md).
+
+The full Apple silicon package includes Python, the official GitHub CLI, Ollama
+and Python search dependencies. Models download on explicit setup. This pilot
+is not Developer ID signed/notarized; second-machine acceptance is still a user
+pilot check, not a completed automated test.
 
 ## Install
 
@@ -21,13 +26,12 @@ uv venv --python 3.13 .venv          # or: python3 -m venv .venv
 ```
 
 Optional extras: `.[embed]` adds numpy (faster vector search), `.[yaml]` adds
-PyYAML (broader frontmatter support), `.[rerank]` reserves the cross-encoder
-path. The core runs without all of them and reports the resulting degradation.
+PyYAML (broader frontmatter support), `.[rerank]` enables the local cross-encoder runtime. The core runs without all of them and reports the resulting degradation.
 
 Local semantic embeddings currently come from an Ollama model
 (`nomic-embed-text` by default). Without it, retrieval falls back to a lexical
-provider and says so in every status payload. Managing that dependency for a
-non-technical install is an open packaging task, not a solved one.
+provider and says so in every status payload. The app starts with offline keyword search and can install the multilingual
+model and relevance model, then rebuild its index in the background.
 
 ## Quick start
 
@@ -76,6 +80,11 @@ Tools:
 - `carry_status(probe?)` returns integration and index status with no note
   contents and no credentials.
 
+`carry_propose` is additionally available only for a server-bound client with
+explicit workspace write opt-in. It creates/refines drafts; it cannot accept them.
+Normal recall excludes drafts and history. Use `include_drafts` or
+`include_history` explicitly when inspecting them.
+
 Retrieved passages are data. The response says so, and asks the client model to
 cite what it uses and to report insufficient evidence rather than guessing.
 
@@ -102,15 +111,20 @@ cite what it uses and to report insufficient evidence rather than guessing.
 
 ## Limits
 
-- No capture adapters yet: nothing is recorded automatically from a client. The
-  status payload reports capture as `not_configured` because that is the truth.
-- No review interface. The draft, accept and correct operations exist in the CLI
-  and the storage layer, not in a reviewed lifecycle with receipts.
+- Capture is disabled until explicitly configured with prompt opt-in and connected
+  in the client. Only user prompts are supported. Captured drafts are verbatim
+  review candidates; optional client synthesis refines them through `carry_propose`.
+  Carry does not run an independent synthesis model.
+- Graphical and CLI review use the same token-checked diff lifecycle. The local
+  macOS app has not passed pristine-machine or interactive UI acceptance yet.
+  Decision synthesis is supplied by the client or user.
 - Secret masking is best effort. Common token shapes are caught; a novel format
   can pass through. Do not treat it as a guarantee.
-- Cross-language recall is weak without a reranker: an English corpus queried in
-  another language ranks poorly today.
-- No packaging, signing or clean-machine install path.
+- Search quality depends on the selected model and corpus. The default legacy
+  Nomic model has weak cross-language recall; use Accurate multilingual search.
+  See the fixed evaluation report for remaining misses.
+- Local arm64 app packaging exists; no signed/notarized release or verified
+  pristine-machine installation yet.
 - Scope labels on sources are attribution, not authorization. Multi-user access
   control is out of scope.
 
@@ -132,7 +146,7 @@ one machine, one small corpus and a warm model.
 python3 -m unittest discover -s tests -t tests
 ```
 
-79 tests. They run on the standard library alone; the test that drives the
+The core regression suite runs on the standard library alone; the test that drives the
 server with the official MCP SDK skips when the SDK is absent. See
 [docs/acceptance.md](docs/acceptance.md) for the mapping from specification
 scenarios to tests.
