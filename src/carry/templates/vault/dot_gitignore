@@ -1,0 +1,8 @@
+.DS_Store
+.obsidian/workspace*.json
+.trash/
+.carry/journal/
+.mcp.json
+.codex/config.toml
+.codex/hooks.json
+.claude/settings.local.json

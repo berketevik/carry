@@ -12,6 +12,7 @@ from pathlib import Path
 
 from . import index as index_module
 from . import store, capture, lifecycle
+from . import vault as vault_module
 from .config import EmbeddingConfig, RetrievalConfig, SourceConfig, Workspace, open_workspace
 from .errors import CarryError, RevisionConflict
 from .fixtures import install_fixture
@@ -241,6 +242,25 @@ def cmd_model(args):
     return EXIT_FAILED if result.get('status') == 'failed' else EXIT_OK
 
 
+def cmd_vault(args):
+    if args.vault_command == 'rollback':
+        result = vault_module.rollback(Path(args.path).expanduser().resolve(), args.id)
+        _print(result, args.json, [f"rolled back {args.id}"])
+        return EXIT_OK
+    plan = vault_module.plan(args.path, language=args.language, workspace=args.workspace,
+                             capture=args.capture)
+    lines = [f"{c['status']}\t{c['rel']}" for c in plan['changes']] + [f"conflict\t{r}" for r in plan['conflicts']]
+    # Conflicting files are never written; the rest still applies, and the exit code reports them.
+    status = EXIT_FAILED if plan['conflicts'] else EXIT_OK
+    if args.dry_run or not (plan['changes'] or plan['capture']):
+        _print(plan, args.json, lines or ['nothing to change'])
+        return status
+    result = vault_module.apply(plan, git=not args.no_git)
+    lines += [f"capture {client}: {state}" for client, state in result['capture'].items()]
+    _print(result, args.json, lines + [f"vault ready at {result['target']} (journal {result['id']})"])
+    return status
+
+
 def build_parser():
     parser = argparse.ArgumentParser(prog="carry", description="Portable local memory")
     parser.add_argument("--workspace", default=os.environ.get("CARRY_WORKSPACE"),
@@ -360,6 +380,20 @@ def build_parser():
         cap_sub.add_parser(name).add_argument("--client", required=True, choices=capture.CLIENTS)
     cap_sub.add_parser("status")
     cap.set_defaults(func=cmd_capture)
+
+    vlt = sub.add_parser('vault', help='create or upgrade a vault from the Carry template')
+    vsub = vlt.add_subparsers(dest='vault_command', required=True)
+    vinit = vsub.add_parser('init', help='write the template; --workspace also wires the Carry MCP server')
+    vinit.add_argument('path')
+    vinit.add_argument('--dry-run', action='store_true', help='show the file plan without writing')
+    vinit.add_argument('--language', default='Turkish', help='language of human-facing notes')
+    vinit.add_argument('--no-git', action='store_true', help='do not run git init')
+    vinit.add_argument('--capture', action='store_true',
+                       help='opt in to whole-prompt capture into sources/carry (needs --workspace)')
+    vrb = vsub.add_parser('rollback', help='undo one init by its journal id')
+    vrb.add_argument('path')
+    vrb.add_argument('--id', required=True)
+    vlt.set_defaults(func=cmd_vault)
 
     demo = sub.add_parser("demo", help="install the synthetic corpus and index it")
     demo.add_argument("--into", required=True, help="folder for the synthetic corpus")
