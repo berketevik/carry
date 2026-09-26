@@ -1,4 +1,5 @@
 """C05 acceptance: review preconditions, linked synthesis, history and clients."""
+import hashlib
 import io
 import json
 import os
@@ -55,7 +56,10 @@ class LifecycleTest(WorkspaceCase):
         accepted = self.accept(pending)
         self.assertEqual(accepted['revision'], 2)
         self.assertEqual(accepted['index']['status'], 'built')
-        self.assertEqual(old_path.read_bytes(), old_bytes)
+        # A writable target gains exactly one marker line; nothing else changes.
+        self.assertEqual(accepted['target_marker'], 'marked')
+        self.assertEqual(old_path.read_bytes(),
+                         lifecycle.with_marker(old_bytes.decode('utf-8'), accepted['record_id']).encode('utf-8'))
         answer = recall(self.workspace, 'Cedar pilot delivery')
         self.assertIn('October 22', json.dumps(answer['evidence']))
         self.assertNotIn('October 15', json.dumps(answer['evidence']))
@@ -79,6 +83,38 @@ class LifecycleTest(WorkspaceCase):
         self.workspace.db_path.unlink()
         self.build()
         self.assertNotIn('October 15', json.dumps(recall(self.workspace, 'Cedar pilot delivery')['evidence']))
+
+    def test_writable_imported_target_is_marked_and_stays_history(self):
+        imported = self.note('Cedar living note', OCT15, root=self.records)
+        self.build()
+        target = next(f for f in lifecycle.catalog(self.workspace).values() if f['path'] == imported.name)
+        before = imported.read_text(encoding='utf-8')
+        accepted = self.accept(self.correction(target))
+        self.assertEqual(accepted['target_marker'], 'marked')
+        after = imported.read_text(encoding='utf-8')
+        self.assertEqual(after, lifecycle.with_marker(before, accepted['record_id']))
+        self.assertEqual(parse_frontmatter(after)[0]['carry_superseded_by'], accepted['record_id'])
+        answer = recall(self.workspace, 'Cedar pilot delivery')
+        self.assertNotIn('October 15', json.dumps(answer['evidence']))
+        self.assertNotIn('correction_target_conflict', answer['diagnostics'].get('warnings', []))
+        history = recall(self.workspace, 'Cedar pilot delivery', include_history=True)
+        old_hit = next(e for e in history['evidence'] if e['record_id'] == target['record_id'])
+        self.assertEqual(old_hit['state'], 'superseded')
+        # Any edit beyond the marker is a real change: both claims come back with a conflict.
+        imported.write_text(after.replace('October 15', 'October 17'), encoding='utf-8')
+        self.build()
+        conflicted = recall(self.workspace, 'Cedar pilot delivery')
+        self.assertIn('correction_target_conflict', conflicted['diagnostics']['warnings'])
+        self.assertIn('October 17', json.dumps(conflicted['evidence']))
+
+    def test_marker_round_trip_with_and_without_frontmatter(self):
+        for raw in ('---\ntype: note\n---\n# A\nbody\n', '# No frontmatter\nbody\n', '---\n---\nbody\n'):
+            marked = lifecycle.with_marker(raw, 'rec_0123456789abcdef')
+            self.assertEqual(parse_frontmatter(marked)[0]['carry_superseded_by'], 'rec_0123456789abcdef')
+            entry = dict(raw=marked)
+            target = dict(digest=hashlib.sha256(raw.encode('utf-8')).hexdigest())
+            self.assertTrue(lifecycle._marked_digest_matches(entry, target, 'rec_0123456789abcdef'))
+            self.assertFalse(lifecycle._marked_digest_matches(entry, target, 'rec_ffffffffffffffff'))
 
     def test_pending_target_content_edit_conflicts_even_without_revision_change(self):
         old = self.accept(self.propose())
