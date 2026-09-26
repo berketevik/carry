@@ -51,6 +51,32 @@ class DesktopTest(WorkspaceCase):
         self.call('index')
         self.assertEqual(before, tree_digest(root))
 
+    def test_vault_preview_writes_nothing_and_apply_creates_and_attaches_it(self):
+        target = self.base / 'my-vault'
+        before = self.workspace.config_path.read_bytes()
+        preview = self.call('vault_preview', target=str(target), language='Turkish')
+        self.assertNotIn('changes', preview)
+        self.assertIn(dict(rel='LLM-GUIDE.md', status='create'), preview['files'])
+        self.assertIn('.mcp.json', {f['rel'] for f in preview['files']})
+        self.assertFalse(target.exists())
+        self.assertEqual(before, self.workspace.config_path.read_bytes())
+        result = self.call('vault_apply', id=preview['id'], git=False)
+        self.assertEqual(result['state'], 'applied')
+        self.assertTrue((target / 'LLM-GUIDE.md').exists())
+        sources = {s['source_id']: s for s in self.call('snapshot')['workspace']['sources']}
+        self.assertIn('vault', sources)
+        with self.assertRaisesRegex(CarryError, 'preview_again_required'):
+            self.call('vault_apply', id=preview['id'])
+
+    def test_vault_preview_refuses_a_folder_with_notes_and_bad_fields(self):
+        target = self.base / 'notes-here'
+        target.mkdir()
+        (target / 'mine.md').write_text('# mine')
+        with self.assertRaisesRegex(CarryError, 'vault_target_not_empty'):
+            self.call('vault_preview', target=str(target))
+        with self.assertRaisesRegex(CarryError, 'invalid_vault_request'):
+            self.call('vault_preview', target=str(self.base / 'x'), capture='yes')
+
     def test_add_source_refuses_overlap_and_invalid_write_type(self):
         before = self.workspace.config_path.read_bytes()
         for fields in [dict(source_id='overlap', root=str(self.corpus)),

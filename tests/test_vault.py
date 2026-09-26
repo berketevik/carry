@@ -199,6 +199,44 @@ class VaultTest(unittest.TestCase):
         with self.assertRaisesRegex(CarryError, 'workspace_missing_vault_source'):
             vault.plan(self.target, workspace=self.base / 'state')
 
+    def test_attach_adds_the_vault_to_an_existing_workspace_on_apply(self):
+        other = self.base / 'other'
+        other.mkdir()
+        state = self.base / 'state'
+        Workspace.create(state, sources=[SourceConfig(source_id='other', root=other)],
+                         embedding=EmbeddingConfig(provider='hashing'))
+        plan = vault.plan(self.target, workspace=state, attach=True)
+        # Preview writes nothing, the workspace included.
+        self.assertEqual([s.source_id for s in Workspace.load(state).sources], ['other'])
+        self.assertFalse(self.target.exists())
+        result = vault.apply(plan, git=False)
+        self.assertFalse(result['created_workspace'])
+        ws = Workspace.load(state)
+        added = ws.source('vault')
+        self.assertEqual(added.root.resolve(), self.target)
+        self.assertFalse(added.writable)
+        self.assertEqual(tuple(added.exclude), vault.EXCLUDE)
+        mcp = json.loads((self.target / '.mcp.json').read_text(encoding='utf-8'))
+        self.assertIn(str(state), mcp['mcpServers']['carry']['args'])
+        again = vault.plan(self.target, workspace=state, attach=True)
+        self.assertEqual((again['changes'], again['conflicts']), ([], []))
+
+    def test_attach_refuses_a_taken_source_id_or_an_overlapping_root(self):
+        state = self.base / 'state'
+        taken = self.base / 'taken'
+        taken.mkdir()
+        Workspace.create(state, sources=[SourceConfig(source_id='vault', root=taken)],
+                         embedding=EmbeddingConfig(provider='hashing'))
+        with self.assertRaisesRegex(CarryError, 'duplicate_source_id'):
+            vault.plan(self.target, workspace=state, attach=True)
+        state2 = self.base / 'state2'
+        Workspace.create(state2, sources=[SourceConfig(source_id='notes', root=taken)],
+                         embedding=EmbeddingConfig(provider='hashing'))
+        with self.assertRaisesRegex(CarryError, 'nested_source_roots'):
+            vault.plan(taken / 'inner', workspace=state2, attach=True)
+        with self.assertRaisesRegex(CarryError, 'attach_requires_workspace'):
+            vault.plan(self.target, attach=True)
+
     def test_rerun_without_changes_writes_no_journal(self):
         self.install()
         journals = self.target / '.carry' / 'journal'

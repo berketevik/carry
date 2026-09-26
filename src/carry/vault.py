@@ -22,12 +22,13 @@ from .config import CONFIG_NAME, EmbeddingConfig, SourceConfig, Workspace
 from .connections import _json, _object, _read
 from .errors import CarryError
 from .paths import is_contained, resolve_root
-from .persistence import atomic_text
+from .persistence import atomic_text, writer_lock
 
 TEMPLATE_VERSION = '2'
 GUIDE_BASE = '3.7'
 RECALL_TOOL = 'carry_recall'
 STAMP = '.carry/vault.json'
+SOURCE_ID = 'vault'
 FOLDERS = ('+', 'notes', 'sources', 'log', 'workbench')
 IGNORED_WHEN_EMPTY = {'.git', '.carry', '.DS_Store'}
 # Captured prompts are raw material and Carry never rewrites a record in place.
@@ -95,13 +96,22 @@ def _has_user_files(target):
                and p.name != '.gitkeep' for p in target.rglob('*'))
 
 
-def _check_workspace(target, workspace, capture):
+def _check_workspace(target, workspace, capture, attach=False):
     if is_contained(target, workspace):
         raise CarryError('state_dir_inside_source_root')
     if (workspace / CONFIG_NAME).exists():
-        sources = [s for s in Workspace.load(workspace).sources if resolve_root(s.root) == target]
+        ws = Workspace.load(workspace)
+        sources = [s for s in ws.sources if resolve_root(s.root) == target]
         if not sources:
-            raise CarryError('workspace_missing_vault_source')
+            if not attach:
+                raise CarryError('workspace_missing_vault_source')
+            # attach_source() adds it at apply time; refuse now what it would refuse then.
+            if any(s.source_id == SOURCE_ID for s in ws.sources):
+                raise CarryError('duplicate_source_id')
+            if any(is_contained(target, resolve_root(s.root)) or is_contained(resolve_root(s.root), target)
+                   for s in ws.sources):
+                raise CarryError('nested_source_roots')
+            return
         if capture and not sources[0].writable:
             raise CarryError('workspace_vault_source_read_only')
 
@@ -110,9 +120,12 @@ def _digest(text):
     return hashlib.sha256(text.encode('utf-8')).hexdigest()
 
 
-def plan(target, language='Turkish', workspace=None, today=None, capture=False):
+def plan(target, language='Turkish', workspace=None, today=None, capture=False, attach=False):
+    """attach: the workspace exists and gains the vault as a source when the plan is applied."""
     if capture and workspace is None:
         raise CarryError('capture_requires_workspace')
+    if attach and workspace is None:
+        raise CarryError('attach_requires_workspace')
     target = Path(target).expanduser().resolve()
     if target.exists() and not target.is_dir():
         raise CarryError('vault_target_not_directory')
@@ -124,7 +137,7 @@ def plan(target, language='Turkish', workspace=None, today=None, capture=False):
     files = render(language, today)
     if workspace is not None:
         workspace = Path(workspace).expanduser().resolve()
-        _check_workspace(target, workspace, capture)
+        _check_workspace(target, workspace, capture, attach)
         files.update(_wiring(workspace))
         if capture:
             files.update(_hooks(workspace))
@@ -150,7 +163,7 @@ def plan(target, language='Turkish', workspace=None, today=None, capture=False):
         changes.append(dict(rel=STAMP, path=str(target / STAMP), before=stamp_text, after=new_stamp,
                             status='create' if stamp_text is None else 'update'))
     return dict(id=uuid.uuid4().hex, target=str(target), template_version=TEMPLATE_VERSION,
-                workspace=str(workspace) if workspace else None, capture=capture,
+                workspace=str(workspace) if workspace else None, capture=capture, attach=attach,
                 changes=changes, conflicts=conflicts,
                 summary=''.join(''.join(difflib.unified_diff(
                     (c['before'] or '').splitlines(True), c['after'].splitlines(True),
@@ -195,6 +208,21 @@ def _configure_proposals(workspace):
     return states
 
 
+def _source(target, plan):
+    return SourceConfig(source_id=SOURCE_ID, root=target, writable=bool(plan.get('capture')),
+                        records_dir=RECORDS_DIR, exclude=EXCLUDE)
+
+
+def attach_source(workspace, target, plan):
+    """Adds the vault to an existing workspace; a source already rooted there is kept as it is."""
+    with writer_lock(Workspace.load(workspace)):
+        current = Workspace.load(workspace)
+        if any(resolve_root(s.root) == Path(target) for s in current.sources):
+            return False
+        current.with_sources([*current.sources, _source(Path(target), plan)]).save()
+    return True
+
+
 def apply(plan, git=True):
     """Writes the safe changes; conflicting files are left as they are and reported."""
     target = Path(plan['target'])
@@ -212,10 +240,10 @@ def apply(plan, git=True):
     created_workspace = False
     if plan['workspace'] and not (Path(plan['workspace']) / CONFIG_NAME).exists():
         # Offline default, like the app; `carry model` switches to semantic embeddings.
-        source = SourceConfig(source_id='vault', root=target, writable=bool(plan.get('capture')),
-                              records_dir=RECORDS_DIR, exclude=EXCLUDE)
-        Workspace.create(plan['workspace'], sources=[source], embedding=EmbeddingConfig(provider='hashing'))
+        Workspace.create(plan['workspace'], sources=[_source(target, plan)], embedding=EmbeddingConfig(provider='hashing'))
         created_workspace = True
+    elif plan.get('attach'):
+        attach_source(plan['workspace'], target, plan)
     capture = _configure_capture(Workspace.load(plan['workspace'])) if plan.get('capture') else {}
     proposals = _configure_proposals(Workspace.load(plan['workspace'])) if plan.get('capture') else {}
     initialised_git = False

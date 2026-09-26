@@ -34,6 +34,7 @@ def executable_for(client):
 class Bridge:
     def __init__(self):
         self.plans = {}
+        self.vault_plans = {}
         self.login = None
 
     def dispatch(self, request):
@@ -145,6 +146,25 @@ class Bridge:
                 raise CarryError('preview_again_required')
             result = connections.apply(ws, saved[1])
             self.plans.clear()
+            return result
+        if action == 'vault_preview':
+            from . import vault
+            language = request.get('language', 'Turkish')
+            if not isinstance(language, str) or not language.strip() or type(request.get('capture', False)) is not bool:
+                raise CarryError('invalid_vault_request')
+            plan = vault.plan(request['target'], language=language.strip(), workspace=ws.state_dir,
+                              capture=request.get('capture', False), attach=True)
+            self.vault_plans = {plan['id']: (str(ws.state_dir), plan)}
+            return dict({k: v for k, v in plan.items() if k != 'changes'},
+                        files=[dict(rel=c['rel'], status=c['status']) for c in plan['changes']])
+        if action == 'vault_apply':
+            from . import vault
+            saved = self.vault_plans.get(request['id'])
+            if not saved or saved[0] != str(ws.state_dir):
+                raise CarryError('preview_again_required')
+            result = vault.apply(saved[1], git=request.get('git', True) is not False)
+            self.vault_plans.clear()
+            maintenance.start(Workspace.load(state))
             return result
         if action == 'connection_rollback':
             return connections.rollback(ws, request['id'])
