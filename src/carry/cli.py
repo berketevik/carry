@@ -257,6 +257,7 @@ def cmd_vault(args):
         return status
     result = vault_module.apply(plan, git=not args.no_git)
     lines += [f"capture {client}: {state}" for client, state in result['capture'].items()]
+    lines += [f"proposals {client}: {state}" for client, state in result.get('proposals', {}).items()]
     _print(result, args.json, lines + [f"vault ready at {result['target']} (journal {result['id']})"])
     return status
 

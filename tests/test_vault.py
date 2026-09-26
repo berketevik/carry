@@ -151,6 +151,8 @@ class VaultTest(unittest.TestCase):
         with patch.object(capture, 'probe_client', return_value=dict(state='supported', version='9.9.9')):
             plan, result = self.install(workspace=state, capture=True)
         self.assertEqual(result['capture'], dict(claude='no_receipt', codex='no_receipt'))
+        # The guide's correction rule needs carry_propose; acceptance stays with the owner.
+        self.assertEqual(result['proposals'], dict(claude='enabled', codex='enabled'))
         hooks = json.loads((self.target / '.codex' / 'hooks.json').read_text(encoding='utf-8'))
         self.assertIn('carry.hook', hooks['hooks']['UserPromptSubmit'][0]['hooks'][0]['command'])
         self.assertTrue((self.target / '.claude' / 'settings.local.json').exists())
@@ -168,6 +170,7 @@ class VaultTest(unittest.TestCase):
         from carry.index import corpus_snapshot
         state = self.base / 'state'
         self.install(workspace=state)
+        self.assertTrue((self.target / 'VAULT-RULES.md').exists())
         for rel in ('notes/Karar.md', 'log/2026-09-25.md', 'workbench/Taslak.md', '+/Kıvılcım.md',
                     'notes/_index.md'):
             (self.target / rel).write_text('# x\n', encoding='utf-8')

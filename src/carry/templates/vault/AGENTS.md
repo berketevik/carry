@@ -1,6 +1,6 @@
 # AGENTS.md: Codex surface adapter
 
-This file contains **no vault rules**. The single source of truth is **`LLM-GUIDE.md`** in this directory. Read it before writing or editing any file.
+This file contains **no vault rules**. They live in **`LLM-GUIDE.md`** (the core) and **`VAULT-RULES.md`** (this vault's local layer) in this directory. Read both, the core first, before writing or editing any file.
 
 ## Codex wiring
 

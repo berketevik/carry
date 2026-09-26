@@ -11,7 +11,7 @@ lock: true
 
 > This document is the **operating manual** for any LLM agent (Claude Code, Codex, or another client) working in this vault. The agent must follow these rules.
 
-> **Single source of truth.** All vault rules live in THIS file only. `CLAUDE.md` (Claude Code) and `AGENTS.md` (Codex) are thin surface adapters: they load or point to this guide and carry client-specific wiring only. When a rule changes, change it here and bump `version`.
+> **Single source of truth.** All vault rules live in THIS file (the core, maintained by Carry) and in `VAULT-RULES.md` (this vault's local layer, owned by the owner, loaded right after the core). `CLAUDE.md` (Claude Code) and `AGENTS.md` (Codex) are thin surface adapters: they load or point to both files and carry client-specific wiring only. `VAULT-RULES.md` may add rules and narrow permissions; it never relaxes a core permission or hard rule. When the two disagree, the core wins.
 
 > Human-facing notes are written in **{{LANGUAGE}}**. This guide stays in English.
 
@@ -31,6 +31,7 @@ vault/
 ├── x/           ← templates and support files; IMPLICIT LOCK
 ├── Home.md      ← human dashboard; IMPLICIT LOCK
 ├── LLM-GUIDE.md, SETUP-GUIDE.md ← IMPLICIT LOCK
+├── VAULT-RULES.md ← the owner's local rules; agents do not edit it unasked
 ```
 
 **Rule of thumb: folder = policy (writability and lifecycle), `type:` = kind, recall = navigation.**
@@ -113,6 +114,8 @@ After routing: fix frontmatter, add links, report what moved and why.
 ## Conflict resolution
 
 When notes disagree: rank authority (`owner-direct` > `clip`/`web` > `chat` > `inference`; ties → newer date, then higher `confidence`). If unclear, status-affecting, or touching `private`/`secret` content, ask the owner. Report both sides to `log/`; apply `supersedes` / `superseded_by` only after approval.
+
+**Corrections through Carry** (when the `carry_propose` tool is available). A living note you may edit is corrected in place, with a dated section. For a newer fact that contradicts content you must not edit (a locked note, an immutable `sources/` file) or a conflict that needs the owner's approval, do not overwrite it and do not open a parallel note: call `carry_propose` with the corrected content, `source_refs`, and the old note's record id and revision from recall as `target_id` / `expected_revision`, then tell the owner the proposal id. Only the owner accepts or rejects (`carry proposal accept|reject` or the Carry app); never accept on their behalf. After acceptance recall returns the correction and treats the old note as history; when the old note's folder is writable, Carry marks it with `carry_superseded_by:` in its frontmatter. Do not edit the old note otherwise: Carry pins its content and reports `correction_target_conflict` when it changes.
 
 ## Style
 
