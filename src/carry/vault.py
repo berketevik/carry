@@ -17,14 +17,15 @@ import sys
 import uuid
 
 from . import capture as capture_module
+from . import lifecycle
 from .config import CONFIG_NAME, EmbeddingConfig, SourceConfig, Workspace
 from .connections import _json, _object, _read
 from .errors import CarryError
 from .paths import is_contained, resolve_root
 from .persistence import atomic_text
 
-TEMPLATE_VERSION = '1'
-GUIDE_BASE = '3.3'
+TEMPLATE_VERSION = '2'
+GUIDE_BASE = '3.7'
 RECALL_TOOL = 'carry_recall'
 STAMP = '.carry/vault.json'
 FOLDERS = ('+', 'notes', 'sources', 'log', 'workbench')
@@ -33,9 +34,10 @@ IGNORED_WHEN_EMPTY = {'.git', '.carry', '.DS_Store'}
 RECORDS_DIR = 'sources/carry'
 # Recall covers knowledge (notes, sources, log), not policy folders, adapters or indexes.
 EXCLUDE = ('+', 'workbench', 'x', 'tools', '*_index.md',
-           'Home.md', 'LLM-GUIDE.md', 'SETUP-GUIDE.md', 'CLAUDE.md', 'AGENTS.md')
+           'Home.md', 'LLM-GUIDE.md', 'VAULT-RULES.md', 'SETUP-GUIDE.md', 'CLAUDE.md', 'AGENTS.md')
 # Seeds are the owner's to edit: written when absent, never compared or upgraded.
-SEEDS = ('Home.md', '.gitignore', 'x/Templates/')
+# VAULT-RULES.md is the owner's local layer on top of the managed guide.
+SEEDS = ('Home.md', 'VAULT-RULES.md', '.gitignore', 'x/Templates/')
 STATE_HEADING = {'turkish': 'Son durum'}
 
 
@@ -182,12 +184,23 @@ def _configure_capture(workspace):
     return states
 
 
+def _configure_proposals(workspace):
+    """The guide's correction rule needs carry_propose; acceptance stays with the owner."""
+    states = {}
+    for client in lifecycle.CLIENTS:
+        try:
+            states[client] = 'enabled' if lifecycle.configure_client(workspace, client, 'vault', True)['enabled'] else 'disabled'
+        except CarryError as exc:
+            states[client] = str(exc)
+    return states
+
+
 def apply(plan, git=True):
     """Writes the safe changes; conflicting files are left as they are and reported."""
     target = Path(plan['target'])
     if not plan['changes'] and not plan.get('capture'):
         return dict(id=None, state='unchanged', target=str(target), files=0, conflicts=plan['conflicts'],
-                    initialised_git=False, created_workspace=False, capture={})
+                    initialised_git=False, created_workspace=False, capture={}, proposals={})
     for c in plan['changes']:
         if _read(Path(c['path'])) != c['before']:
             raise CarryError('vault_changed_since_preview')
@@ -204,16 +217,17 @@ def apply(plan, git=True):
         Workspace.create(plan['workspace'], sources=[source], embedding=EmbeddingConfig(provider='hashing'))
         created_workspace = True
     capture = _configure_capture(Workspace.load(plan['workspace'])) if plan.get('capture') else {}
+    proposals = _configure_proposals(Workspace.load(plan['workspace'])) if plan.get('capture') else {}
     initialised_git = False
     if git and not (target / '.git').exists() and shutil.which('git'):
         subprocess.run(['git', 'init', '-q', str(target)], check=True, capture_output=True)
         initialised_git = True
     journal.update(state='applied', initialised_git=initialised_git, created_workspace=created_workspace,
-                   capture=capture)
+                   capture=capture, proposals=proposals)
     atomic_text(path, _json(journal))
     return dict(id=plan['id'], state='applied', target=str(target), files=len(plan['changes']),
                 conflicts=plan['conflicts'], initialised_git=initialised_git,
-                created_workspace=created_workspace, capture=capture)
+                created_workspace=created_workspace, capture=capture, proposals=proposals)
 
 
 def rollback(target, identifier):
