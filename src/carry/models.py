@@ -59,8 +59,20 @@ def ensure_runtime(endpoint):
     raise CarryError('ollama_start_failed')
 
 
+# The assistant's own small model (a carry-recall subagent) judges relevance, so no
+# local relevance model is loaded: it needs 2-3 GB and stalled 8 GB Macs on the first
+# recall. Recall hands over more, unfiltered candidates for that judge.
+ASSISTANT_RANKED = dict(reranker='off', top_k=12, max_chars=16000, vector_min_score=-1.0)
+
+
 def setup(workspace, model):
     from .maintenance import job_progress
+    if model == 'assistant_ranked':
+        setup(workspace, 'embeddinggemma')
+        with writer_lock(workspace):
+            current = Workspace.load(workspace.state_dir)
+            replace(current, retrieval=replace(current.retrieval, **ASSISTANT_RANKED)).save()
+        return dict(model='embeddinggemma', reranker='off', ranking='assistant', available=True)
     if model == 'accurate_multilingual':
         setup(workspace, 'embeddinggemma')
         from huggingface_hub import snapshot_download

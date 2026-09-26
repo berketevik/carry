@@ -68,6 +68,22 @@ class MaintenanceTest(WorkspaceCase):
                 models.setup(self.workspace, 'embeddinggemma')
         self.assertEqual(self.workspace.config_path.read_bytes(), before)
 
+    def test_assistant_ranked_preset_hands_unfiltered_candidates_to_the_client(self):
+        real_setup = models.setup
+        def fake(workspace, model):
+            if model == 'embeddinggemma':
+                current = Workspace.load(workspace.state_dir)
+                replace(current, embedding=EmbeddingConfig(provider='hashing'),
+                        retrieval=replace(current.retrieval, reranker='cross')).save()
+                return dict(model=model, available=True)
+            return real_setup(workspace, model)
+        with patch.object(models, 'setup', side_effect=fake):
+            result = real_setup(self.workspace, 'assistant_ranked')
+        self.assertEqual(result['ranking'], 'assistant')
+        retrieval = Workspace.load(self.workspace.state_dir).retrieval
+        self.assertEqual((retrieval.reranker, retrieval.top_k, retrieval.max_chars, retrieval.vector_min_score),
+                         ('off', 12, 16000, -1.0))
+
 
 class RelevanceTest(WorkspaceCase):
     def test_lexical_hash_collisions_do_not_return_unmatched_documents(self):

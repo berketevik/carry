@@ -29,7 +29,8 @@ class VaultTest(unittest.TestCase):
         plan, result = self.install()
         rels = {c['rel'] for c in plan['changes']}
         for rel in ('LLM-GUIDE.md', 'CLAUDE.md', 'AGENTS.md', 'Home.md', 'SETUP-GUIDE.md', '.gitignore',
-                    'x/Templates/Effort.md', 'notes/.gitkeep', '+/.gitkeep', vault.STAMP):
+                    'x/Templates/Effort.md', 'notes/.gitkeep', '+/.gitkeep', vault.STAMP,
+                    '.claude/agents/carry-recall.md', '.codex/agents/carry-recall.toml'):
             self.assertIn(rel, rels)
         self.assertTrue(all(c['status'] == 'create' for c in plan['changes']))
         self.assertTrue((self.target / 'workbench').is_dir())
@@ -43,6 +44,18 @@ class VaultTest(unittest.TestCase):
         self.assertIn('{{title}}', files['x/Templates/Note.md'])
         for rel, text in files.items():
             self.assertIsNone(re.search(r'\{\{[A-Z_]+\}\}', text), rel)
+
+    def test_recall_subagents_use_a_small_model_and_only_the_recall_tool(self):
+        import tomllib
+        files = vault.render('Turkish')
+        claude = files['.claude/agents/carry-recall.md']
+        self.assertIn('model: haiku', claude)
+        self.assertIn('tools: mcp__carry__carry_recall', claude)
+        codex = tomllib.loads(files['.codex/agents/carry-recall.toml'])
+        self.assertEqual(codex['name'], 'carry-recall')
+        self.assertIn('carry_recall', codex['developer_instructions'])
+        self.assertIn('carry-recall', files['CLAUDE.md'])
+        self.assertIn('carry-recall', files['AGENTS.md'])
 
     def test_template_carries_no_personal_content(self):
         for rel, text in vault.render().items():

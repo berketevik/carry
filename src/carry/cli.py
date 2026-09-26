@@ -319,7 +319,7 @@ def build_parser():
     sync.add_argument('--wait', action='store_true')
     gh.set_defaults(func=cmd_github)
     model = sub.add_parser('model', help='download and activate a local embedding model')
-    model.add_argument('model', choices=('accurate_multilingual', 'embeddinggemma', 'qwen3-embedding:0.6b', 'nomic-embed-text'))
+    model.add_argument('model', choices=('assistant_ranked', 'accurate_multilingual', 'embeddinggemma', 'qwen3-embedding:0.6b', 'nomic-embed-text'))
     model.add_argument('--wait', action='store_true')
     model.set_defaults(func=cmd_model)
 
