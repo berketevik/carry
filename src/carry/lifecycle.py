@@ -66,6 +66,30 @@ def catalog(workspace):
     return files
 
 
+MARKER = 'carry_superseded_by'
+
+
+def with_marker(raw, record_id):
+    """The superseded note gains one frontmatter line so a human sees the correction."""
+    line = f'{MARKER}: {record_id}\n'
+    if raw.startswith('---\n'):
+        end = raw.find('\n---', 3)
+        if end != -1:
+            return raw[:end + 1] + line + raw[end + 1:]
+    return f'---\n{line}---\n' + raw
+
+
+def _marked_digest_matches(entry, target, record_id):
+    # Tolerate exactly the marker Carry wrote for this correction; any other edit is a conflict.
+    line = f'{MARKER}: {record_id}\n'
+    raw = entry['raw']
+    candidates = [raw.replace(line, '', 1)] if line in raw else []
+    block = f'---\n{line}---\n'
+    if raw.startswith(block):
+        candidates.append(raw[len(block):])
+    return any(hashlib.sha256(c.encode('utf-8')).hexdigest() == target['digest'] for c in candidates)
+
+
 def apply_targets(files):
     """Derive current pointers without editing imported or historical files.
 
@@ -91,7 +115,8 @@ def apply_targets(files):
         if not matches:
             fallback = files.get((target['source_id'], target['path']))
             matches = [fallback] if fallback and fallback['digest'] == target['digest'] else []
-        if len(matches) != 1 or matches[0]['digest'] != target['digest']:
+        if len(matches) != 1 or (matches[0]['digest'] != target['digest']
+                                 and not _marked_digest_matches(matches[0], target, entry['record_id'])):
             entry['correction_conflict'] = 'target_changed_or_missing'
             continue
         previous = matches[0]
@@ -340,9 +365,25 @@ def _finish(workspace, record_id, expected_revision, review_token, state):
         if target and state == 'accepted':
             _unchanged(_find(files, target['record_id'], target['source_id']))
         atomic_text(item['absolute'], _serialize(changed, item['body']))
+        marked = ''
+        if target and state == 'accepted':
+            previous = _find(files, target['record_id'], target['source_id'])
+            owner = next((s for s in workspace.sources if s.source_id == target['source_id']), None)
+            marked = 'read_only_source'
+            lossless = hashlib.sha256(previous['raw'].encode('utf-8')).hexdigest() == previous['digest']
+            if owner is not None and owner.writable and not lossless:
+                marked = 'not_utf8'
+            elif owner is not None and owner.writable:
+                try:
+                    atomic_text(previous['absolute'], with_marker(previous['raw'], record_id))
+                    marked = 'marked'
+                except OSError:
+                    # Acceptance is already canonical; recall still treats the target as history.
+                    marked = 'marker_write_failed'
         return dict(record_id=record_id, revision=changed['carry_revision'], state=state,
                     source_id=source.source_id, path=item['path'], duplicate=False,
-                    supersedes=target['record_id'] if target and state == 'accepted' else '')
+                    supersedes=target['record_id'] if target and state == 'accepted' else '',
+                    target_marker=marked)
 
 
 def accept(workspace, record_id, expected_revision, review_token):

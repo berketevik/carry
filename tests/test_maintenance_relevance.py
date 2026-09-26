@@ -97,6 +97,21 @@ class RelevanceTest(WorkspaceCase):
         self.assertEqual(diagnostics['reranker'], 'unavailable')
         self.assertTrue(diagnostics['warnings'])
 
+    def test_idle_reranker_is_released_and_reloaded(self):
+        from carry import rerank as rerank_module
+        model = Mock(); model.predict.return_value = [3.0]
+        config = replace(self.workspace.retrieval, reranker='cross')
+        with patch.object(rerank_module, '_load', return_value=model) as load, \
+                patch.object(rerank_module, 'IDLE_SECONDS', 0):
+            rerank_module.release()
+            rerank('When?', [dict(text='The date is October 22.')], config, {})
+            self.assertEqual(load.call_count, 1)
+            self.assertTrue(rerank_module.release())
+            self.assertFalse(rerank_module.release())
+            rerank('When?', [dict(text='The date is October 22.')], config, {})
+            self.assertEqual(load.call_count, 2)
+            rerank_module.release()
+
     def test_embedding_prompt_contract_is_model_specific(self):
         for model, doc_prefix, query_prefix in [
             ('embeddinggemma','title: none | text: ','task: search result | query: '),
