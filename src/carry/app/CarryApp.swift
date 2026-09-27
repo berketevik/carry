@@ -1292,7 +1292,7 @@ struct DigestItemsView: View {
         HStack(spacing: 6) {
             Badge(text: str(it, "tag"), color: str(it, "section") == "conflict" ? .red : .accentColor)
             if str(it, "section") != "new" { Text(sectionName(str(it, "section"))).font(.caption).foregroundStyle(.secondary) }
-            if str(it, "match", "") != "" && str(it, "section") != "conflict" {
+            if str(it, "match", "") != "" && str(it, "section") != "conflict" && str(it, "match_text", "") == "" {
                 Text("↔ " + str(it, "match").trimmingCharacters(in: CharacterSet(charactersIn: "[]"))).font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -1316,11 +1316,14 @@ struct DigestItemsView: View {
         }
     }
     /// Both sides of a conflict: what the chat said and what the note says, with a way to open the note.
+    /// A related note that was checked and is not a conflict gets the same view, in a calm colour.
     @ViewBuilder func noteSide(_ it: [String: Any]) -> some View {
         let name = str(it, "match").trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        let conflict = str(it, "section") == "conflict"
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text(T("Your note says", "Notunuzda yazan")).font(.caption.weight(.semibold)).foregroundStyle(.red)
+                Text(conflict ? T("Your note says", "Notunuzda yazan") : T("Related note (checked: not a conflict)", "İlgili not (kontrol edildi: çelişki değil)"))
+                    .font(.caption.weight(.semibold)).foregroundStyle(conflict ? .red : .secondary)
                 Text(name).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 Spacer()
                 if str(it, "match_path", "") != "" {
@@ -1329,10 +1332,16 @@ struct DigestItemsView: View {
             }
             Text(str(it, "match_text", "") != "" ? str(it, "match_text") : T("(Carry could not find the line; open the note.)", "(Carry satırı bulamadı; notu açın.)"))
                 .font(.callout).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-            Text(T("Accepting saves the chat's version to the log and leaves the note as it is; you decide which one is right.",
-                   "Kabul ederseniz sohbetteki hâli log'a yazılır, not olduğu gibi kalır; hangisinin doğru olduğuna siz karar verin."))
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-        }.padding(8).background(Color.red.opacity(0.05)).clipShape(RoundedRectangle(cornerRadius: 6))
+            if str(it, "why", "") != "" {
+                Text((conflict ? T("Why it conflicts: ", "Neden çelişiyor: ") : T("Why: ", "Neden: ")) + str(it, "why"))
+                    .font(.caption).fixedSize(horizontal: false, vertical: true)
+            }
+            if conflict {
+                Text(T("Accepting saves the chat's version to the log and leaves the note as it is; you decide which one is right.",
+                       "Kabul ederseniz sohbetteki hâli log'a yazılır, not olduğu gibi kalır; hangisinin doğru olduğuna siz karar verin."))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+        }.padding(8).background((conflict ? Color.red : Color.secondary).opacity(0.05)).clipShape(RoundedRectangle(cornerRadius: 6))
     }
     @ViewBuilder func card(_ it: [String: Any]) -> some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -1348,7 +1357,7 @@ struct DigestItemsView: View {
             if str(it, "quote", "") != "" {
                 Text(quoteLine(it)).font(.caption).italic().foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
-            if str(it, "section") == "conflict" { noteSide(it) }
+            if str(it, "section") == "conflict" || (str(it, "match", "") != "" && str(it, "match_text", "") != "") { noteSide(it) }
             buttons(it)
         }.padding(10).background(Color.orange.opacity(0.06)).clipShape(RoundedRectangle(cornerRadius: 8))
     }
