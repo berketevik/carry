@@ -6,6 +6,7 @@ silently returning weaker evidence.
 """
 import json
 import math
+import os
 import re
 import sqlite3
 import time
@@ -43,9 +44,17 @@ def normalize_budget(retrieval, budget=None):
     return resolved
 
 
-def fts_match_string(query):
+PREFIX_MIN = 5  # words this long also match by a stem-like prefix: Turkish suffixes (kurulumu, kedim)
+
+
+def fts_match_string(query, prefix=None):
     tokens = re.findall(r"\w{2,}", query, flags=re.UNICODE)
-    return " OR ".join(f'"{t}"' for t in tokens) if tokens else ""
+    if prefix is None:
+        prefix = os.environ.get("CARRY_PREFIX_MATCH", "1") != "0"
+    terms = [f'"{t}"' for t in tokens]
+    if prefix:
+        terms += [f'"{t[:max(4, len(t) - 3)]}"*' for t in dict.fromkeys(tokens) if len(t) >= PREFIX_MIN]
+    return " OR ".join(terms) if terms else ""
 
 
 def unmatched_terms(con, query, limit=12):
