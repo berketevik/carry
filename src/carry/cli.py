@@ -262,6 +262,12 @@ def cmd_vault(args):
     return status
 
 
+def cmd_setup(args):
+    from . import setup_wizard
+    return setup_wizard.run(state_dir=args.workspace, assume_yes=args.yes, vault_path=args.vault,
+                            language=args.language, animation=not args.no_animation)
+
+
 def build_parser():
     parser = argparse.ArgumentParser(prog="carry", description="Portable local memory")
     parser.add_argument("--workspace", default=os.environ.get("CARRY_WORKSPACE"),
@@ -395,6 +401,13 @@ def build_parser():
     vrb.add_argument('path')
     vrb.add_argument('--id', required=True)
     vlt.set_defaults(func=cmd_vault)
+
+    setup = sub.add_parser("setup", help="guided setup in the terminal: workspace, vault, search, clients, index")
+    setup.add_argument("--yes", action="store_true", help="take every default without asking")
+    setup.add_argument("--vault", help="create the vault here")
+    setup.add_argument("--language", choices=("Turkish", "English"))
+    setup.add_argument("--no-animation", action="store_true")
+    setup.set_defaults(func=cmd_setup)
 
     demo = sub.add_parser("demo", help="install the synthetic corpus and index it")
     demo.add_argument("--into", required=True, help="folder for the synthetic corpus")

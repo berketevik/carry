@@ -19,7 +19,24 @@ and Python search dependencies. Models download on explicit setup. This pilot
 is not Developer ID signed/notarized; second-machine acceptance is still a user
 pilot check, not a completed automated test.
 
-## Install
+## Install and set up (recommended)
+
+```sh
+gh auth login && gh auth setup-git        # the repository is private for now
+uv tool install "git+https://github.com/berketevik/carry"
+carry setup
+```
+
+`carry setup` is a terminal wizard: it creates the workspace (warning when the
+folder is synced by iCloud), a new vault from the template or an existing Markdown
+folder as a read-only source, an optional GitHub team repository, the search
+setting (no model on the device by default; TypeSafe Jev with a key stored in the
+Keychain; or semantic search through Ollama), the Claude Code / Codex wiring, and
+the index. `carry setup --yes --vault ~/Vault` takes every default. Update with
+`uv tool upgrade carry`. Claude Code can run these steps for you: ask it to install
+Carry from this README.
+
+## Install from a checkout
 
 ```sh
 uv venv --python 3.13 .venv          # or: python3 -m venv .venv
