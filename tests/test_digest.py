@@ -3,9 +3,10 @@ import datetime
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import _support  # noqa: F401
-from carry import context, digest, vault, vaultview
+from carry import context, digest, harvest, vault, vaultview
 from carry.config import Workspace
 from carry.errors import CarryError
 
@@ -162,6 +163,51 @@ class DigestTest(unittest.TestCase):
                          (3, 'The note records an older build.', 'The build took 50 seconds in July.', '[[Build]]'))
         old = {it['statement']: it for it in digest.parse(DIGEST)['items']}
         self.assertEqual((old['The build takes 32 seconds.']['exchange'], old['The build takes 32 seconds.']['why']), (3, ''))
+
+    def recheck(self, verdict, related=True):
+        def fake(cands, ws, which, language):
+            if related:
+                cands[0].update(related=True, match_text='The Mac mini had 8 GB in July.')
+            return [verdict], True
+        with patch.object(harvest, 'extractor', return_value='claude:sonnet'), patch.object(harvest, 'agent_compare', side_effect=fake):
+            return digest.recheck(self.ws, self.sid, self.rel)
+
+    def test_recheck_moves_a_dismissed_conflict_to_new_with_its_related_note(self):
+        before = digest.items(self.ws, self.sid, self.rel)['items']
+        result = self.recheck(('new', str(self.root / 'notes' / 'Mac mini.md')))
+        self.assertEqual((result['rechecked'], result['moved']['new']), (1, 1))
+        text = (self.root / self.rel).read_text()
+        self.assertNotIn('## Conflict candidates', text)
+        items = {it['statement']: it for it in digest.parse(text)['items']}
+        moved = items['The Mac mini has 16 GB.']
+        self.assertEqual((moved['section'], moved['match'], moved['match_text'], moved['exchange'], moved['date']),
+                         ('new', '[[Mac mini]]', 'The Mac mini had 8 GB in July.', 4, '2026-09-27'))
+        self.assertEqual(len(items), len(before))
+        self.assertLess(text.index('The Mac mini has 16 GB.'), text.index('## Already recorded'))
+
+    def test_recheck_never_writes_the_fallback_date_as_the_chat_date(self):
+        (self.root / self.rel).write_text(DIGEST.replace('the Mac mini has 16 GB *(exchange 4, owner, 2026-09-27)*', 'the Mac mini has 16 GB *(exchange 4, owner)*'))
+        self.recheck(('new', str(self.root / 'notes' / 'Mac mini.md')))
+        self.assertIn('the Mac mini has 16 GB *(exchange 4, owner)*', (self.root / self.rel).read_text())
+
+    def test_recheck_folds_a_known_one_and_never_touches_decided_items(self):
+        items = self.ids()
+        digest.decide(self.ws, self.sid, self.rel, items['The pilot ships on 15 October.']['id'], 'accept')
+        decided = [l for l in (self.root / self.rel).read_text().split('\n') if '<!-- carry:' in l]
+        self.recheck(('known', str(self.root / 'notes' / 'Mac mini.md')), related=False)
+        text = (self.root / self.rel).read_text()
+        self.assertIn('- The Mac mini has 16 GB. → [[Mac mini]]', text)
+        self.assertEqual([l for l in text.split('\n') if '<!-- carry:' in l], decided)
+        self.assertEqual(digest.items(self.ws, self.sid, self.rel)['waiting'], 2)
+
+    def test_recheck_keeps_a_real_conflict_in_place(self):
+        def fake(cands, ws, which, language):
+            cands[0].update(match_text='8 GB, bought in July.', why='Same Mac, different memory.')
+            return [('conflict', str(self.root / 'notes' / 'Mac mini.md'))], True
+        with patch.object(harvest, 'extractor', return_value='claude:sonnet'), patch.object(harvest, 'agent_compare', side_effect=fake):
+            digest.recheck(self.ws, self.sid, self.rel)
+        c = next(it for it in digest.parse((self.root / self.rel).read_text())['items'] if it['statement'] == 'The Mac mini has 16 GB.')
+        self.assertEqual((c['section'], c['match_text'], c['why']), ('conflict', '8 GB, bought in July.', 'Same Mac, different memory.'))
 
     def test_a_plain_note_is_not_a_digest(self):
         (self.root / 'notes' / 'Plain.md').write_text('---\ntype: thing\ndraft: true\n---\n- **fact:** x\n')
