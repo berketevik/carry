@@ -744,7 +744,10 @@ struct Onboarding: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 18) {
-                Label("Carry", systemImage: "tray.full.fill").font(.title2.bold())
+                HStack(spacing: 8) {
+                    Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 30, height: 30)
+                    Text("Carry").font(.title2.bold())
+                }
                 Spacer()
                 ForEach(steps.indices, id: \.self) { i in
                     HStack(spacing: 6) {
@@ -2596,7 +2599,10 @@ struct ContentView: View {
         Group { if model.onboarding { Onboarding(model: model) } else {
         NavigationSplitView {
             VStack(alignment: .leading) {
-                Label(L("Carry"), systemImage: "tray.full.fill").font(.title.bold()).padding(20)
+                HStack(spacing: 10) {
+                    Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 34, height: 34)
+                    Text(L("Carry")).font(.title.bold())
+                }.padding(20)
                 List(selection: $model.page) {
                     ForEach(pages, id: \.0) { item in
                         Label(pageName(item.0), systemImage: item.1).tag(item.0).padding(.vertical, 4)

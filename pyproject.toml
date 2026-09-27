@@ -31,4 +31,4 @@ where = ["src"]
 # The synthetic corpus ships with the package: the demo and the acceptance run
 # must work from an installed wheel, with no network fetch.
 carry = ["py.typed", "fixtures/*/*.md", "fixtures/*/*/*.md",
-         "templates/vault/*", "templates/vault/*/*", "templates/vault/*/*/*", "app/*.swift"]
+         "templates/vault/*", "templates/vault/*/*", "templates/vault/*/*/*", "app/*.swift", "app/*.icns"]

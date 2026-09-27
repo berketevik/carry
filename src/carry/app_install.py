@@ -66,8 +66,12 @@ def install(target=DEFAULT_PATH, workspace=None, python=None):
         with open(app / 'Contents' / 'Info.plist', 'wb') as f:
             plistlib.dump(dict(CFBundleExecutable='Carry', CFBundleIdentifier=BUNDLE_ID, CFBundleName='Carry',
                                CFBundleDisplayName='Carry', CFBundlePackageType='APPL', CFBundleShortVersionString=_version(),
-                               CFBundleVersion='1', LSMinimumSystemVersion='14.0', NSHighResolutionCapable=True), f)
+                               CFBundleVersion='1', LSMinimumSystemVersion='14.0', NSHighResolutionCapable=True,
+                               CFBundleIconFile='Carry'), f)
         (app / 'Contents' / 'Resources' / 'python-path.txt').write_text((python or sys.executable) + '\n')
+        icon = resources.files('carry') / 'app' / 'Carry.icns'
+        if icon.is_file():
+            (app / 'Contents' / 'Resources' / 'Carry.icns').write_bytes(icon.read_bytes())
         subprocess.run(['/usr/bin/codesign', '--force', '--sign', '-', str(app)], capture_output=True)
         if target.exists():
             shutil.rmtree(target)

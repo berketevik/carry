@@ -1,3 +1,5 @@
+<img src="assets/carry-icon.png" width="96" alt="Carry icon">
+
 # Carry
 > 🇹🇷 Türkçe için aşağıya bakın: [Türkçe](#carry-türkçe)
 
