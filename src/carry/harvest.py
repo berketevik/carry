@@ -47,12 +47,12 @@ LABELS = {
     'Turkish': dict(new='Yeni', conflict='Çelişki adayları (incele)', review='İncelenecek', known='Zaten kayıtlı', resolved='Yapılmış görünüyor',
                     dropped='Vazgeçilmiş görünüyor',
                     assistant='asistanın önerisi/sonucu; sahibi onaylamadı', decision='karar', fact='olgu',
-                    preference='tercih', open_item='açık iş', unchecked='vault ile karşılaştırılmadı (Jev kontrolü kapalı)'),
+                    preference='tercih', open_item='açık iş', unchecked='vault ile karşılaştırılmadı (ne Jev ne asistanınız kontrol edebildi)'),
     'English': dict(new='New', conflict='Conflict candidates (review)', review='To review', known='Already recorded', resolved='Apparently done',
                     dropped='Apparently dropped',
                     assistant="assistant's suggestion or result; not confirmed by the owner", decision='decision',
                     fact='fact', preference='preference', open_item='open item',
-                    unchecked='not compared with the vault (Jev check is off)'),
+                    unchecked='not compared with the vault (neither Jev nor your assistant could check it)'),
 }
 
 norm = lambda s: re.sub(r'\s+', ' ', s or '').strip().lower()
@@ -193,17 +193,20 @@ def extractor():
     raise CarryError('no_extraction_client')
 
 
-def _items_from(text):
+def _items_from(text, field='items'):
     try:
-        items = json.loads(text[text.index('{'):text.rindex('}') + 1])['items']
+        items = json.loads(text[text.index('{'):text.rindex('}') + 1])[field]
     except (ValueError, KeyError, TypeError):
         return None
     return [x for x in items if isinstance(x, dict)] if isinstance(items, list) else None
 
 
 def extract_window(exchanges, language, which):
-    system = SYSTEM.format(language=language)
-    body = _render(exchanges)
+    return ask_agent(SYSTEM.format(language=language), _render(exchanges), which, 'items')
+
+
+def ask_agent(system, body, which, field):
+    """One JSON answer from the owner's own client (Claude or Codex), two tries."""
     for _ in range(2):
         with tempfile.TemporaryDirectory(prefix='carry-harvest-') as cwd:
             if which.startswith('claude'):
@@ -218,10 +221,57 @@ def extract_window(exchanges, language, which):
                 proc = subprocess.run(['codex', 'exec', '--skip-git-repo-check', '-m', which.split(':')[1],
                                        system + '\n\n' + body], capture_output=True, text=True, timeout=900, cwd=cwd)
                 text = proc.stdout
-        items = _items_from(text)
+        items = _items_from(text, field)
         if items is not None:
             return items
     raise CarryError('extraction_unparseable')
+
+
+AGENT_COMPARE = """You compare items taken from a chat with passages from the owner's notes. For each case give one verdict:
+- "known": one passage already states the item (possibly in other words).
+- "conflict": for one passage this holds: {real}
+- "none": neither.
+Use only the passages given. Return ONLY JSON: {{"answers": [{{"case": <n>, "verdict": "known|conflict|none", "passage": "<p-id, empty for none>", "why": "<one short sentence in {language}>"}}]}}"""
+AGENT_BATCH = 10      # items per call
+AGENT_PASSAGES = 6    # passages per item, as many as the Jev path
+AGENT_TEXT = 800      # characters per passage
+
+
+def agent_compare(items, workspace, which, language):
+    """With Jev off, the owner's assistant compares new items with the notes: known or a real conflict.
+    It never closes an open item (a wrong close hides it from every later session). Code checks every
+    answer; an unusable one leaves the item new. Returns (verdict, path) per item and whether it ran."""
+    out = [('new', None)] * len(items)
+    evidence = [evidence_for(it, workspace, limit=AGENT_PASSAGES) for it in items]
+    cases = [i for i, ev in enumerate(evidence) if ev]
+    system = AGENT_COMPARE.format(real=REAL_CONFLICT, language=language)
+    ran = True
+    for start in range(0, len(cases), AGENT_BATCH):
+        batch = cases[start:start + AGENT_BATCH]
+        body = json.dumps([dict(case=i + 1, candidate=mask(items[i]['statement'])[0], candidate_date=items[i].get('at'),
+                                passages={f'p{j + 1}': dict(_passage(x), text=_passage(x)['text'][:AGENT_TEXT])
+                                          for j, x in enumerate(evidence[i])}) for i in batch], ensure_ascii=False, indent=1)
+        try:
+            answers = ask_agent(system, body, which, 'answers')
+        except (CarryError, subprocess.SubprocessError, OSError):
+            ran = False
+            continue
+        for a in answers:
+            try:
+                i = int(a.get('case')) - 1
+            except (TypeError, ValueError):
+                continue
+            if i not in batch or a.get('verdict') not in ('known', 'conflict'):
+                continue
+            passage = str(a.get('passage') or '')
+            j = int(passage[1:]) - 1 if re.fullmatch(r'p\d+', passage) else -1
+            if not 0 <= j < len(evidence[i]):
+                continue
+            hit = evidence[i][j]
+            if a['verdict'] == 'conflict':
+                _keep_note_side(items[i], hit, a.get('why'))
+            out[i] = (a['verdict'], hit['path'])
+    return out, ran
 
 
 # -- checks, verification, comparison with the vault ----------------------------
@@ -521,16 +571,26 @@ def run(workspace, root=None, dry_run=False, include_filed=False, limit=None, mi
             groups = dict(new=[], conflict=[], review=[], resolved=[], dropped=[], known=[])
             said = {e['i']: e.get('at') for e in exchanges}
             started = next((e.get('at') for e in exchanges if e.get('at')), None)
+            unchecked = []
             for it in items:
                 it['at'] = said.get(it['exchange']) or started
-                scores = verify(it, exchanges, key) if key else None
+                scores = verify(it, exchanges, key) if key else None  # owner attribution stays Jev-only
                 verdict = classify(it, scores)
                 if verdict == 'drop':
                     continue
                 if verdict == 'new' and key:
                     verdict, it['match'] = compare(it, workspace, key, since=it['at'])
+                if verdict == 'new' and not key:
+                    unchecked.append(it)
+                    continue
                 groups[verdict].append(it)
-            meta = dict(extractor=chosen, judge='jev' if key else None, compared=bool(key),
+            agent_ran = False
+            if unchecked:
+                verdicts, agent_ran = agent_compare(unchecked, workspace, chosen, language)
+                for it, (verdict, it['match']) in zip(unchecked, verdicts):
+                    groups[verdict].append(it)
+            judge = 'jev' if key else 'agent' if agent_ran else None
+            meta = dict(extractor=chosen, judge=judge, compared=judge is not None,
                         dropped_without_quote=dropped, thread=entry_key, exchanges=[fresh[0]['i'], fresh[-1]['i']])
             if not any(groups.values()):
                 # Nothing worth reviewing: no empty draft in the inbox.

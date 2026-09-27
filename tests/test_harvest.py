@@ -33,6 +33,8 @@ class HarvestTest(unittest.TestCase):
         self.ws = Workspace.load(self.base / 'ws')
         self.project = harvest.claude_project_dir(self.root); self.project.mkdir(parents=True)
         short = patch.object(harvest, 'MIN_EXCHANGES', 1); short.start(); self.addCleanup(short.stop)
+        # No test ever reaches a real Claude or Codex: comparison by the assistant is faked where tested.
+        agent = patch.object(harvest, 'ask_agent', side_effect=CarryError('no_agent_in_tests')); agent.start(); self.addCleanup(agent.stop)
 
     def jev_on(self):
         """Jev chosen as the checker in search: the only case harvest uses it."""
@@ -198,6 +200,49 @@ class HarvestTest(unittest.TestCase):
         self.assertNotIn('kind', seen)
         self.assertIn('p1_real', sent[0]['questions'])
 
+    def agent_case(self, answers, passages=None):
+        items = [dict(type='fact', statement='The Mac mini has 16 GB.', quote='16 GB', at='2026-09-28'),
+                 dict(type='fact', statement='The repo is public.', quote='public', at='2026-09-28'),
+                 dict(type='open_item', statement='Sign the app.', quote='sign', at='2026-09-28')]
+        passages = passages or [dict(path='notes/Mac mini.md', text='The Mac mini has 8 GB.', date='2026-07-01', metadata=dict(type='thing'))]
+        sent = []
+        def fake(system, body, which, field):
+            sent.append((system, json.loads(body)))
+            if isinstance(answers, Exception):
+                raise answers
+            return answers
+        with patch.object(harvest, 'evidence_for', return_value=passages), patch.object(harvest, 'ask_agent', side_effect=fake):
+            return items, harvest.agent_compare(items, self.ws, 'claude:sonnet', 'English'), sent
+
+    def test_the_assistant_compares_when_jev_is_off_and_code_checks_its_answers(self):
+        answers = [dict(case=1, verdict='conflict', passage='p1', why='The note says 8 GB for the same Mac.'),
+                   dict(case=2, verdict='known', passage='p9'),        # no such passage: ignored
+                   dict(case=3, verdict='resolved', passage='p1'),     # the assistant never closes an item
+                   dict(case='x', verdict='known', passage='p1')]
+        items, (verdicts, ran), sent = self.agent_case(answers)
+        self.assertTrue(ran)
+        self.assertEqual(verdicts, [('conflict', 'notes/Mac mini.md'), ('new', None), ('new', None)])
+        self.assertEqual((items[0]['match_text'], items[0]['why']), ('The Mac mini has 8 GB.', 'The note says 8 GB for the same Mac.'))
+        system, cases = sent[0]
+        self.assertIn('real conflict', system)
+        self.assertEqual(cases[0]['passages']['p1']['type'], 'thing')
+
+    def test_an_assistant_that_fails_leaves_items_new_and_unchecked(self):
+        items, (verdicts, ran), _ = self.agent_case(CarryError('extraction_unparseable'))
+        self.assertFalse(ran)
+        self.assertEqual(verdicts, [('new', None)] * 3)
+
+    def test_a_harvest_without_jev_is_compared_by_the_assistant(self):
+        self.thread('mmmm2222', [('The Mac mini has 16 GB now.', 'Noted.')])
+        item = dict(type='fact', statement='The Mac mini has 16 GB.', exchange=1, quote='Mac mini has 16 GB')
+        with self.items(item), patch.object(jev, 'api_key', return_value=None), \
+                patch.object(harvest, 'agent_compare', return_value=([('conflict', str(self.root / 'notes/Mac mini.md'))], True)) as agent:
+            digest = (self.root / harvest.run(self.ws, which='claude:sonnet', progress=lambda m: None)['digests'][0]).read_text()
+        agent.assert_called_once()
+        self.assertIn('"judge": "agent"', digest)
+        self.assertIn('## Conflict candidates', digest)
+        self.assertNotIn('neither Jev nor your assistant', digest)
+
     def test_an_older_or_undated_passage_cannot_close_an_open_item(self):
         shelved = dict(path='notes/Plan.md', text='The signed pilot was shelved.', date='2026-09-18')
         self.assertEqual(self.closing([shelved], {('p1', 'dropped'): 0.9}), ('new', None))
@@ -360,4 +405,4 @@ class HarvestJevRuleTest(HarvestTest):
                 patch.object(harvest, 'compare', side_effect=AssertionError('Jev must not be called')):
             report = harvest.run(self.ws, which='claude:sonnet', progress=lambda m: None)
         digest = (self.root / report['digests'][0]).read_text()
-        self.assertIn('"judge": null', digest)
+        self.assertNotIn('"judge": "jev"', digest)  # the assistant compares instead
