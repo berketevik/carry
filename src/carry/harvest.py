@@ -292,28 +292,57 @@ def verify(item, exchanges, key):
     return {k: jev.probability(answers[k]['noul']) for k in VERIFY}
 
 
-def compare(item, workspace, key, since=None):
-    """Candidates come unjudged: recall's judge asks whether a passage answers a question, and a
-    statement is not one. The same/contradicts/done questions below decide instead.
+REAL_CONFLICT = ("Is this a real conflict the owner must resolve: does the note present as still current a value, name "
+                 "or decision for the same thing (same device, person, project and scope) that the candidate says is "
+                 "different? A dated record of what was true or done at that time, an old name inside a file path, a "
+                 "proposal, or a different device or scope is not a conflict.")
+REAL_MIN = 0.6  # measured on 1 real and 7 false candidates (0.75 vs at most 0.52): a direction, not a precision
 
-    An open item is closed only by a passage dated on or after `since`, the day it was said: an
-    older note about an earlier plan cannot close it, and an undated one cannot either. A passage
-    at least as new that says it is still open keeps it open."""
+
+def evidence_for(item, workspace, limit=6):
+    """Unjudged passages to compare an item with: recall's judge asks whether a passage answers a
+    question, and a statement is not one. Chat raws, digests and notes marked secret stay out."""
     from dataclasses import replace
     from .recall import is_secret, recall
     unjudged = replace(workspace, retrieval=replace(workspace.retrieval, reranker='off', vector_min_score=-1.0))
     extra = [item['quote'][:200]] + [k for k in (item.get('keywords') or []) if isinstance(k, str)][:3]
     found = recall(unjudged, item['statement'], queries=extra)
-    evidence = [x for x in found.get('evidence', []) if 'chat-raw' not in x['path'] and '/harvest/' not in x['path']
-                and not is_secret(x.get('metadata'))][:6]
+    return [x for x in found.get('evidence', []) if 'chat-raw' not in x['path'] and '/harvest/' not in x['path']
+            and not is_secret(x.get('metadata'))][:limit]
+
+
+def _passage(x):
+    """What a judge sees of a passage: its facts (path, date, note type), never a verdict-shaped label."""
+    return {'source': x['path'], 'date': x.get('date'), 'type': (x.get('metadata') or {}).get('type'),
+            'text': mask(x['text'])[0]}
+
+
+def _keep_note_side(item, passage, why=None):
+    item['match_text'] = ' '.join(mask(passage['text'])[0].split())[:MATCH_TEXT]
+    if why:
+        item['why'] = ' '.join(str(why).split())[:300]
+
+
+def compare(item, workspace, key, since=None):
+    """Same / contradicts / done questions per passage, asked to Jev.
+
+    A conflict needs a passage that contradicts the item and is a real conflict (REAL_CONFLICT) on
+    its own: a dated record of an earlier state, an old name or another device is not. A dismissed
+    candidate stays new but keeps the note as a related one, so the owner still sees the other side.
+
+    An open item is closed only by a passage dated on or after `since`, the day it was said: an
+    older note about an earlier plan cannot close it, and an undated one cannot either. A passage
+    at least as new that says it is still open keeps it open."""
+    evidence = evidence_for(item, workspace)
     if not evidence:
         return 'new', None
-    state = {'candidate': mask(item['statement'])[0],
-             'passages': {f'p{i + 1}': {'source': x['path'], 'text': mask(x['text'])[0]} for i, x in enumerate(evidence)}}
+    state = {'candidate': mask(item['statement'])[0], 'candidate_date': since,
+             'passages': {f'p{i + 1}': _passage(x) for i, x in enumerate(evidence)}}
     qs = {}
     for i in range(len(evidence)):
         qs[f'p{i + 1}_same'] = dict(type='noul', instructions=f"Does passage p{i + 1} already state the candidate's fact or decision (possibly in other words)?")
         qs[f'p{i + 1}_contra'] = dict(type='noul', instructions=f'Does passage p{i + 1} state something that contradicts the candidate (a different value, date or decision for the same thing)?')
+        qs[f'p{i + 1}_real'] = dict(type='noul', instructions=f'About passage p{i + 1}: {REAL_CONFLICT}')
         if item['type'] == 'open_item':
             qs[f'p{i + 1}_done'] = dict(type='noul', instructions=f"Does passage p{i + 1} report that this same open item has since been completed?")
             qs[f'p{i + 1}_dropped'] = dict(type='noul', instructions=f"Does passage p{i + 1} report that this same open item was dropped, cancelled or made unnecessary (not completed)?")
@@ -335,11 +364,18 @@ def compare(item, workspace, key, since=None):
                 return ('resolved' if p(best, 'done') >= p(best, 'dropped') else 'dropped'), evidence[best]['path']
     if same[0] >= 0.5:
         return 'known', same[1]
-    if contra[0] >= 0.5:
-        # The owner decides a conflict by reading both sides: keep the note's side with the item.
-        passage = next(x for x in evidence if x['path'] == contra[1])
-        item['match_text'] = ' '.join(mask(passage['text'])[0].split())[:MATCH_TEXT]
-        return 'conflict', contra[1]
+    q = lambda i, name: jev.probability(answers[f'p{i + 1}_{name}']['noul'])
+    flagged = [i for i in range(len(evidence)) if q(i, 'contra') >= 0.5]
+    real = [i for i in flagged if q(i, 'real') >= REAL_MIN]
+    if real:
+        best = max(real, key=lambda i: q(i, 'real'))
+        _keep_note_side(item, evidence[best])  # the owner decides by reading both sides
+        return 'conflict', evidence[best]['path']
+    if flagged:
+        best = max(flagged, key=lambda i: q(i, 'contra'))
+        _keep_note_side(item, evidence[best])
+        item['related'] = True
+        return 'new', evidence[best]['path']
     return 'new', None
 
 
@@ -383,7 +419,8 @@ def write_outputs(root, client, thread_id, exchanges, groups, meta, language, to
         where = f' ↔ {_link(it["match"], root)}' if it.get('match') else ''
         said = f', {it["at"]}' if it.get('at') else ''
         line = f'- **{tag}:** {it["statement"]}{where}\n  > {it["quote"]} *(exchange {it["exchange"]}, {it["speaker"]}{said})*'
-        return line + (f'\n  ≠ {it["match_text"]}' if it.get('match_text') else '')
+        line += f'\n  ≠ {it["match_text"]}' if it.get('match_text') else ''
+        return line + (f'\n  ∵ {it["why"]}' if it.get('why') else '')
     for key in ('new', 'conflict', 'review'):
         if groups.get(key):
             lines += [f'## {L[key]}', ''] + [item_line(it) for it in groups[key]] + ['']

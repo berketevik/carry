@@ -22,6 +22,7 @@ MARK = re.compile(r'\s*<!-- carry: (accepted|fixed|skipped) (\d{4}-\d{2}-\d{2}) 
 ITEM = re.compile(r'^- \*\*(?P<tag>[^*]+?):\*\* (?P<statement>.+?)(?: ↔ (?P<match>\[\[[^\]]+\]\]))?$')
 QUOTE = re.compile(r'^\s+> (?P<quote>.*?) \*\(exchange (?P<exchange>\d+), (?P<speaker>[^,)]+)(?:, (?P<date>\d{4}-\d{2}-\d{2}))?\)\*\s*$')
 NOTE_SIDE = re.compile(r'^\s+≠ (?P<text>.+)$')
+WHY = re.compile(r'^\s+∵ (?P<text>.+)$')
 FOLDED_ITEM = re.compile(r'^- (?P<statement>.+?) → (?P<match>\[\[[^\]]+\]\])\s*$')
 ACTIONABLE = ('new', 'conflict', 'review')
 FOLDED = ('resolved', 'dropped', 'known')
@@ -65,14 +66,21 @@ def parse(text):
             continue
         decision, bare = decision_of(line)
         if section in ACTIONABLE and (m := ITEM.match(bare)):
-            q = QUOTE.match(lines[n + 1]) if n + 1 < len(lines) else None
-            side = NOTE_SIDE.match(lines[n + 2]) if q and n + 2 < len(lines) else None
+            # The item's indented lines, in any order: quote (>), the note's side (≠), the judge's reason (∵).
+            follow = []
+            for extra in lines[n + 1:]:
+                if not extra.startswith((' ', '\t')) or not extra.strip():
+                    break
+                follow.append(extra)
+            first = lambda pattern: next(filter(None, map(pattern.match, follow)), None)
+            q, side, why = first(QUOTE), first(NOTE_SIDE), first(WHY)
             items.append(dict(id=item_id(m['statement']), section=section, tag=m['tag'].strip(),
                               kind=m['tag'].split(' · ')[0].strip(), statement=m['statement'].strip(),
                               match=m['match'] or '', quote=q['quote'] if q else '',
                               exchange=int(q['exchange']) if q else None, speaker=q['speaker'] if q else '',
                               date=(q['date'] if q else None) or str(front.get('created') or ''),
-                              match_text=side['text'].strip() if side else '', decision=decision, line=n))
+                              match_text=side['text'].strip() if side else '', why=why['text'].strip() if why else '',
+                              decision=decision, line=n))
         elif section in FOLDED and (m := FOLDED_ITEM.match(bare)):
             items.append(dict(id=item_id(m['statement']), section=section, statement=m['statement'].strip(),
                               match=m['match'], decision='folded', line=n))
@@ -128,7 +136,7 @@ def items(ws, source_id, relative):
     _, _, text, front = _open(ws, source_id, relative)
     parsed = parse(text)
     for it in parsed['items']:
-        if it['section'] == 'conflict' and it['match'] and it['decision'] is None:
+        if it['match'] and it['decision'] is None:
             it['match_path'], it['match_text'] = note_side(ws, source_id, it)
     waiting = sum(1 for it in parsed['items'] if it['decision'] is None)
     return dict(path=relative, items=parsed['items'], waiting=waiting, draft=front.get('draft') is True)

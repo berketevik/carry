@@ -152,6 +152,17 @@ class DigestTest(unittest.TestCase):
         conflict = next(it for it in digest.items(self.ws, self.sid, self.rel)['items'] if it['section'] == 'conflict')
         self.assertEqual(conflict['match_text'], 'Mac mini: 8 GB RAM, bought in July.')
 
+    def test_indented_lines_parse_in_any_order_and_old_digests_still_parse(self):
+        text = DIGEST.replace('- **fact:** The build takes 32 seconds.\n  > build takes 32 seconds *(exchange 3, assistant, 2026-09-27)*',
+                              '- **fact:** The build takes 32 seconds. ↔ [[Build]]\n  ∵ The note records an older build.\n'
+                              '  > build takes 32 seconds *(exchange 3, assistant, 2026-09-27)*\n  ≠ The build took 50 seconds in July.')
+        items = {it['statement']: it for it in digest.parse(text)['items']}
+        build = items['The build takes 32 seconds.']
+        self.assertEqual((build['exchange'], build['why'], build['match_text'], build['match']),
+                         (3, 'The note records an older build.', 'The build took 50 seconds in July.', '[[Build]]'))
+        old = {it['statement']: it for it in digest.parse(DIGEST)['items']}
+        self.assertEqual((old['The build takes 32 seconds.']['exchange'], old['The build takes 32 seconds.']['why']), (3, ''))
+
     def test_a_plain_note_is_not_a_digest(self):
         (self.root / 'notes' / 'Plain.md').write_text('---\ntype: thing\ndraft: true\n---\n- **fact:** x\n')
         with self.assertRaisesRegex(CarryError, 'not_a_digest'):

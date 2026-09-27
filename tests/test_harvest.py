@@ -175,12 +175,28 @@ class HarvestTest(unittest.TestCase):
 
     def test_a_conflict_keeps_the_contradicting_passage_in_the_digest(self):
         def fake(body, key, timeout=jev.TIMEOUT):
-            return dict(answers={k: dict(type='noul', noul=(0.9 if k == 'p2_contra' else 0.05)) for k in body['questions']})
+            return dict(answers={k: dict(type='noul', noul=(0.9 if k in ('p2_contra', 'p2_real') else 0.05)) for k in body['questions']})
         passages = [dict(path='notes/A.md', text='Unrelated.'), dict(path='notes/Mac mini.md', text='The Mac mini has   8 GB.')]
         item = dict(type='fact', statement='The Mac mini has 16 GB.', quote='16 GB')
         with patch('carry.recall.recall', return_value=dict(evidence=passages)), patch.object(jev, 'call', side_effect=fake):
             self.assertEqual(harvest.compare(item, self.ws, 'k'), ('conflict', 'notes/Mac mini.md'))
         self.assertEqual(item['match_text'], 'The Mac mini has 8 GB.')
+
+    def test_a_contradiction_that_is_not_a_real_conflict_stays_new_with_the_note_related(self):
+        sent = []
+        def fake(body, key, timeout=jev.TIMEOUT):
+            sent.append(body)
+            return dict(answers={k: dict(type='noul', noul=(0.9 if k == 'p1_contra' else 0.3 if k == 'p1_real' else 0.05)) for k in body['questions']})
+        passages = [dict(path='log/2026-09-14 — Pilot.md', text='Output: internal-pilot.zip', date='2026-09-14', metadata=dict(type='output'))]
+        item = dict(type='preference', statement="Say 'pilot', not 'internal pilot'.", quote='pilot')
+        with patch('carry.recall.recall', return_value=dict(evidence=passages)), patch.object(jev, 'call', side_effect=fake):
+            self.assertEqual(harvest.compare(item, self.ws, 'k', since='2026-09-27'), ('new', 'log/2026-09-14 — Pilot.md'))
+        self.assertTrue(item['related'])
+        self.assertEqual(item['match_text'], 'Output: internal-pilot.zip')
+        seen = sent[0]['state']['passages']['p1']
+        self.assertEqual((seen['date'], seen['type']), ('2026-09-14', 'output'))
+        self.assertNotIn('kind', seen)
+        self.assertIn('p1_real', sent[0]['questions'])
 
     def test_an_older_or_undated_passage_cannot_close_an_open_item(self):
         shelved = dict(path='notes/Plan.md', text='The signed pilot was shelved.', date='2026-09-18')
