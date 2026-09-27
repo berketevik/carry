@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "carry"
-version = "0.3.0"
+version = "0.4.0"
 description = "Portable local memory for coding agents: Markdown sources, a derived index and an MCP interface."
 requires-python = ">=3.11"
 license = "MIT"
@@ -30,4 +30,4 @@ where = ["src"]
 # The synthetic corpus ships with the package: the demo and the acceptance run
 # must work from an installed wheel, with no network fetch.
 carry = ["py.typed", "fixtures/*/*.md", "fixtures/*/*/*.md",
-         "templates/vault/*", "templates/vault/*/*", "templates/vault/*/*/*"]
+         "templates/vault/*", "templates/vault/*/*", "templates/vault/*/*/*", "app/*.swift"]

@@ -77,8 +77,27 @@ KEYWORD_ASSISTANT = dict(reranker='off', top_k=8, max_chars=10000, vector_min_sc
 KEYWORD_JEV = dict(KEYWORD_ASSISTANT, reranker='jev', reranker_min_score=0.5)
 
 
+# Measured best on the 45-case evaluation (hit@1 34/36, MRR 0.958): multilingual
+# embeddinggemma through Ollama (~0.7 GB while loaded, unloads when idle) plus Jev.
+SEMANTIC_JEV = dict(reranker='jev', reranker_min_score=0.5, top_k=8, max_chars=10000, vector_min_score=-1.0)
+SEMANTIC_ASSISTANT = ASSISTANT_RANKED
+SEARCH_PRESETS = {(False, 'assistant'): 'keyword_assistant', (False, 'jev'): 'keyword_jev',
+                  (True, 'assistant'): 'semantic_assistant', (True, 'jev'): 'semantic_jev'}
+
+
+def search_preset(semantic, judge):
+    return SEARCH_PRESETS[(bool(semantic), 'jev' if judge == 'jev' else 'assistant')]
+
+
 def setup(workspace, model):
     from .maintenance import job_progress
+    if model in ('semantic_jev', 'semantic_assistant'):
+        setup(workspace, 'embeddinggemma')
+        extra = SEMANTIC_JEV if model == 'semantic_jev' else SEMANTIC_ASSISTANT
+        with writer_lock(workspace):
+            current = Workspace.load(workspace.state_dir)
+            replace(current, retrieval=replace(current.retrieval, **extra)).save()
+        return dict(model='embeddinggemma', reranker=extra['reranker'], ranking='jev' if model == 'semantic_jev' else 'assistant', available=True)
     if model == 'keyword_jev':
         with writer_lock(workspace):
             current = Workspace.load(workspace.state_dir)

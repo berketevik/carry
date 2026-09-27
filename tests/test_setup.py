@@ -22,7 +22,7 @@ class SetupTest(unittest.TestCase):
         out = io.StringIO()
         with redirect_stdout(out):
             code = cli.main(['--workspace', str(self.base / 'ws'), 'setup', '--yes', '--vault', str(self.base / 'Vault'),
-                             '--no-animation'])
+                             '--no-animation', '--no-semantic', '--no-app'])
         self.assertEqual(code, 0)
         ws = Workspace.load(self.base / 'ws')
         self.assertEqual([s.source_id for s in ws.sources], ['vault'])
@@ -33,10 +33,39 @@ class SetupTest(unittest.TestCase):
         self.assertIn(str(self.base / 'ws'), mcp['mcpServers']['carry']['args'])
         self.assertIn('YOUR VAULT IS READY', out.getvalue())
 
+    def test_semantic_search_is_the_default_and_installs_ollama_when_missing(self):
+        from carry import models, ollama_setup
+        calls = []
+        def fake_setup(ws, preset):
+            calls.append(preset)
+        with redirect_stdout(io.StringIO()), \
+                patch.object(ollama_setup, 'status', return_value=dict(installed=False, brew='/opt/homebrew/bin/brew', running=False)), \
+                patch.object(ollama_setup, 'install', return_value=(True, 'brew_service')) as install, \
+                patch.object(models, 'setup', side_effect=fake_setup):
+            code = setup_wizard.run(state_dir=str(self.base / 'ws'), assume_yes=True, vault_path=str(self.base / 'Vault'),
+                                    animation=False, app=False)
+        self.assertEqual(code, 0)
+        install.assert_called_once()
+        self.assertEqual(calls, ['semantic_assistant'])
+
+    def test_semantic_falls_back_to_keywords_without_homebrew(self):
+        from carry import models, ollama_setup
+        calls = []
+        with redirect_stdout(io.StringIO()) as out, \
+                patch.object(ollama_setup, 'status', return_value=dict(installed=False, brew=None, running=False)), \
+                patch.object(models, 'setup', side_effect=lambda ws, preset: calls.append(preset)):
+            setup_wizard.run(state_dir=str(self.base / 'ws'), assume_yes=True, vault_path=str(self.base / 'Vault'), animation=False, app=False)
+        self.assertEqual(calls, ['keyword_assistant'])
+
+    def test_search_presets(self):
+        from carry import models
+        self.assertEqual(models.search_preset(True, 'jev'), 'semantic_jev')
+        self.assertEqual(models.search_preset(False, 'assistant'), 'keyword_assistant')
+
     def test_scripted_answers_connect_an_existing_folder_read_only(self):
         notes = self.base / 'notes'; notes.mkdir()
         (notes / 'a.md').write_text('# Plan\nThe launch is on 15 October.')
-        answers = io.StringIO('\n'.join([str(self.base / 'ws'), '2', str(notes), 'mine', '', '1', 'h', 'h', '']) + '\n')
+        answers = io.StringIO('\n'.join([str(self.base / 'ws'), '2', str(notes), 'mine', '', 'h', '1', 'h', 'h', 'h', '']) + '\n')
         with redirect_stdout(io.StringIO()), patch('shutil.which', return_value='/usr/bin/true'):
             code = setup_wizard.run(assume_yes=False, animation=False, stream=answers)
         self.assertEqual(code, 0)
@@ -80,3 +109,26 @@ class SetupTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class AppInstallTest(unittest.TestCase):
+    def test_missing_compiler_and_foreign_bundle_are_refused(self):
+        from carry import app_install
+        from carry.errors import CarryError
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(app_install, 'swiftc', return_value=None), patch.object(app_install.sys, 'platform', 'darwin'):
+                with self.assertRaisesRegex(CarryError, 'swiftc_missing'):
+                    app_install.install(target=Path(tmp) / 'Carry.app')
+            other = Path(tmp) / 'Other.app' / 'Contents'; other.mkdir(parents=True)
+            import plistlib
+            with open(other / 'Info.plist', 'wb') as f:
+                plistlib.dump(dict(CFBundleIdentifier='com.example.other'), f)
+            with patch.object(app_install, 'swiftc', return_value='/usr/bin/swiftc'), patch.object(app_install.sys, 'platform', 'darwin'):
+                with self.assertRaisesRegex(CarryError, 'app_path_taken'):
+                    app_install.install(target=other.parent)
+            self.assertTrue((other / 'Info.plist').exists())
+
+    def test_app_source_ships_with_the_package(self):
+        from importlib import resources
+        source = (resources.files('carry') / 'app' / 'CarryApp.swift').read_text(encoding='utf-8')
+        self.assertIn('python-path.txt', source)

@@ -301,6 +301,31 @@ def cmd_context(args):
     return EXIT_OK
 
 
+def cmd_search(args):
+    from . import index, jev, models, ollama_setup
+    ws = open_workspace(args.workspace)
+    semantic = ws.embedding.provider == 'ollama' if args.semantic is None else args.semantic == 'on'
+    judge = args.judge or ('jev' if ws.retrieval.reranker == 'jev' else 'assistant')
+    if judge == 'jev' and not jev.api_key():
+        _print(dict(status='error', error='no_typesafe_key'), args.json,
+               ['no TypeSafe key: save it with carry setup or set TYPESAFE_API_KEY'])
+        return EXIT_FAILED
+    if semantic:
+        ok, how = ollama_setup.ensure(install_if_missing=args.install_ollama)
+        if not ok:
+            hint = ('run again with --install-ollama (uses Homebrew)' if how == 'ollama_missing'
+                    else 'install Ollama from https://ollama.com/download' if how == 'homebrew_missing' else how)
+            _print(dict(status='error', error=how), args.json, [f'semantic search needs Ollama: {hint}'])
+            return EXIT_FAILED
+    preset = models.search_preset(semantic, judge)
+    models.setup(ws, preset)
+    result = index.build(open_workspace(args.workspace))
+    _print(dict(preset=preset, index=result), args.json,
+           [f"search: {'semantic (embeddinggemma)' if semantic else 'keyword'} · judge: {judge} · "
+            f"{result.get('files', 0)} files, {result.get('chunks', 0)} chunks"])
+    return EXIT_OK
+
+
 def cmd_harvest(args):
     from . import harvest
     ws = open_workspace(args.workspace)
@@ -333,10 +358,30 @@ def cmd_harvest(args):
     return EXIT_FAILED if report['pending'] else EXIT_OK
 
 
+def cmd_app(args):
+    from . import app_install
+    if args.app_command == 'remove':
+        removed = app_install.remove()
+        _print(dict(removed=removed), args.json, ['app removed' if removed else 'no app installed'])
+        return EXIT_OK
+    if args.app_command == 'install':
+        path = app_install.install(workspace=args.workspace)
+        _print(dict(app=str(path)), args.json, [f'Carry.app installed: {path}'])
+        return EXIT_OK
+    import subprocess
+    path = app_install.DEFAULT_PATH
+    if not path.exists():
+        _print(dict(status='error'), args.json, ['no app installed: carry app install'])
+        return EXIT_FAILED
+    subprocess.run(['open', str(path)])
+    return EXIT_OK
+
+
 def cmd_setup(args):
     from . import setup_wizard
     return setup_wizard.run(state_dir=args.workspace, assume_yes=args.yes, vault_path=args.vault,
-                            language=args.language, animation=not args.no_animation)
+                            language=args.language, animation=not args.no_animation,
+                            semantic_default=not args.no_semantic, app=not args.no_app)
 
 
 def build_parser():
@@ -396,7 +441,7 @@ def build_parser():
     sync.add_argument('--wait', action='store_true')
     gh.set_defaults(func=cmd_github)
     model = sub.add_parser('model', help='download and activate a local embedding model')
-    model.add_argument('model', choices=('keyword_jev', 'keyword_assistant', 'assistant_ranked', 'accurate_multilingual', 'embeddinggemma', 'qwen3-embedding:0.6b', 'nomic-embed-text'))
+    model.add_argument('model', choices=('semantic_jev', 'semantic_assistant', 'keyword_jev', 'keyword_assistant', 'assistant_ranked', 'accurate_multilingual', 'embeddinggemma', 'qwen3-embedding:0.6b', 'nomic-embed-text'))
     model.add_argument('--wait', action='store_true')
     model.set_defaults(func=cmd_model)
 
@@ -493,6 +538,12 @@ def build_parser():
     cx.add_argument("--max-chars", type=int, default=7000)
     cx.set_defaults(func=cmd_context)
 
+    se = sub.add_parser("search", help="switch semantic search (embeddinggemma via Ollama) on or off and choose the judge")
+    se.add_argument("--semantic", choices=("on", "off"))
+    se.add_argument("--judge", choices=("jev", "assistant"))
+    se.add_argument("--install-ollama", action="store_true", help="install Ollama with Homebrew if it is missing")
+    se.set_defaults(func=cmd_search)
+
     hv = sub.add_parser("harvest", help="draft notes from finished Claude Code / Codex threads of the vault")
     hv.add_argument("--vault", help="vault folder (default: the workspace's vault source)")
     hv.add_argument("--dry-run", action="store_true")
@@ -505,11 +556,20 @@ def build_parser():
     hv.add_argument("--remove-schedule", action="store_true")
     hv.set_defaults(func=cmd_harvest)
 
+    ap = sub.add_parser("app", help="macOS app to review and edit settings (built on this Mac against this install)")
+    apsub = ap.add_subparsers(dest="app_command", required=True)
+    apsub.add_parser("install", help="build ~/Applications/Carry.app (needs Xcode Command Line Tools)")
+    apsub.add_parser("open")
+    apsub.add_parser("remove")
+    ap.set_defaults(func=cmd_app)
+
     setup = sub.add_parser("setup", help="guided setup in the terminal: workspace, vault, search, clients, index")
     setup.add_argument("--yes", action="store_true", help="take every default without asking")
     setup.add_argument("--vault", help="create the vault here")
     setup.add_argument("--language", choices=("Turkish", "English"))
     setup.add_argument("--no-animation", action="store_true")
+    setup.add_argument("--no-semantic", action="store_true", help="keyword search only: no Ollama, no model on this Mac")
+    setup.add_argument("--no-app", action="store_true", help="do not build the macOS app")
     setup.set_defaults(func=cmd_setup)
 
     demo = sub.add_parser("demo", help="install the synthetic corpus and index it")

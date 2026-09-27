@@ -30,10 +30,16 @@ carry setup
 
 `carry setup` is a terminal wizard: it creates the workspace (warning when the
 folder is synced by iCloud), a new vault from the template or an existing Markdown
-folder as a read-only source, an optional GitHub team repository, the search
-setting (no model on the device by default; TypeSafe Jev with a key stored in the
-Keychain; or semantic search through Ollama), the Claude Code / Codex wiring, and
-the index. `carry setup --yes --vault ~/Vault` takes every default. Update with
+folder as a read-only source, an optional GitHub team repository, semantic search
+(multilingual embeddinggemma through Ollama, on by default; Ollama is installed
+with Homebrew when missing), the judge (the assistant's small model, or TypeSafe
+Jev with a key stored in the Keychain), the Claude Code / Codex wiring, an optional
+private backup repository, the macOS app, and the index. `carry setup --yes --vault
+~/Vault` takes every default; `--no-semantic` keeps the device model-free.
+
+Later: `carry search --semantic off|on [--judge jev|assistant]` switches semantic
+search, `carry app install|open|remove` manages the app (built on the Mac against
+this installation, about 1 MB, needs the Xcode Command Line Tools). Update with
 `uv tool upgrade carry`. Claude Code can run these steps for you: ask it to install
 Carry from this README.
 

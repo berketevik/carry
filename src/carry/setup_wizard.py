@@ -178,12 +178,13 @@ def marquee(text=BANNER, passes=1, delay=0.018, out=None):
         out.flush()
 
 
-def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animation=True, stream=None):
+def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animation=True, stream=None,
+        semantic_default=True, app=True):
     p = Prompter(assume_yes, stream)
-    total = 7
+    total = 8
     say(paint('\n  CARRY', BOLD + ';' + MAGENTA) + paint('  · ikinci beyin kurulumu', DIM))
     say(paint('  Notların bu Mac\'te kalır. Asistanın (Claude Code / Codex) onlardan alıntılı cevap verir.', DIM))
-    say(paint('  Sırasıyla: workspace → vault / kaynak → ekip reposu → arama → asistan → yedek → index.', DIM))
+    say(paint('  Sırasıyla: workspace → vault / kaynak → ekip reposu → arama → asistan → yedek → uygulama → index.', DIM))
 
     # 1. Workspace
     step(1, total, 'Workspace (index ve ayarlar)')
@@ -243,16 +244,39 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
                 warn(f'Bağlanamadı ({exc}). Sonra: carry github add --id team --repository {repo}')
         ws = Workspace.load(ws.state_dir)
 
-    # 4. Search setting
+    # 4. Search setting: semantic search (on by default) and the judge
     step(4, total, 'Arama ayarı')
+    from . import ollama_setup
+    semantic = semantic_default
+    if semantic and not assume_yes:
+        semantic = p.yes('Anlamsal arama açılsın mı? (embeddinggemma, 0,6 GB, bu Mac\'te Ollama ile; '
+                         'eş anlamlıları ve Türkçe↔İngilizce eşleşmeyi yakalar)', default=True)
+    if semantic:
+        st = ollama_setup.status()
+        if not st['installed']:
+            if st['brew'] and (assume_yes or p.yes('Ollama kurulu değil. Homebrew ile kurulsun mu (brew install ollama)?', default=True)):
+                with Spinner('Ollama kuruluyor (brew)'):
+                    good, how = ollama_setup.install()
+                (ok if good else warn)('Ollama kuruldu ve açılışta başlayacak.' if good else f'Ollama kurulamadı ({how}).')
+                semantic = good
+            else:
+                warn('Ollama yok' + ('' if st['brew'] else ' ve Homebrew yok') + ': https://ollama.com/download · '
+                     'sonra: carry search --semantic on')
+                semantic = False
+        else:
+            good, how = ollama_setup.start()
+            if not good:
+                warn(f'Ollama başlatılamadı ({how}); anahtar kelime aramasıyla devam.')
+                semantic = False
     has_key = bool(jev.api_key())
     keychain = sys.platform == 'darwin'
-    options = [('keyword_assistant', 'Cihazda model yok · asistanın küçük modeli süzer (varsayılan)'),
-               ('keyword_jev', 'Cihazda model yok · TypeSafe Jev süzer (en hızlı, anahtar gerekir'
-                               + (', Keychain\'de var)' if has_key else ')')),
-               ('assistant_ranked', 'Anlamsal arama · Ollama ile 0,6 GB model')]
-    mode = 'keyword_assistant' if assume_yes else p.choose('Hangisi?', options, 2 if has_key else 1)
-    if mode == 'keyword_jev' and not has_key:
+    judge = 'jev' if has_key else 'assistant'
+    if not assume_yes:
+        judge = p.choose('Sonuçları kim süzsün?', [
+            ('assistant', 'Asistanın küçük modeli (Haiku / gpt-reserve alt ajanı, ek hesap gerekmez)'),
+            ('jev', 'TypeSafe Jev (en hızlı ve en isabetli, anahtar gerekir' + (', Keychain\'de var)' if has_key else ')'))],
+            2 if has_key else 1)
+    if judge == 'jev' and not has_key:
         say(paint('  Soru ve en fazla 32 aday parça (gizli bilgiler maskelenerek) TypeSafe\'e (ABD) gider.', DIM))
         key = p.secret('TypeSafe API anahtarı (görünmez; boş = vazgeç):') if keychain else ''
         if not keychain:
@@ -261,15 +285,18 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
             jev.store_key(key)
             ok('Anahtar Keychain\'e kaydedildi.')
         else:
-            mode = 'keyword_assistant'
-            warn('Anahtar yok; varsayılan ayar kullanılacak.')
+            judge = 'assistant'
+            warn('Anahtar yok; asistanın küçük modeli süzecek.')
+    mode = models.search_preset(semantic, judge)
+    label = ('anlamsal arama (embeddinggemma)' if semantic else 'anahtar kelime araması') + ' · ' + \
+            ('Jev süzer' if judge == 'jev' else 'asistanın küçük modeli süzer')
     try:
-        with Spinner('Arama ayarı uygulanıyor'):
+        with Spinner('embeddinggemma indiriliyor ve etkinleştiriliyor' if semantic else 'Arama ayarı uygulanıyor'):
             models.setup(ws, mode)
-        ok(dict(options)[mode].split(' (')[0])
+        ok(label + (' · kapatmak için: carry search --semantic off' if semantic else ''))
     except CarryError as exc:
-        warn(f'Uygulanamadı ({exc}); varsayılan ayar kalıyor.')
-        models.setup(ws, 'keyword_assistant')
+        warn(f'Uygulanamadı ({exc}); anahtar kelime aramasıyla devam.')
+        models.setup(ws, models.search_preset(False, judge))
     ws = Workspace.load(ws.state_dir)
 
     # 5. Clients
@@ -315,8 +342,24 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
     else:
         say(paint('  Sonra elle: carry harvest   (sohbetlerden taslak notlar, inbox: +/)', DIM))
 
-    # 7. Index
-    step(7, total, 'Index')
+    # 7. App
+    step(7, total, 'Uygulama (ayarları görmek ve düzenlemek için, isteğe bağlı)')
+    if app and sys.platform == 'darwin' and (assume_yes or p.yes('Carry uygulaması da kurulsun mu (~/Applications/Carry.app)?')):
+        from . import app_install
+        if not app_install.swiftc():
+            warn('Xcode Command Line Tools gerekli: xcode-select --install · sonra: carry app install')
+        else:
+            try:
+                with Spinner('Carry.app bu Mac\'te derleniyor'):
+                    path = app_install.install(workspace=ws.state_dir)
+                ok(f'Uygulama kuruldu: {path} · açmak için: carry app open')
+            except CarryError as exc:
+                warn(f'Uygulama kurulamadı ({exc}); sonra: carry app install')
+    else:
+        say(paint('  Sonra istersen: carry app install', DIM))
+
+    # 8. Index
+    step(8, total, 'Index')
     with Spinner('Notlar indeksleniyor'):
         result = index.build(ws)
     judge = {'jev': 'TypeSafe Jev süzer', 'cross': 'yerel model süzer'}.get(ws.retrieval.reranker, 'asistanın küçük modeli süzer')
