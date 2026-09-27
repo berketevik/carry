@@ -143,6 +143,11 @@ func presetLabel(_ preset: String) -> String {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static let worker = Worker()
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    /// Set the icon ourselves: Dock and Stage Manager can keep a stale cached icon for an
+    /// app rebuilt in place.
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        if let icon = Bundle.main.image(forResource: "Carry") { NSApp.applicationIconImage = icon }
+    }
     func applicationWillTerminate(_ notification: Notification) { Self.worker.stop() }
 }
 

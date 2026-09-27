@@ -19,6 +19,8 @@ from .errors import CarryError
 
 BUNDLE_ID = 'local.carry.alpha'
 DEFAULT_PATH = Path.home() / 'Applications' / 'Carry.app'
+LSREGISTER = ('/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/'
+              'LaunchServices.framework/Versions/A/Support/lsregister')
 
 
 def swiftc():
@@ -77,6 +79,10 @@ def install(target=DEFAULT_PATH, workspace=None, python=None):
             shutil.rmtree(target)
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(app, target, symlinks=True)
+    # A bundle rebuilt at the same path keeps its old icon in Launch Services (Dock,
+    # Stage Manager, Finder) until it is registered again.
+    subprocess.run([LSREGISTER, '-f', str(target)], capture_output=True)
+    subprocess.run(['/usr/bin/touch', str(target)], capture_output=True)
     if workspace:
         # The app opens the workspace it last used; point it at this one.
         subprocess.run(['defaults', 'write', BUNDLE_ID, 'workspace', str(workspace)], capture_output=True)
