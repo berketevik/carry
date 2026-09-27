@@ -4,7 +4,7 @@
 
 **Claude Code and Codex start every chat from zero. Carry gives them a memory made of your own notes.**
 
-Ask “what did we decide about pricing?” and your assistant finds the answer in your notes, with a link to where it's written. When a chat ends, Carry drafts the new decisions and open tasks as notes, and you approve them. Next time, you explain less.
+Ask “what did we decide about pricing?” and your assistant finds the answer in your notes, with a link to where it's written. When a chat ends, Carry lists the new decisions and open tasks, and you keep the ones that are right. Next time, you explain less.
 
 Your notes stay on your Mac as plain Markdown (`.md`) files in a folder you choose.
 
@@ -13,8 +13,8 @@ Your notes stay on your Mac as plain Markdown (`.md`) files in a folder you choo
 ## How it works
 
 1. **Ask.** In Claude Code or Codex, ask about anything you've written down. Carry searches your notes and hands back the matching passages with their source and date, so you can check the answer. “Last week” or “in September” narrows the search to that period.
-2. **Chat.** Work as usual in your notes folder. When the chat ends (and every evening, if you turn that on), Carry pulls out the decisions, facts and unfinished work into draft notes.
-3. **Approve.** Open the Carry app, read the drafts and keep the ones that are right. Drafts stay marked as drafts until you approve them.
+2. **Chat.** Work as usual in your notes folder. When the chat ends (and every evening, if you turn that on), Carry pulls out the decisions, facts and unfinished work into a draft in your Inbox. It leaves out what your notes already say, and folds what looks done or dropped.
+3. **Review.** On the app's **Review** page, go through the draft item by item: **Accept**, **Fix** or **Skip**. Accepted items are saved to the log of the day they were said. Nothing from a chat enters your notes without you.
 
 **Why not just let the assistant read the folder?** It can open files it already knows about. Carry keeps an index of your whole notes folder, searches it by words and (with Ollama) by meaning, can check which passages actually answer the question, and keeps track of your chats for you.
 
@@ -42,7 +42,7 @@ Pick a new notes folder or an existing folder of `.md` files. Then go to **Setti
 
 To update: `uv tool upgrade carry`, then `carry app install`.
 
-Chat drafts land in the `+/` folder with `draft: true`. Approving removes that flag; it does not move or rewrite the note. The app's guide (**Settings → General → Help**) explains every setting.
+Chat drafts land in the `+/` folder. Accepting an item never edits a note it contradicts; the log line links that note so you can settle it. When no item is left, the draft leaves the Review page. Notes your assistant writes elsewhere carry `draft: true` until you check them, but they are searchable right away and never wait on the Review page. The app's guide (**Settings → General → Help**) explains every setting.
 
 </details>
 

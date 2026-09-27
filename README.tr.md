@@ -4,7 +4,7 @@
 
 **Claude Code ve Codex her sohbete sıfırdan başlar. Carry onlara kendi notlarınızdan bir hafıza verir.**
 
-“Fiyatlandırmada ne karar vermiştik?” diye sorun: asistanınız cevabı notlarınızda bulur ve nerede yazdığını gösterir. Sohbet bitince Carry yeni kararları ve yarım kalan işleri taslak not olarak çıkarır, siz onaylarsınız. Bir dahaki sefere daha az şey anlatırsınız.
+“Fiyatlandırmada ne karar vermiştik?” diye sorun: asistanınız cevabı notlarınızda bulur ve nerede yazdığını gösterir. Sohbet bitince Carry yeni kararları ve yarım kalan işleri listeler, siz doğru olanları tutarsınız. Bir dahaki sefere daha az şey anlatırsınız.
 
 Notlarınız seçtiğiniz klasörde, düz Markdown (`.md`) dosyaları olarak Mac'inizde kalır.
 
@@ -13,8 +13,8 @@ Notlarınız seçtiğiniz klasörde, düz Markdown (`.md`) dosyaları olarak Mac
 ## Nasıl çalışır?
 
 1. **Sorun.** Claude Code veya Codex'te not aldığınız herhangi bir şeyi sorun. Carry notlarınızda arar ve eşleşen bölümleri kaynağı ve tarihiyle verir; cevabı kontrol edebilirsiniz. “Geçen hafta” veya “eylülde” gibi ifadeler aramayı o döneme daraltır.
-2. **Çalışın.** Not klasörünüzde her zamanki gibi sohbet edin. Sohbet bitince (ve açarsanız her akşam) Carry kararları, bilgileri ve açık işleri taslak notlara çıkarır.
-3. **Onaylayın.** Carry uygulamasını açın, taslakları okuyun, doğru olanları tutun. Taslaklar siz onaylayana kadar taslak olarak işaretli kalır.
+2. **Çalışın.** Not klasörünüzde her zamanki gibi sohbet edin. Sohbet bitince (ve açarsanız her akşam) Carry kararları, bilgileri ve açık işleri Gelen kutunuzdaki bir taslağa çıkarır. Notlarınızda zaten yazanları dışarıda bırakır, yapılmış ya da vazgeçilmiş görünenleri katlar.
+3. **İnceleyin.** Uygulamanın **İncele** sayfasında taslağı madde madde geçin: **Kabul et**, **Düzelt** ya da **Atla**. Kabul edilen maddeler, söylendikleri günün log'una kaydedilir. Sohbetten hiçbir şey siz olmadan notlarınıza girmez.
 
 **Asistan klasörü zaten okuyamıyor mu?** Bildiği dosyaları açabilir. Carry bütün not klasörünüzün bir index'ini tutar; onu kelimeyle ve (Ollama varsa) anlamıyla arar, hangi bölümlerin soruyu gerçekten cevapladığını denetleyebilir ve sohbetlerinizi sizin yerinize takip eder.
 
@@ -42,7 +42,7 @@ Yeni bir not klasörü oluşturun veya mevcut `.md` klasörünüzü seçin. Sonr
 
 Güncellemek için `uv tool upgrade carry`, ardından `carry app install`.
 
-Sohbet taslakları `+/` klasörüne `draft: true` işaretiyle düşer. Onay bu işareti kaldırır; notu taşımaz, yeniden yazmaz. Her ayarın açıklaması uygulamanın rehberinde (**Ayarlar → Genel → Yardım**).
+Sohbet taslakları `+/` klasörüne düşer. Bir maddeyi kabul etmek, onunla çelişen notu asla değiştirmez; log satırı o nota bağlantı verir, çelişkiyi siz çözersiniz. Hiç madde kalmayınca taslak İncele sayfasından çıkar. Asistanınızın başka yerlere yazdığı notlar siz kontrol edene kadar `draft: true` taşır, ama hemen aranabilir ve İncele sayfasında beklemez. Her ayarın açıklaması uygulamanın rehberinde (**Ayarlar → Genel → Yardım**).
 
 </details>
 
