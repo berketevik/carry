@@ -249,6 +249,29 @@ class LinksAndWorkspaceTest(unittest.TestCase):
         self.assertNotIn('draft', (self.vault / 'notes/A.md').read_text())
         self.assertIn('draft: true', (self.vault / 'notes/L.md').read_text())
 
+    def test_raw_material_is_refused_alone_as_in_bulk(self):
+        (self.vault / 'notes/R.md').write_text('---\ntype: chat-raw\ndraft: true\n---\nr\n')
+        (self.vault / 'notes/C.md').write_text('---\nsource_type: clip\ndraft: true\n---\nc\n')
+        for rel in ('notes/R.md', 'notes/C.md'):
+            with self.assertRaisesRegex(CarryError, 'note_raw'):
+                vaultview.approve_note(self.ws, 'notes', rel)
+        files = {f['path']: f for f in vaultview.browse(self.ws, 'notes')['files']}
+        self.assertFalse(files['notes/R.md']['approvable'] or files['notes/C.md']['approvable'])
+
+    def test_only_inbox_drafts_wait_for_review(self):
+        (self.vault / '+').mkdir(exist_ok=True)
+        (self.vault / '+' / 'Capture.md').write_text('inbox item\n')
+        (self.vault / '+' / 'Digest.md').write_text('---\ntype: output\ndraft: true\n---\nitems\n')
+        (self.vault / 'notes' / 'Agent.md').write_text('---\ntype: output\ndraft: true\n---\nagent note\n')
+        files = {f['path']: f for f in vaultview.browse(self.ws, 'notes')['files']}
+        self.assertTrue(files['+/Digest.md']['review'])
+        self.assertTrue(files['notes/Agent.md']['approvable'])
+        self.assertFalse(files['notes/Agent.md']['review'])
+        self.assertFalse(files['+/Capture.md']['review'])  # not a draft
+        with mock.patch.object(harvest, 'schedule_status', return_value=dict(installed=False)):
+            o = vaultview.overview(self.ws, 'notes')
+        self.assertEqual((o['drafts'], o['awaiting_review']), (2, 1))
+
     def test_guides_and_templates_are_not_counted_as_notes(self):
         (self.vault / 'CLAUDE.md').write_text('guide')
         (self.vault / 'x').mkdir(exist_ok=True)

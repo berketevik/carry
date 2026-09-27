@@ -81,7 +81,7 @@ summary: "One sentence; recall indexes this as its own passage, so quality matte
 created: YYYY-MM-DD
 ```
 
-Conditional: `status: on|ongoing|simmering|sleeping` (efforts); `source_type: clip` (immutable clips); `draft: true` (all agent-created notes until the owner promotes them); `sources:` (provenance links, required for durable claims).
+Conditional: `status: on|ongoing|simmering|sleeping` (efforts); `source_type: clip` (immutable clips); `draft: true` (every agent-created note: it marks text the owner has not checked, and only the owner clears it. It is not a review queue: the note is searchable as it is, and only drafts in `+/` (chat digests, captures) and Carry proposals wait for the owner); `sources:` (provenance links, required for durable claims).
 
 Optional: `related:`, `up:`, `tags:`, `provenance` (`owner-direct` > `clip`/`web` > `chat` > `inference`), `confidence`, `valid_until` (volatile facts), `review_by`, `sensitivity` (`public|personal|private|secret`; when uncertain choose the more restrictive one), `supersedes` / `superseded_by`.
 
@@ -96,7 +96,7 @@ Optional: `related:`, `up:`, `tags:`, `provenance` (`owner-direct` > `clip`/`web
 | Today's observation or log line | append to `log/YYYY-MM-DD.md` |
 | Unclassifiable spark | stays in `+/` until context arrives |
 | Carry capture draft in `sources/carry/` | synthesize into `notes/` when durable; review it with Carry, do not hand-edit |
-| Carry harvest digest `+/YYYY-MM-DD — harvest …` (written when a chat ends) | with the owner: file items under *New* into `notes/` (keep `draft: true`, link the digest's raw in `sources:`), report *Conflict candidates* to `log/` for Conflict resolution, drop *Already recorded* and *Apparently done*; an item marked as the assistant's suggestion is not the owner's decision |
+| Carry harvest digest `+/YYYY-MM-DD — harvest …` (written when a chat ends) | with the owner: file items under *New* into `notes/` (keep `draft: true`, link the digest's raw in `sources:`), report *Conflict candidates* to `log/` for Conflict resolution, drop *Already recorded*, *Apparently done* and *Apparently dropped*; an item marked as the assistant's suggestion is not the owner's decision |
 
 After routing: fix frontmatter, add links, report what moved and why.
 
@@ -108,7 +108,7 @@ After routing: fix frontmatter, add links, report what moved and why.
 
 **Compile** (three or more uncompiled clips on a topic, or on request): synthesize a `notes/` article (`type: wiki-article`, TL;DR of at most three sentences, inline citations, full `sources:` list).
 
-**Lint** (on request, output to `log/lint-YYYY-MM-DD.md`): missing `type:` / `summary:`, efforts without `status:`, duplicate basenames, dead links, orphans, passed `valid_until` / `review_by`, inbox backlog older than seven days, draft backlog, secret scan (report path and category only, never the value).
+**Lint** (on request, output to `log/lint-YYYY-MM-DD.md`): missing `type:` / `summary:`, efforts without `status:`, duplicate basenames, dead links, orphans, passed `valid_until` / `review_by`, inbox backlog older than seven days (agent drafts outside `+/` are not a backlog), secret scan (report path and category only, never the value).
 
 **Proactive background work** (not requested by the owner): outputs go to `workbench/` ONLY, never into the owner's folders. Promotion out of `workbench/` happens only by the owner.
 

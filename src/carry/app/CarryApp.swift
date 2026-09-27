@@ -380,9 +380,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.loadVault(); self.reloadNote(); then?()
         }
     }
-    /// The draft after `path` in the Drafts list (newest first), for reading and approving in a row.
+    /// The draft after `path` in its own list (newest first): the review queue for an inbox draft,
+    /// every approvable draft otherwise.
     func nextDraft(after path: String) -> String? {
-        let drafts = files.filter { $0["draft"] as? Bool == true && $0["system"] as? Bool != true && $0["locked"] as? Bool != true }
+        let inQueue = files.first { str($0, "path") == path }?["review"] as? Bool == true
+        let drafts = files.filter { $0[inQueue ? "review" : "approvable"] as? Bool == true }
             .sorted { num($0, "modified") > num($1, "modified") }.map { str($0, "path") }
         guard let i = drafts.firstIndex(of: path) else { return drafts.first { $0 != path } }
         return drafts.dropFirst(i + 1).first ?? drafts.prefix(i).first
@@ -696,8 +698,8 @@ let glossary: [(String, String, String, String)] = [
      "Where new chat drafts collect. Open it on the Notes page with the Inbox filter.",
      "Yeni sohbet taslaklarının toplandığı yer. Notlar sayfasında Gelen kutusu filtresiyle açabilirsiniz."),
     ("Draft", "Taslak",
-     "A note you have not checked yet. Carry marks what it writes as a draft; open it and press “Approve note” when it is right.",
-     "Henüz doğruluğunu kontrol etmediğiniz not. Carry yazdıklarını taslak olarak işaretler; açıp doğruysa “Notu onayla”ya basın."),
+     "A note you have not checked yet. Chat drafts in your Inbox wait for you on the Review page. Notes your assistants write elsewhere are marked as drafts too, but they are searchable and never wait for you; approve one when you have checked it.",
+     "Henüz kontrol etmediğiniz not. Gelen kutusundaki sohbet taslakları İncele sayfasında sizi bekler. Asistanlarınızın başka yerlere yazdığı notlar da taslak işaretlidir ama aranabilir ve sizi beklemez; kontrol ettiğinizde onaylayabilirsiniz."),
     ("Change proposals", "Değişiklik önerileri",
      "Corrections an assistant proposes to notes it may not change directly. You accept or reject each one.",
      "Asistanın doğrudan değiştiremediği notlar için önerdiği düzeltmeler. Her birini siz kabul eder ya da reddedersiniz."),
@@ -718,7 +720,7 @@ struct GuideSheet: View {
                     FlowLayout {
                         Button(T("Write my first note", "İlk notumu yaz")) { dismiss(); model.showNewNote = true }
                         Button(T("Use it with my assistant", "Asistanımla kullan")) { dismiss(); model.page = "Settings"; model.settingsTab = "Clients" }
-                        Button(T("Review chat drafts", "Sohbet taslaklarını incele")) { dismiss(); model.showVault("inbox") }
+                        Button(T("Review chat drafts", "Sohbet taslaklarını incele")) { dismiss(); model.page = "Review" }
                     }
                     Divider()
                     ForEach(glossary.indices, id: \.self) { i in
@@ -990,8 +992,8 @@ struct Onboarding: View {
                       T("Your assistant looks up the related parts of your notes before it answers.",
                         "Asistanınız cevap vermeden önce notlarınızın ilgili bölümlerine bakar."))
                 point("tray", T("Check the drafts now and then", "Taslaklara arada bir göz atın"),
-                      T("After chats, Carry puts what is worth keeping into your Inbox. Open a draft on the Notes page and press “Approve note” if it is right.",
-                        "Sohbetlerden sonra Carry saklanmaya değer olanları Gelen kutunuza koyar. Notlar sayfasında taslağı açın; doğruysa “Notu onayla”ya basın."))
+                      T("After chats, Carry puts what is worth keeping into your Inbox. Go through it on the Review page and approve what is right.",
+                        "Sohbetlerden sonra Carry saklanmaya değer olanları Gelen kutunuza koyar. İncele sayfasında gözden geçirip doğru olanları onaylayın."))
             }
             FlowLayout {
                 Button(T("Open the home page", "Ana sayfayı aç")) { model.finishOnboarding() }.controlSize(.large).keyboardShortcut(.defaultAction)
@@ -1135,11 +1137,10 @@ struct HowToCard: View {
 
 // MARK: - Review: one place to go through drafts
 
-/// Drafts people can approve: not setup files, not locked, not raw material.
+/// What waits for the owner: inbox drafts (chat digests, captures). The rule lives in Python
+/// (vaultview.awaits_review); assistants' notes elsewhere stay drafts without queueing here.
 func reviewable(_ files: [[String: Any]]) -> [[String: Any]] {
-    files.filter { $0["draft"] as? Bool == true && $0["system"] as? Bool != true && $0["locked"] as? Bool != true
-        && !["chat-raw", "source"].contains(str($0, "type", "")) }
-        .sorted { num($0, "modified") > num($1, "modified") }
+    files.filter { $0["review"] as? Bool == true }.sorted { num($0, "modified") > num($1, "modified") }
 }
 
 struct ReviewView: View {
@@ -1159,8 +1160,8 @@ struct ReviewView: View {
         HSplitView {
             VStack(alignment: .leading, spacing: 12) {
                 Text(pageName("Review")).font(.title.bold())
-                Text(T("Drafts written by your assistants and by Carry. Approve the ones that are right: they stop being drafts. The text does not change.",
-                       "Asistanlarınızın ve Carry'nin yazdığı taslaklar. Doğru olanları onaylayın: taslak olmaktan çıkarlar. Metin değişmez."))
+                Text(T("What Carry took from your chats, waiting in your Inbox. Approve the ones that are right: they stop being drafts. The text does not change. Notes your assistants write elsewhere are searchable as they are and do not wait here; find them with the Drafts filter on the Notes page.",
+                       "Carry'nin sohbetlerinizden çıkardıkları, Gelen kutunuzda bekliyor. Doğru olanları onaylayın: taslak olmaktan çıkarlar. Metin değişmez. Asistanlarınızın başka klasörlere yazdığı notlar olduğu gibi aranabilir ve burada beklemez; Notlar sayfasındaki Taslaklar filtresiyle bulursunuz."))
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 if model.pendingReview > 0 {
                     Button { model.page = "Proposals" } label: {
@@ -1438,7 +1439,7 @@ struct VaultView: View {
         return sort == "name" ? list.sorted { str($0, "title", str($0, "name")).localizedStandardCompare(str($1, "title", str($1, "name"))) == .orderedAscending } : list.sorted { num($0, "modified") > num($1, "modified") }
     }
     func topFolder(_ f: [String: Any]) -> String { str(f, "path").contains("/") ? String(str(f, "path").split(separator: "/")[0]) : "" }
-    var approvable: [String] { filtered.filter { $0["draft"] as? Bool == true && $0["locked"] as? Bool != true && !["chat-raw", "source"].contains(str($0, "type", "")) }.map { str($0, "path") } }
+    var approvable: [String] { filtered.filter { $0["approvable"] as? Bool == true }.map { str($0, "path") } }
     /// Drafts folder by folder, so a whole group can be approved at once.
     var draftFolders: [(String, Int)] {
         var counts: [String: Int] = [:]
@@ -1610,9 +1611,12 @@ struct NoteView: View {
                         Text(L("modified ") + ago(num(note, "modified"))).font(.caption).foregroundStyle(.secondary)
                     }
                     if let summary = front["summary"] as? String { Text(summary).italic().foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).textSelection(.enabled) }
+                    let inQueue = model.files.first { str($0, "path") == str(note, "path") }?["review"] as? Bool == true
                     if front["draft"] as? Bool == true && front["lock"] as? Bool != true {
                         VStack(alignment: .leading, spacing: 10) {
-                            Label(T("Draft: read it, and approve it if it is right.", "Taslak: okuyun, doğruysa onaylayın."), systemImage: "checkmark.seal").foregroundStyle(.orange).fontWeight(.medium)
+                            Label(inQueue ? T("Draft: read it, and approve it if it is right.", "Taslak: okuyun, doğruysa onaylayın.")
+                                          : T("Written by an assistant, not checked by you. It is already searchable; approve it once you have checked it.", "Bir asistan yazdı, siz kontrol etmediniz. Zaten aranabilir; kontrol ettiğinizde onaylayın."),
+                                  systemImage: "checkmark.seal").foregroundStyle(inQueue ? .orange : .secondary).fontWeight(.medium)
                             FlowLayout(spacing: 8) {
                                 Button(T("Approve and next", "Onayla, sonrakine geç")) {
                                     let current = str(note, "path"), next = model.nextDraft(after: current)

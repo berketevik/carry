@@ -150,7 +150,9 @@ def browse(ws, source_id):
             index_state=_index_state(rel, src, indexed, path),
             type=_text(front.get('type')), summary=_text(front.get('summary')),
             status=_text(front.get('status')), draft=front.get('draft') is True,
-            locked=front.get('lock') is True, system=is_system(rel, managed)))
+            locked=front.get('lock') is True, system=is_system(rel, managed),
+            approvable=not is_system(rel, managed) and cannot_approve(front) is None,
+            review=not is_system(rel, managed) and awaits_review(rel, front)))
     return dict(source_id=src.source_id, root=str(root), files=files, truncated=truncated)
 
 
@@ -241,8 +243,28 @@ def create_note(ws, source_id, title, body=''):
     return dict(path=path.relative_to(root).as_posix())
 
 
+RAW_TYPES = ('chat-raw', 'source')
+
+
+def cannot_approve(front):
+    """Why a note cannot be approved, or None. One rule for single and bulk approval and the app."""
+    if front.get('lock') is True:
+        return 'locked'
+    if str(front.get('type', '')).lower() in RAW_TYPES or front.get('source_type') == 'clip':
+        return 'raw'
+    if front.get('draft') is not True:
+        return 'not_draft'
+    return None
+
+
+def awaits_review(rel, front):
+    """What waits for the owner: approvable drafts in the inbox (chat digests, captures). Agent notes
+    elsewhere keep `draft: true` as an unchecked mark and stay searchable; they are not a queue."""
+    return rel.startswith(INBOX + '/') and cannot_approve(front) is None
+
+
 def approve_note(ws, source_id, relative):
-    """The owner checked a draft: drop its `draft: true` line. Locked notes are refused."""
+    """The owner checked a draft: drop its `draft: true` line. Locked notes and raw material are refused."""
     from .persistence import atomic_text
     src, root = _local(ws, source_id)
     path = resolve_within(root, relative)
@@ -250,10 +272,11 @@ def approve_note(ws, source_id, relative):
         raise CarryError('source_file_missing')
     raw = path.read_text(encoding='utf-8')
     front, _ = parse_frontmatter(raw)
-    if front.get('lock') is True:
-        raise CarryError('note_locked')
-    if front.get('draft') is not True:
+    reason = cannot_approve(front)
+    if reason == 'not_draft':
         return dict(path=relative, changed=False)
+    if reason:
+        raise CarryError(f'note_{reason}')
     end = raw.find('\n---', 3)
     head, rest = raw[:end], raw[end:]
     import re as _re
@@ -264,9 +287,6 @@ def approve_note(ws, source_id, relative):
     return dict(path=relative, changed=True)
 
 
-RAW_TYPES = ('chat-raw', 'source')
-
-
 def approve_many(ws, source_id, paths):
     """Approve several drafts at once. Locked notes and raw material (chat logs, clips) are
     skipped with a reason; one failure never stops the rest."""
@@ -275,13 +295,9 @@ def approve_many(ws, source_id, paths):
     for rel in paths if isinstance(paths, list) else []:
         try:
             path = resolve_within(root, rel)
-            front = _meta(path)
-            if front.get('lock') is True:
-                skipped.append(dict(path=rel, reason='locked'))
-            elif str(front.get('type', '')).lower() in RAW_TYPES or front.get('source_type') == 'clip':
-                skipped.append(dict(path=rel, reason='raw'))
-            elif front.get('draft') is not True:
-                skipped.append(dict(path=rel, reason='not_draft'))
+            reason = cannot_approve(_meta(path))
+            if reason:
+                skipped.append(dict(path=rel, reason=reason))
             elif approve_note(ws, source_id, rel).get('changed'):
                 approved.append(rel)
         except CarryError as exc:
@@ -370,6 +386,7 @@ def overview(ws, source_id):
         tail = []
     return dict(source_id=listing['source_id'], root=listing['root'], total=len(files), system_files=system_files,
                 indexed=sum(f['indexed'] for f in files), drafts=sum(f['draft'] for f in files),
+                awaiting_review=sum(f['review'] for f in files),
                 inbox=len(inbox), changed_this_week=sum(f['modified'] >= week for f in files),
                 folders=[dict(name=k, count=v) for k, v in sorted(folders.items(), key=lambda kv: -kv[1])],
                 recent=recent, chats=chats, harvest_log=tail, schedule=schedule,
