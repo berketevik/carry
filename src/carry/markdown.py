@@ -76,7 +76,9 @@ def parse_frontmatter(raw):
     data = None
     if _yaml is not None:
         try:
-            loaded = _yaml.safe_load(block)
+            # libyaml's safe loader when present: same safety, several times faster on
+            # the per-recall lifecycle scan of every file's frontmatter.
+            loaded = _yaml.load(block, Loader=getattr(_yaml, 'CSafeLoader', _yaml.SafeLoader))
             data = loaded if isinstance(loaded, dict) else None
         except Exception:
             data = None

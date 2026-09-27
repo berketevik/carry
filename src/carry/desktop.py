@@ -151,6 +151,16 @@ class Bridge:
             result = connections.apply(ws, saved[1])
             self.plans.clear()
             return result
+        if action == 'jev_status':
+            from . import jev
+            return dict(key_present=bool(jev.api_key()), reranker=ws.retrieval.reranker)
+        if action == 'jev_key':
+            from . import jev
+            try:
+                jev.store_key(request.get('key'))
+            except (ValueError, OSError, subprocess.SubprocessError):
+                raise CarryError('typesafe_key_not_saved')
+            return dict(key_present=bool(jev.api_key()))
         if action == 'vault_preview':
             from . import vault
             language = request.get('language', 'Turkish')

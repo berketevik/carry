@@ -93,7 +93,7 @@ def _cosine_ranking(rows, query_vector, limit, min_score=-1.0, scores_out=None):
     return [cid for score, cid in scored[:limit] if score >= min_score]
 
 
-def search(workspace, query, con, limit, source_ids=None, diagnostics=None, eligible=None):
+def _candidates(workspace, query, con, limit, source_ids=None, diagnostics=None, eligible=None):
     """Independent lexical and vector branches fused with RRF."""
     diagnostics = diagnostics if diagnostics is not None else {}
     diagnostics.setdefault("warnings", [])
@@ -136,7 +136,7 @@ def search(workspace, query, con, limit, source_ids=None, diagnostics=None, elig
         if not query_vector or not all(math.isfinite(x) for x in query_vector):
             raise ProviderUnavailable("invalid_query_embedding")
         vector = _cosine_ranking(rows, query_vector, retrieval.branch_candidates,
-                                 (-1.0 if retrieval.reranker == "cross" else retrieval.vector_min_score) if provider.semantic else 0.01, vector_scores)
+                                 (-1.0 if retrieval.reranker in ("cross", "jev") else retrieval.vector_min_score) if provider.semantic else 0.01, vector_scores)
         if not provider.semantic:
             vector = [cid for cid in vector if cid in lexical]
         diagnostics["semantic"] = bool(provider.semantic)
@@ -154,11 +154,31 @@ def search(workspace, query, con, limit, source_ids=None, diagnostics=None, elig
             scores[chunk_id] = scores.get(chunk_id, 0.0) + 1.0 / (retrieval.rrf_k + rank)
     ordered = sorted(scores, key=lambda cid: -scores[cid])[:limit]
     by_id = {r["id"]: r for r in rows}
-    candidates = [dict(by_id[cid], vector_score=vector_scores.get(cid)) for cid in ordered]
+    return [dict(by_id[cid], vector_score=vector_scores.get(cid)) for cid in ordered]
+
+
+POOL_MAX = 32
+MAX_EXTRA_QUERIES = 4
+
+
+def search(workspace, query, con, limit, source_ids=None, diagnostics=None, eligible=None, queries=()):
+    """Candidates for the query, pooled with those of the caller's keyword variants, then judged
+    once against the original question."""
+    candidates = _candidates(workspace, query, con, limit, source_ids, diagnostics, eligible)
+    extra = [q.strip()[:MAX_QUERY_CHARS] for q in queries if isinstance(q, str) and q.strip()][:MAX_EXTRA_QUERIES]
+    if extra:
+        seen = {row["id"] for row in candidates}
+        for variant in extra:
+            for row in _candidates(workspace, variant, con, limit, source_ids, {"warnings": []}, eligible):
+                if row["id"] not in seen:
+                    seen.add(row["id"])
+                    candidates.append(row)
+        candidates = candidates[:max(limit, POOL_MAX)]
+        diagnostics["query_variants"] = len(extra)
     # Do not call a lexical overlap a verified answer; final grounding remains
-    # the assistant's responsibility. An installed cross encoder adds a gate.
+    # the assistant's responsibility. A configured judge (cross encoder or Jev) adds a gate.
     from .rerank import rerank
-    return rerank(query, candidates, retrieval, diagnostics)
+    return rerank(query, candidates, workspace.retrieval, diagnostics)
 
 
 def select_evidence(rows, budget):
@@ -265,7 +285,7 @@ def catalog_entries(workspace, source_ids=None, folder=None, max_chars=CATALOG_M
     return dict(ok=True, entries=entries, total=len(first), truncated=truncated)
 
 
-def recall(workspace, query, source_ids=None, budget=None, include_history=False, include_drafts=False):
+def recall(workspace, query, source_ids=None, budget=None, include_history=False, include_drafts=False, queries=()):
     """Return cited evidence, or an explicit no-evidence / unavailable state."""
     started = time.monotonic()
     workspace.validate()
@@ -300,7 +320,8 @@ def recall(workspace, query, source_ids=None, budget=None, include_history=False
             diagnostics['pending_proposals'] = sum(f['state'] == 'draft' for f in live.values()
                 if not source_ids or f['source_id'] in source_ids)
             candidates = search(workspace, query, con, limits['top_k'] * 3,
-                                source_ids=source_ids, diagnostics=diagnostics, eligible=eligible)
+                                source_ids=source_ids, diagnostics=diagnostics, eligible=eligible,
+                                queries=queries or ())
     except (OSError, sqlite3.Error, ValueError) as exc:
         return dict(ok=False, status="unavailable", error="index_read_failed:" + type(exc).__name__,
                     evidence=[], sources=[], budget=limits,

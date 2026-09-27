@@ -49,6 +49,11 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "Natural-language question."},
+                "queries": {"type": "array", "items": {"type": "string"}, "maxItems": 4,
+                            "description": ("Optional 2-4 short keyword variants of the question (the key terms "
+                                            "as the notes would write them, an English or Turkish variant, "
+                                            "synonyms and likely names). Their results are pooled and "
+                                            "judged against the question.")},
                 "source_ids": {"type": "array", "items": {"type": "string"},
                                "description": "Restrict the search to these configured sources."},
                 "budget": {"type": "object", "description":
@@ -169,7 +174,10 @@ def call_tool(name, arguments, state_dir=None, client=None):
             budget = arguments.get("budget")
             if budget is not None and not isinstance(budget, dict):
                 return "Invalid request: budget must be an object.", True
-            result = recall(workspace, query, source_ids=source_ids, budget=budget,
+            queries = arguments.get("queries")
+            if queries is not None and (not isinstance(queries, list) or not all(isinstance(q, str) for q in queries)):
+                return "Invalid request: queries must be an array of strings.", True
+            result = recall(workspace, query, source_ids=source_ids, budget=budget, queries=queries or (),
                             include_history=bool(arguments.get("include_history")),
                             include_drafts=bool(arguments.get("include_drafts")))
             result.setdefault("diagnostics", {})["refresh"] = refresh

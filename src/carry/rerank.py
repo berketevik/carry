@@ -66,6 +66,9 @@ def _schedule_release():
 
 def rerank(query, rows, config, diagnostics):
     diagnostics['reranker'] = config.reranker
+    if config.reranker == 'jev' and rows:
+        from . import jev
+        return jev.rerank(query, rows, config, diagnostics)
     if config.reranker != 'cross' or not rows:
         return rows
     try:

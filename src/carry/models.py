@@ -71,8 +71,21 @@ ASSISTANT_RANKED = dict(reranker='off', top_k=12, max_chars=16000, vector_min_sc
 KEYWORD_ASSISTANT = dict(reranker='off', top_k=8, max_chars=10000, vector_min_score=-1.0)
 
 
+# keyword_assistant plus TypeSafe Jev judging every recall in about half a second:
+# no model on this Mac and no small-model subagent turn. Needs a TypeSafe API key
+# (Keychain or TYPESAFE_API_KEY); without it recall returns unjudged candidates.
+KEYWORD_JEV = dict(KEYWORD_ASSISTANT, reranker='jev', reranker_min_score=0.5)
+
+
 def setup(workspace, model):
     from .maintenance import job_progress
+    if model == 'keyword_jev':
+        with writer_lock(workspace):
+            current = Workspace.load(workspace.state_dir)
+            replace(current, embedding=replace(current.embedding, provider='hashing'),
+                    retrieval=replace(current.retrieval, **KEYWORD_JEV)).save()
+        job_progress(workspace, stage='model_ready', model=model)
+        return dict(model=None, reranker='jev', ranking='jev', available=True)
     if model == 'keyword_assistant':
         with writer_lock(workspace):
             current = Workspace.load(workspace.state_dir)

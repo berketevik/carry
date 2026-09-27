@@ -99,7 +99,7 @@ class RetrievalConfig:
     top_k: int = 6
     max_chars: int = 7000
     max_per_document: int = 2
-    reranker: str = "off"            # off | cross
+    reranker: str = "off"            # off | cross | jev (TypeSafe API, opt-in)
     reranker_model: str = "BAAI/bge-reranker-v2-m3"
     reranker_min_score: float = -4.0
     vector_min_score: float = 0.45
@@ -186,7 +186,7 @@ class Workspace:
                 if is_contained(other, root) or is_contained(root, other):
                     raise WorkspaceError("nested_source_roots")
             roots.append(root)
-        if self.retrieval.reranker not in ("off", "cross"):
+        if self.retrieval.reranker not in ("off", "cross", "jev"):
             raise WorkspaceError("invalid_reranker")
         if not -1 <= self.retrieval.vector_min_score <= 1:
             raise WorkspaceError("invalid_vector_threshold")
