@@ -180,10 +180,10 @@ def marquee(text=BANNER, passes=1, delay=0.018, out=None):
 
 def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animation=True, stream=None):
     p = Prompter(assume_yes, stream)
-    total = 6
+    total = 7
     say(paint('\n  CARRY', BOLD + ';' + MAGENTA) + paint('  · ikinci beyin kurulumu', DIM))
     say(paint('  Notların bu Mac\'te kalır. Asistanın (Claude Code / Codex) onlardan alıntılı cevap verir.', DIM))
-    say(paint('  Sırasıyla: workspace → vault / kaynak → ekip reposu → arama → asistan → index.', DIM))
+    say(paint('  Sırasıyla: workspace → vault / kaynak → ekip reposu → arama → asistan → yedek → index.', DIM))
 
     # 1. Workspace
     step(1, total, 'Workspace (index ve ayarlar)')
@@ -286,8 +286,34 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
                 except CarryError as exc:
                     warn(f'{client} bağlanamadı ({exc}).')
 
-    # 6. Index
-    step(6, total, 'Index')
+    # 6. Backup and harvest
+    step(6, total, 'Yedek ve otomatik not çıkarma')
+    if project and kind == 'new' and not assume_yes and github.executable():
+        if p.yes('Vault için özel bir GitHub reposu açılıp yedeklensin mi?', default=False):
+            name = p.ask('Repo adı:', project.name.lower())
+            try:
+                import subprocess
+                subprocess.run(['git', '-C', str(project), 'add', '-A'], check=True, capture_output=True)
+                subprocess.run(['git', '-C', str(project), 'commit', '-q', '-m', 'vault: initial'], check=True, capture_output=True)
+                subprocess.run([github.executable(), 'repo', 'create', name, '--private', '--source', str(project),
+                                '--remote', 'origin', '--push'], check=True, capture_output=True, text=True)
+                ok(f'Özel repo oluşturuldu ve ilk commit gönderildi: {name}')
+            except (OSError, subprocess.CalledProcessError) as exc:
+                warn('Yedek repo oluşturulamadı: ' + (getattr(exc, 'stderr', '') or str(exc)).strip()[:160])
+    if project and kind == 'new' and not assume_yes and p.yes(
+            'Her akşam 21:30\'da Claude Code / Codex sohbetlerinden taslak not çıkarılsın mı (inbox: +/)?', default=False):
+        from . import harvest
+        import subprocess
+        plist = Path.home() / 'Library' / 'LaunchAgents' / (harvest.LAUNCH_LABEL + '.plist')
+        plist.parent.mkdir(parents=True, exist_ok=True)
+        plist.write_text(harvest.schedule_plist(shutil.which('carry') or sys.argv[0], ws.state_dir))
+        subprocess.run(['launchctl', 'bootstrap', f'gui/{os.getuid()}', str(plist)], capture_output=True)
+        ok('Gecelik hasat kuruldu; kapatmak için: carry harvest --remove-schedule')
+    else:
+        say(paint('  Sonra elle: carry harvest   (sohbetlerden taslak notlar, inbox: +/)', DIM))
+
+    # 7. Index
+    step(7, total, 'Index')
     with Spinner('Notlar indeksleniyor'):
         result = index.build(ws)
     judge = {'jev': 'TypeSafe Jev süzer', 'cross': 'yerel model süzer'}.get(ws.retrieval.reranker, 'asistanın küçük modeli süzer')

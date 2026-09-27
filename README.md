@@ -36,6 +36,18 @@ the index. `carry setup --yes --vault ~/Vault` takes every default. Update with
 `uv tool upgrade carry`. Claude Code can run these steps for you: ask it to install
 Carry from this README.
 
+## Harvest: drafts from your chats
+
+`carry harvest` reads finished Claude Code and Codex threads of the vault and writes
+one draft digest per thread to the `+/` inbox, plus the masked raw under
+`sources/carry/harvest/`. Your own Claude plan runs the extraction (Sonnet); every
+item needs a verbatim quote. With a Jev key, each item is also checked for support,
+owner attribution (an assistant suggestion is never filed as your decision) and
+later withdrawal, and compared with the vault: already recorded, conflict, or new.
+Threads that already wrote notes and threads still in use are skipped; a failure
+leaves the thread pending. Nothing edits or deletes an existing note. `--dry-run`
+shows what would be read; `--install-schedule` runs it every evening at 21:30.
+
 ## Install from a checkout
 
 ```sh

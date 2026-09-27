@@ -262,6 +262,33 @@ def cmd_vault(args):
     return status
 
 
+def cmd_harvest(args):
+    from . import harvest
+    ws = open_workspace(args.workspace)
+    if args.install_schedule or args.remove_schedule:
+        import shutil, subprocess
+        plist = Path.home() / 'Library' / 'LaunchAgents' / (harvest.LAUNCH_LABEL + '.plist')
+        target = f'gui/{os.getuid()}'
+        subprocess.run(['launchctl', 'bootout', target, str(plist)], capture_output=True)
+        if args.remove_schedule:
+            plist.unlink(missing_ok=True)
+            _print(dict(schedule='removed'), args.json, ['nightly harvest removed'])
+            return EXIT_OK
+        carry_bin = shutil.which('carry') or os.path.abspath(sys.argv[0])
+        plist.parent.mkdir(parents=True, exist_ok=True)
+        plist.write_text(harvest.schedule_plist(carry_bin, ws.state_dir))
+        subprocess.run(['launchctl', 'bootstrap', target, str(plist)], capture_output=True)
+        _print(dict(schedule=str(plist)), args.json, [f'nightly harvest at 21:30: {plist}'])
+        return EXIT_OK
+    report = harvest.run(ws, root=args.vault, dry_run=args.dry_run, include_filed=args.include_filed,
+                         limit=args.limit, min_idle=args.min_idle, language=args.language,
+                         progress=(lambda m: None) if args.json else print)
+    _print(report, args.json, [f"threads {report['threads']}: harvested {report['harvested']}, "
+                               f"already filed {report['skipped_filed']}, active {report['skipped_active']}, "
+                               f"pending {report['pending']}"] + [f'draft: {d}' for d in report['digests']])
+    return EXIT_FAILED if report['pending'] else EXIT_OK
+
+
 def cmd_setup(args):
     from . import setup_wizard
     return setup_wizard.run(state_dir=args.workspace, assume_yes=args.yes, vault_path=args.vault,
@@ -401,6 +428,17 @@ def build_parser():
     vrb.add_argument('path')
     vrb.add_argument('--id', required=True)
     vlt.set_defaults(func=cmd_vault)
+
+    hv = sub.add_parser("harvest", help="draft notes from finished Claude Code / Codex threads of the vault")
+    hv.add_argument("--vault", help="vault folder (default: the workspace's vault source)")
+    hv.add_argument("--dry-run", action="store_true")
+    hv.add_argument("--include-filed", action="store_true", help="also threads that already wrote notes")
+    hv.add_argument("--limit", type=int, help="at most this many threads per run")
+    hv.add_argument("--min-idle", type=int, default=30, help="skip threads written to in the last N minutes")
+    hv.add_argument("--language", choices=("Turkish", "English"), help="language of the drafts (default: the vault's)")
+    hv.add_argument("--install-schedule", action="store_true", help="run every evening at 21:30 (launchd)")
+    hv.add_argument("--remove-schedule", action="store_true")
+    hv.set_defaults(func=cmd_harvest)
 
     setup = sub.add_parser("setup", help="guided setup in the terminal: workspace, vault, search, clients, index")
     setup.add_argument("--yes", action="store_true", help="take every default without asking")
