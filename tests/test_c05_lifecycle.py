@@ -365,9 +365,9 @@ class ClientLifecycleTest(WorkspaceCase):
     def test_mcp_writes_are_opt_in_and_bound_to_server_client(self):
         args = dict(content=OCT15, source_refs=[], event_id='one')
         self.assertTrue(call_tool('carry_propose', args, self.workspace.state_dir, 'claude')[1])
-        self.assertEqual(len(available_tools(self.workspace.state_dir, 'claude')), 2)
-        self.enable('claude')
         self.assertEqual(len(available_tools(self.workspace.state_dir, 'claude')), 3)
+        self.enable('claude')
+        self.assertEqual(len(available_tools(self.workspace.state_dir, 'claude')), 4)
         self.assertTrue(call_tool('carry_propose', dict(args, client='claude'), self.workspace.state_dir, 'codex')[1])
         self.assertTrue(call_tool('carry_propose', args, self.workspace.state_dir, None)[1])
         self.assertNotIn('carry_accept', [t['name'] for t in available_tools(self.workspace.state_dir, 'claude')])

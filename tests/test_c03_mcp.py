@@ -63,7 +63,7 @@ class HandshakeTest(WorkspaceCase):
         self.assertIn("tools", initialize["capabilities"])
 
         tools = {tool["name"]: tool for tool in by_id[2]["result"]["tools"]}
-        self.assertEqual(set(tools), {"carry_recall", "carry_status"})
+        self.assertEqual(set(tools), {"carry_recall", "carry_catalog", "carry_status"})
         self.assertEqual(tools["carry_recall"]["inputSchema"]["required"], ["query"])
 
     def test_an_unsupported_protocol_version_is_answered_with_a_supported_one(self):
@@ -215,3 +215,22 @@ class FailureStateTest(WorkspaceCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CatalogTest(WorkspaceCase):
+    def test_catalog_lists_summaries_of_servable_files_only(self):
+        from carry.index import build
+        from carry.mcp_server import call_tool
+        self.note("Budget", "Q4 budget is 120k.", summary="Q4 budget approved at 120k", folder="notes")
+        self.note("Daily", "Nothing special.", folder="log")
+        build(self.workspace)
+        text, error = call_tool("carry_catalog", {}, state_dir=str(self.workspace.state_dir))
+        self.assertFalse(error)
+        self.assertIn("corpus:notes/Budget.md — Budget - Q4 budget approved at 120k", text)
+        self.assertIn("corpus:log/Daily.md", text)
+        self.assertNotIn("Q4 budget is 120k.", text)
+        only, _ = call_tool("carry_catalog", {"folder": "notes"}, state_dir=str(self.workspace.state_dir))
+        self.assertNotIn("log/Daily.md", only)
+        _, bad = call_tool("carry_catalog", {"source_ids": ["nope"]}, state_dir=str(self.workspace.state_dir))
+        self.assertTrue(bad)
+

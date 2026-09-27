@@ -206,6 +206,65 @@ def citation(source_id, path, title):
     return f"{title} ({source_id}:{path})"
 
 
+def _eligible(workspace, files, include_drafts=False, include_history=False, diagnostics=None):
+    """Keys of indexed files recall may serve; annotates each record with its lifecycle state."""
+    # Resolve accepted target links from canonical Markdown even if the
+    # last build failed. Never serve old bytes as the current decision.
+    from .lifecycle import catalog
+    live = catalog(workspace)
+    eligible = set()
+    for key, record in files.items():
+        current = live.get(key)
+        if current is None or current['digest'] != record['digest']:
+            continue
+        record.update(state=current['state'], current=current['current'],
+                      superseded_by=current['superseded_by'])
+        if current.get('correction_conflict'):
+            record['correction_conflict'] = current['correction_conflict']
+            if diagnostics is not None:
+                diagnostics['warnings'].append('correction_target_conflict')
+        if current['state'] == 'rejected':
+            continue
+        if current['state'] == 'draft' and not include_drafts:
+            continue
+        if not current['current'] and not include_history:
+            continue
+        eligible.add(key)
+    return eligible, live
+
+
+CATALOG_MAX_CHARS = 120000
+
+
+def catalog_entries(workspace, source_ids=None, folder=None, max_chars=CATALOG_MAX_CHARS):
+    """One line per servable file (path and summary, else title): the index an agent
+    reads when keyword search cannot reach a note. Same eligibility as recall."""
+    if not db_is_usable(workspace.db_path):
+        return dict(ok=False, error="index_unavailable", entries=[])
+    folder = (folder or "").strip().strip("/")
+    with closing(open_readonly(workspace.db_path)) as con:
+        eligible, _ = _eligible(workspace, _file_records(con, source_ids))
+        first = {}
+        for sid, path, title, heading, text in con.execute(
+                "SELECT source_id, path, title, heading, text FROM chunks ORDER BY id"):
+            key = (sid, path)
+            if key not in eligible or (folder and not (path == folder or path.startswith(folder + "/"))):
+                continue
+            if heading == "summary":
+                first[key] = text
+            else:
+                first.setdefault(key, title)
+    entries, size, truncated = [], 0, False
+    for (sid, path), line in sorted(first.items()):
+        entry = dict(source_id=sid, path=path, summary=" ".join(line.split())[:300])
+        size += len(path) + len(entry["summary"]) + 8
+        if size > max_chars:
+            truncated = True
+            break
+        entries.append(entry)
+    return dict(ok=True, entries=entries, total=len(first), truncated=truncated)
+
+
 def recall(workspace, query, source_ids=None, budget=None, include_history=False, include_drafts=False):
     """Return cited evidence, or an explicit no-evidence / unavailable state."""
     started = time.monotonic()
@@ -236,28 +295,8 @@ def recall(workspace, query, source_ids=None, budget=None, include_history=False
         with closing(open_readonly(workspace.db_path)) as con:
             index_health = health(workspace, con)
             files = _file_records(con, source_ids)
-            # Resolve accepted target links from canonical Markdown even if the
-            # last build failed. Never serve old bytes as the current decision.
-            from .lifecycle import catalog
-            live = catalog(workspace)
-            eligible = set()
             diagnostics['warnings'] = []
-            for key, record in files.items():
-                current = live.get(key)
-                if current is None or current['digest'] != record['digest']:
-                    continue
-                record.update(state=current['state'], current=current['current'],
-                              superseded_by=current['superseded_by'])
-                if current.get('correction_conflict'):
-                    record['correction_conflict'] = current['correction_conflict']
-                    diagnostics['warnings'].append('correction_target_conflict')
-                if current['state'] == 'rejected':
-                    continue
-                if current['state'] == 'draft' and not include_drafts:
-                    continue
-                if not current['current'] and not include_history:
-                    continue
-                eligible.add(key)
+            eligible, live = _eligible(workspace, files, include_drafts, include_history, diagnostics)
             diagnostics['pending_proposals'] = sum(f['state'] == 'draft' for f in live.values()
                 if not source_ids or f['source_id'] in source_ids)
             candidates = search(workspace, query, con, limits['top_k'] * 3,

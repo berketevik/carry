@@ -65,6 +65,18 @@ TOOLS = [
         },
     },
     {
+        "name": "carry_catalog",
+        "description": (
+            "List every searchable file with its one-line summary (or title), like a "
+            "folder index. Use it when carry_recall found nothing that answers: pick the "
+            "files whose summary fits, then call carry_recall with their terms. Returns "
+            "no note bodies."),
+        "inputSchema": {"type": "object", "properties": {
+            "source_ids": {"type": "array", "items": {"type": "string"},
+                           "description": "Restrict to these configured sources."},
+            "folder": {"type": "string", "description": "Only files under this folder, e.g. notes."}}},
+    },
+    {
         "name": "carry_status",
         "description": ("Report integration and index status: configured sources, index "
                         "freshness, embedding provider and active degradations. Returns no "
@@ -162,6 +174,26 @@ def call_tool(name, arguments, state_dir=None, client=None):
                             include_drafts=bool(arguments.get("include_drafts")))
             result.setdefault("diagnostics", {})["refresh"] = refresh
             return _format_recall(result)
+        if name == "carry_catalog":
+            source_ids = arguments.get("source_ids")
+            if source_ids is not None and (not isinstance(source_ids, list)
+                                           or not all(isinstance(s, str) for s in source_ids)):
+                return "Invalid request: source_ids must be an array of source ids.", True
+            folder = arguments.get("folder")
+            if folder is not None and not isinstance(folder, str):
+                return "Invalid request: folder must be a string.", True
+            workspace = _workspace(state_dir)
+            known = {s.source_id for s in workspace.sources}
+            if source_ids and set(source_ids) - known:
+                return "Invalid request: unknown source ids.", True
+            from .recall import catalog_entries
+            result = catalog_entries(workspace, source_ids=source_ids, folder=folder)
+            if not result["ok"]:
+                return "Catalog unavailable: " + result["error"], True
+            lines = [f"{e['source_id']}:{e['path']} — {e['summary']}" for e in result["entries"]]
+            tail = (f"\n\n[truncated: {len(lines)} of {result['total']} files; narrow with folder or source_ids]"
+                    if result["truncated"] else "")
+            return (GROUNDING + "\n\n" + "\n".join(lines) + tail), False
         if name == "carry_status":
             payload = status(_workspace(state_dir), probe_provider=bool(arguments.get("probe")))
             return json.dumps(payload, ensure_ascii=False, indent=2, default=str), False
