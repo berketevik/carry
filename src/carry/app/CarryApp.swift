@@ -2641,7 +2641,7 @@ struct ContentView: View {
                 }.listStyle(.sidebar)
                 Button { model.showGuide = true } label: { Label(T("How Carry works", "Carry nasıl çalışır?"), systemImage: "questionmark.circle") }
                     .buttonStyle(.borderless).padding(.horizontal, 20).padding(.top, 8)
-                Text(L("PRIVATE ALPHA · LOCAL")).font(.caption2.weight(.semibold)).foregroundStyle(.secondary).padding(.horizontal, 20).padding(.bottom, 20).padding(.top, 4)
+                Text(T("PILOT · LOCAL", "PİLOT · YEREL")).font(.caption2.weight(.semibold)).foregroundStyle(.secondary).padding(.horizontal, 20).padding(.bottom, 20).padding(.top, 4)
             }.navigationSplitViewColumnWidth(min: 190, ideal: 205)
         } detail: {
             VStack(spacing: 0) {
