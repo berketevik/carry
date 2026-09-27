@@ -9,6 +9,7 @@ macOS Keychain (service carry-typesafe, account api), never from workspace files
 A failed call returns the candidates unjudged with a warning; recall never blocks.
 """
 import json
+import math
 import os
 import subprocess
 import sys
@@ -63,15 +64,15 @@ def store_key(key):
 
 def request(query, rows):
     ids = [f'p{i + 1}' for i in range(len(rows))]
-    state = {'question': query, 'passages': {
-        pid: {'source': row.get('path', ''), 'section': row.get('heading', ''), 'text': mask(row.get('text', ''))}
+    state = {'question': mask(query)[0], 'passages': {
+        pid: {'source': mask(row.get('path', ''))[0], 'section': mask(row.get('heading', ''))[0], 'text': mask(row.get('text', ''))[0]}
         for pid, row in zip(ids, rows)}}
     questions = {}
     for pid in ids:
         questions[pid + '_answers'] = dict(type='noul', instructions=ANSWERS.format(p=pid), criteria=ANSWER_CRITERIA)
         questions[pid + '_injection'] = dict(type='noul', instructions=INJECTION.format(p=pid))
     questions['best'] = dict(type='choice', instructions=BEST, criteria=dict(
-        {pid: f'Passage {pid} ({row.get("path", "")})' for pid, row in zip(ids, rows)},
+        {pid: f'Passage {pid} ({state["passages"][pid]["source"]})' for pid in ids},
         none='No passage answers the question.'))
     return ids, dict(state=state, model='jev-latest', questions=questions)
 
@@ -94,6 +95,41 @@ def call(body, key, timeout=TIMEOUT):
     raise JevUnavailable('retry_exhausted')
 
 
+def probability(value):
+    """Reject malformed upstream values instead of treating them as judgments."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise JevUnavailable('invalid_response')
+    if not math.isfinite(value) or not 0 <= value <= 1:
+        raise JevUnavailable('invalid_response')
+    return float(value)
+
+
+def validated_answers(response, ids):
+    if not isinstance(response, dict) or not isinstance(response.get('answers'), dict):
+        raise JevUnavailable('invalid_response')
+    answers = response['answers']
+    best = answers.get('best')
+    if not isinstance(best, dict) or best.get('type') != 'choice':
+        raise JevUnavailable('invalid_response')
+    probabilities = best.get('probabilities')
+    if (not isinstance(probabilities, dict) or set(probabilities) != set(ids) | {'none'}
+            or best.get('choice') not in probabilities):
+        raise JevUnavailable('invalid_response')
+    for value in probabilities.values():
+        probability(value)
+    if not math.isclose(sum(probabilities.values()), 1.0, abs_tol=0.02):
+        raise JevUnavailable('invalid_response')
+    if 'confidence' in best:
+        probability(best['confidence'])
+    for pid in ids:
+        for suffix in ('_answers', '_injection'):
+            answer = answers.get(pid + suffix)
+            if not isinstance(answer, dict) or answer.get('type') != 'noul':
+                raise JevUnavailable('invalid_response')
+            probability(answer.get('noul'))
+    return answers
+
+
 def rerank(query, rows, config, diagnostics):
     diagnostics['reranker'] = 'jev'
     key = api_key()
@@ -102,7 +138,8 @@ def rerank(query, rows, config, diagnostics):
             raise JevUnavailable('no_api_key')
         started = time.monotonic()
         ids, body = request(query, rows)
-        answers = call(body, key)['answers']
+        response = call(body, key)
+        answers = validated_answers(response, ids)
         best = answers['best'].get('probabilities', {})
         scored = []
         injected = 0
@@ -120,9 +157,22 @@ def rerank(query, rows, config, diagnostics):
                            judge_ms=round((time.monotonic() - started) * 1000),
                            answerability='judged' if kept else 'judged_none',
                            best_choice=answers['best'].get('choice'))
+        # Keep uncertainty and reproducibility visible without inventing a
+        # confidence cutoff that has not been calibrated on this corpus.
+        diagnostics['best_confidence'] = answers['best'].get('confidence')
+        diagnostics['none_probability'] = best['none']
+        diagnostics['judge_disagreement'] = bool(kept and answers['best']['choice'] == 'none')
+        model = response.get('model')
+        if isinstance(model, str) and model.startswith('jev-') and len(model) <= 80:
+            diagnostics['judge_model'] = model
+        usage = response.get('usage')
+        if isinstance(usage, dict):
+            diagnostics['judge_usage'] = {k: v for k, v in usage.items()
+                if k in ('input_tokens', 'output_tokens') and type(v) is int and v >= 0}
         return [dict(row, relevance_score=round(r, 3)) for r, _, row in kept]
     except (JevUnavailable, KeyError, TypeError, ValueError) as exc:
         diagnostics['reranker'] = 'unavailable'
-        diagnostics.setdefault('warnings', []).append('reranker_unavailable:jev_' + str(exc))
+        reason = str(exc) if isinstance(exc, JevUnavailable) else 'invalid_response'
+        diagnostics.setdefault('warnings', []).append('reranker_unavailable:jev_' + reason)
         diagnostics['answerability'] = 'not_verified'
         return rows

@@ -43,13 +43,14 @@ class SDKClientTest(WorkspaceCase):
                     "carry_recall", {"query": "Cedar pilot delivery",
                                      "source_ids": ["records"]})
                 status = await session.call_tool("carry_status", {})
+                catalog = await session.call_tool("carry_catalog", {"folder": "notes"})
                 failure = await session.call_tool("carry_recall", {"query": "  "})
-                return initialised, tools, evidence, empty, status, failure
+                return initialised, tools, evidence, empty, status, failure, catalog
 
     def test_a_real_client_completes_a_full_session(self):
-        initialised, tools, evidence, empty, status, failure = self.session(self._talk())
+        initialised, tools, evidence, empty, status, failure, catalog = self.session(self._talk())
         self.assertEqual(initialised.serverInfo.name, "carry")
-        self.assertEqual({tool.name for tool in tools.tools}, {"carry_recall", "carry_status"})
+        self.assertEqual({tool.name for tool in tools.tools}, {"carry_recall", "carry_catalog", "carry_status"})
 
         text = evidence.content[0].text
         self.assertFalse(evidence.isError)
@@ -63,6 +64,8 @@ class SDKClientTest(WorkspaceCase):
         self.assertIn('"state": "fresh"', status.content[0].text)
 
         self.assertTrue(failure.isError)
+        self.assertFalse(catalog.isError)
+        self.assertIn("corpus:notes/Cedar Pilot Plan.md", catalog.content[0].text)
 
 
 if __name__ == "__main__":

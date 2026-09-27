@@ -5,8 +5,9 @@ decision in one client, retrieve it with a citation in another, correct it, and
 keep the historical record.
 
 Markdown files are canonical. The search index is derived state that can be
-deleted and rebuilt at any time. Nothing leaves the machine except the passages
-a client model asks for.
+deleted and rebuilt at any time. Client models receive requested evidence.
+If you opt into TypeSafe Jev, the question and up to 32 candidate passages also
+go to TypeSafe for relevance judging; secret masking is best effort.
 
 **Status: internal pilot under verification.** Local folders and read-only GitHub
 repositories, background synchronization/indexing, multilingual search with an

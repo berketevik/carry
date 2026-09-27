@@ -11,6 +11,8 @@ from carry.recall import recall
 
 
 def answers(relevance, best, injection=None):
+    total = sum(best.values())
+    best = {key: value / total for key, value in best.items()}
     out = {f'p{i + 1}_answers': dict(type='noul', noul=v) for i, v in enumerate(relevance)}
     out.update({f'p{i + 1}_injection': dict(type='noul', noul=(injection or {}).get(i + 1, 0.01))
                 for i in range(len(relevance))})
@@ -53,7 +55,21 @@ class JevTest(WorkspaceCase):
         self.assertNotIn('notes/Office.md', paths)
         self.assertEqual(result['diagnostics']['reranker'], 'jev')
         self.assertIn('best', sent[0][0]['questions'])
+        self.assertTrue(all(isinstance(p['text'], str) for p in sent[0][0]['state']['passages'].values()))
         self.assertIn('none', sent[0][0]['questions']['best']['criteria'])
+
+    def test_secrets_are_masked_before_sending(self):
+        self.note('Token', 'The deploy token is ghp_abcdefghijklmnopqrstuvwxyz0123456789 for CI.', folder='notes')
+        build(self.workspace)
+        sent = []
+        def fake(body, key, timeout=jev.TIMEOUT):
+            sent.append(body)
+            n = len(body['state']['passages'])
+            return answers([0.9] * n, dict({f'p{i + 1}': 1 / n for i in range(n)}, none=0.0))
+        with patch.object(jev, 'call', side_effect=fake):
+            recall(self.workspace, 'deploy token')
+        texts = ' '.join(p['text'] for p in sent[0]['state']['passages'].values())
+        self.assertNotIn('ghp_abcdefghijklmnopqrstuvwxyz0123456789', texts)
 
     def test_injected_passage_is_excluded(self):
         def fake(body, key, timeout=jev.TIMEOUT):
