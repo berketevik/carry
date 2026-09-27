@@ -51,8 +51,12 @@ one draft digest per thread to the `+/` inbox, plus the masked raw under
 item needs a verbatim quote. With a Jev key, each item is also checked for support,
 owner attribution (an assistant suggestion is never filed as your decision) and
 later withdrawal, and compared with the vault: already recorded, conflict, or new.
-Threads that already wrote notes and threads still in use are skipped; a failure
-leaves the thread pending. Nothing edits or deletes an existing note. `--dry-run`
+Threads that already wrote notes, threads still in use and one-question threads
+are skipped; a failure leaves the thread pending. Carry vaults run it automatically:
+a SessionEnd hook (Claude Code and Codex) starts the harvest of the closed thread in
+the background, and the next thread's SessionStart state pack (`carry context`)
+shows its open items and decisions. Codex runs new project hooks only after you
+approve them once in an interactive session. Nothing edits or deletes an existing note. `--dry-run`
 shows what would be read; `--install-schedule` runs it every evening at 21:30.
 
 ## Install from a checkout

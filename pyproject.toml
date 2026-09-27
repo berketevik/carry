@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "carry"
-version = "0.4.0"
+version = "0.5.0"
 description = "Portable local memory for coding agents: Markdown sources, a derived index and an MCP interface."
 requires-python = ">=3.11"
 license = "MIT"

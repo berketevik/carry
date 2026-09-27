@@ -103,6 +103,7 @@ def read_thread(client, path, root):
     """Exchanges [{i, user, assistant}] plus whether the thread already wrote notes itself."""
     turns, cur, filed = [], None, False
     notes = [str(Path(root) / d) for d in ('notes', 'log')]
+    pending_writes, failed = set(), set()  # a denied or failed write did not file anything
     for line in open(path, errors='ignore'):
         try:
             d = json.loads(line)
@@ -115,7 +116,9 @@ def read_thread(client, path, root):
             if d.get('type') == 'user':
                 c = m.get('content')
                 if isinstance(c, list):
-                    if any(isinstance(x, dict) and x.get('type') == 'tool_result' for x in c):
+                    results = [x for x in c if isinstance(x, dict) and x.get('type') == 'tool_result']
+                    if results:
+                        failed.update(r.get('tool_use_id') for r in results if r.get('is_error'))
                         continue
                     c = '\n'.join(x.get('text', '') for x in c if isinstance(x, dict) and x.get('type') == 'text')
                 t = _strip(c)
@@ -128,7 +131,8 @@ def read_thread(client, path, root):
                 for b in blocks:
                     if b.get('type') == 'tool_use' and b.get('name') in WRITE_TOOLS:
                         target = str((b.get('input') or {}).get('file_path', ''))
-                        filed = filed or any(target.startswith(n) for n in notes)
+                        if any(target.startswith(n) for n in notes):
+                            pending_writes.add(b.get('id'))
                 texts = [b.get('text', '') for b in blocks if b.get('type') == 'text']
                 if any(t.strip() for t in texts):
                     cur['assistant'] = '\n'.join(texts).strip()
@@ -146,6 +150,7 @@ def read_thread(client, path, root):
                 body = json.dumps(p.get('input') or p.get('arguments') or '')
                 filed = filed or any(k in body for k in ('Add File: notes/', 'Update File: notes/',
                                                          'Add File: log/', 'Update File: log/'))
+    filed = filed or bool(pending_writes - failed)
     exchanges = [dict(i=i + 1, user=mask(t['user'])[0][:MAX_TEXT], assistant=mask(t['assistant'])[0][:MAX_TEXT])
                  for i, t in enumerate(turns) if t['user']]
     return exchanges, filed
@@ -350,9 +355,22 @@ def vault_root(workspace, override=None):
     raise CarryError('harvest_needs_vault_source')
 
 
+MIN_EXCHANGES = 2  # a one-question thread rarely holds a durable decision and costs a full extraction
+
+
+def thread_from_path(path, root):
+    """(client, thread id, path) for one transcript, or None when it is not a thread of this vault."""
+    path = Path(path).expanduser().resolve()
+    for client, thread_id, p in find_threads(root):
+        if p.resolve() == path:
+            return client, thread_id, p
+    return None
+
+
 def run(workspace, root=None, dry_run=False, include_filed=False, limit=None, min_idle=MIN_IDLE_MINUTES,
-        language=None, which=None, progress=print):
+        language=None, which=None, progress=print, thread=None, min_exchanges=None):
     root = vault_root(workspace, root)
+    min_exchanges = MIN_EXCHANGES if min_exchanges is None else min_exchanges
     if language is None:
         try:
             language = json.loads((root / '.carry' / 'vault.json').read_text()).get('language', 'English')
@@ -361,7 +379,13 @@ def run(workspace, root=None, dry_run=False, include_filed=False, limit=None, mi
     state = _state(workspace)
     key = jev.api_key()
     report = dict(threads=0, harvested=0, skipped_filed=0, skipped_active=0, pending=0, items=0, digests=[])
-    for client, thread_id, path in find_threads(root):
+    if thread is not None:
+        one = thread_from_path(thread, root)
+        threads = [one] if one else []
+        min_idle = 0  # the client just closed it
+    else:
+        threads = find_threads(root)
+    for client, thread_id, path in threads:
         report['threads'] += 1
         entry_key = f'{client}:{thread_id}'
         mtime = path.stat().st_mtime
@@ -374,8 +398,9 @@ def run(workspace, root=None, dry_run=False, include_filed=False, limit=None, mi
         exchanges, filed = read_thread(client, path, root)
         start = previous.get('exchanges_done', 0)
         fresh = [e for e in exchanges if e['i'] > start]
-        if not fresh:
-            state[entry_key] = dict(mtime=mtime, status='empty', exchanges_done=len(exchanges))
+        if not fresh or len(exchanges) < min_exchanges:
+            # Too short so far: keep the start so the whole thread is read once it grows.
+            state[entry_key] = dict(mtime=mtime, status='empty', exchanges_done=start)
             continue
         if filed and not include_filed:
             report['skipped_filed'] += 1
@@ -421,15 +446,46 @@ def run(workspace, root=None, dry_run=False, include_filed=False, limit=None, mi
     return report
 
 
+def hook_payload(stream):
+    try:
+        payload = json.loads(stream.read() or '{}')
+    except ValueError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def in_vault(cwd, root):
+    try:
+        cwd = Path(cwd).expanduser().resolve()
+    except (OSError, TypeError):
+        return False
+    root = Path(root).resolve()
+    return cwd == root or root in cwd.parents
+
+
+def spawn_from_hook(state_dir, payload, root, language=None, python=None):
+    """SessionEnd: start the harvest of the closed thread in the background and return at once
+    (Codex allows a SessionEnd hook three seconds at most)."""
+    import sys
+    transcript = payload.get('transcript_path')
+    if not transcript or not in_vault(payload.get('cwd') or '', root):
+        return False
+    args = [python or sys.executable, '-I', '-m', 'carry.cli', '--workspace', str(state_dir), 'harvest',
+            '--thread', str(transcript), '--vault', str(root)] + (['--language', language] if language else [])
+    log = open(Path(state_dir) / 'harvest.log', 'a')
+    subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
+    return True
+
+
 LAUNCH_LABEL = 'local.carry.harvest'
 
 
-def schedule_plist(carry_bin, state_dir, hour=21, minute=30):
+def schedule_plist(carry_bin, state_dir, hour=21, minute=30, extra=()):
     return f'''<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>{LAUNCH_LABEL}</string>
-  <key>ProgramArguments</key><array><string>{carry_bin}</string><string>--workspace</string><string>{state_dir}</string><string>harvest</string></array>
+  <key>ProgramArguments</key><array><string>{carry_bin}</string><string>--workspace</string><string>{state_dir}</string><string>harvest</string>{''.join(f'<string>{a}</string>' for a in extra)}</array>
   <key>StartCalendarInterval</key><dict><key>Hour</key><integer>{hour}</integer><key>Minute</key><integer>{minute}</integer></dict>
   <key>StandardOutPath</key><string>{state_dir}/harvest.log</string>
   <key>StandardErrorPath</key><string>{state_dir}/harvest.log</string>

@@ -83,7 +83,8 @@ def _wiring(workspace):
     # Device-local pointer for `carry context` run inside the vault; gitignored like the wiring.
     local = _json({'workspace': str(workspace)})
     return {'.mcp.json': claude, '.codex/config.toml': codex, '.carry/local.json': local,
-            '.claude/settings.local.json': _claude_settings(workspace, capture=False)}
+            '.claude/settings.local.json': _claude_settings(workspace, capture=False),
+            '.codex/hooks.json': _codex_hooks(workspace, capture=False)}
 
 
 def _session_start(workspace):
@@ -91,8 +92,22 @@ def _session_start(workspace):
         [sys.executable, '-I', '-m', 'carry.cli', '--workspace', str(workspace), 'context']))]}]
 
 
+def _session_end(workspace):
+    # Starts the harvest of the closed thread in the background and returns at once.
+    return [{'hooks': [dict(type='command', timeout=3, command=shlex.join(
+        [sys.executable, '-I', '-m', 'carry.cli', '--workspace', str(workspace), 'harvest', '--from-hook']))]}]
+
+
+def _codex_hooks(workspace, capture):
+    hooks = {'SessionStart': _session_start(workspace), 'SessionEnd': _session_end(workspace)}
+    if capture:
+        command = shlex.join([sys.executable, '-I', '-m', 'carry.hook', '--workspace', str(workspace), '--client', 'codex'])
+        hooks['UserPromptSubmit'] = [{'hooks': [dict(type='command', command=command, timeout=10)]}]
+    return _json({'hooks': hooks})
+
+
 def _claude_settings(workspace, capture):
-    hooks = {'SessionStart': _session_start(workspace)}
+    hooks = {'SessionStart': _session_start(workspace), 'SessionEnd': _session_end(workspace)}
     if capture:
         command = shlex.join([sys.executable, '-I', '-m', 'carry.hook', '--workspace', str(workspace), '--client', 'claude'])
         hooks['UserPromptSubmit'] = [{'hooks': [dict(type='command', command=command, timeout=10)]}]
@@ -104,7 +119,7 @@ def _hooks(workspace):
         command = shlex.join([sys.executable, '-I', '-m', 'carry.hook', '--workspace', str(workspace),
                               '--client', client])
         return _json({'hooks': {'UserPromptSubmit': [{'hooks': [dict(type='command', command=command, timeout=10)]}]}})
-    return {'.claude/settings.local.json': _claude_settings(workspace, capture=True), '.codex/hooks.json': handlers('codex')}
+    return {'.claude/settings.local.json': _claude_settings(workspace, capture=True), '.codex/hooks.json': _codex_hooks(workspace, capture=True)}
 
 
 def _has_user_files(target):

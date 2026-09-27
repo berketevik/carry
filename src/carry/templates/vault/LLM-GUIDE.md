@@ -96,6 +96,7 @@ Optional: `related:`, `up:`, `tags:`, `provenance` (`owner-direct` > `clip`/`web
 | Today's observation or log line | append to `log/YYYY-MM-DD.md` |
 | Unclassifiable spark | stays in `+/` until context arrives |
 | Carry capture draft in `sources/carry/` | synthesize into `notes/` when durable; review it with Carry, do not hand-edit |
+| Carry harvest digest `+/YYYY-MM-DD — harvest …` (written when a chat ends) | with the owner: file items under *New* into `notes/` (keep `draft: true`, link the digest's raw in `sources:`), report *Conflict candidates* to `log/` for Conflict resolution, drop *Already recorded* and *Apparently done*; an item marked as the assistant's suggestion is not the owner's decision |
 
 After routing: fix frontmatter, add links, report what moved and why.
 

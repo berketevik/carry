@@ -6,6 +6,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 import tempfile
 import unittest
+import unittest.mock
 
 import _support  # noqa: F401
 from carry import cli, context, vault
@@ -41,6 +42,29 @@ class ContextTest(unittest.TestCase):
         self.assertIn(' context', command)
         self.assertEqual(context.workspace_for(self.root), str(self.base / 'ws'))
         self.assertIn('.carry/local.json', (self.root / '.gitignore').read_text())
+
+    def test_both_clients_get_session_start_and_end_hooks(self):
+        claude = json.loads((self.root / '.claude' / 'settings.local.json').read_text())['hooks']
+        codex = json.loads((self.root / '.codex' / 'hooks.json').read_text())['hooks']
+        for hooks in (claude, codex):
+            self.assertIn(' context', hooks['SessionStart'][0]['hooks'][0]['command'])
+            end = hooks['SessionEnd'][0]['hooks'][0]
+            self.assertIn('harvest --from-hook', end['command'])
+            self.assertLessEqual(end['timeout'], 3)
+        self.assertNotIn('UserPromptSubmit', codex)
+
+    def test_hook_context_is_silent_outside_the_vault(self):
+        import sys
+        out = io.StringIO()
+        payload = io.StringIO(json.dumps(dict(cwd=str(self.base), hook_event_name='SessionStart')))
+        with redirect_stdout(out), unittest.mock.patch.object(sys, 'stdin', payload):
+            cli.main(['--workspace', str(self.base / 'ws'), 'context', '--from-hook', '--vault', str(self.root)])
+        self.assertEqual(out.getvalue(), '')
+        out = io.StringIO()
+        payload = io.StringIO(json.dumps(dict(cwd=str(self.root), hook_event_name='SessionStart')))
+        with redirect_stdout(out), unittest.mock.patch.object(sys, 'stdin', payload):
+            cli.main(['--workspace', str(self.base / 'ws'), 'context', '--from-hook', '--vault', str(self.root)])
+        self.assertIn('state pack', out.getvalue())
 
     def test_cli_finds_the_workspace_from_the_vault(self):
         out = io.StringIO()

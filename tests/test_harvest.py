@@ -29,6 +29,7 @@ class HarvestTest(unittest.TestCase):
         vault.apply(plan, git=False)
         self.ws = Workspace.load(self.base / 'ws')
         self.project = harvest.claude_project_dir(self.root); self.project.mkdir(parents=True)
+        short = patch.object(harvest, 'MIN_EXCHANGES', 1); short.start(); self.addCleanup(short.stop)
 
     def thread(self, name, exchanges, writes=None, age=3600):
         lines = []
@@ -131,6 +132,43 @@ class HarvestTest(unittest.TestCase):
         state = json.loads((self.ws.state_dir / harvest.STATE_NAME).read_text())
         self.assertEqual(state['claude:gggg7777']['status'], 'pending')
         self.assertFalse(list(self.root.glob('+/*harvest*')))
+
+    def test_a_denied_write_does_not_count_as_filed(self):
+        lines = [claude_line('user', 'Note that the office moves in December.'),
+                 claude_line('assistant', [{'type': 'text', 'text': 'Saving.'},
+                                           {'type': 'tool_use', 'id': 't1', 'name': 'Write', 'input': {'file_path': str(self.root / 'notes/Office.md')}}]),
+                 claude_line('user', [{'type': 'tool_result', 'tool_use_id': 't1', 'is_error': True, 'content': 'permission denied'}]),
+                 claude_line('assistant', [{'type': 'text', 'text': 'I could not save it.'}])]
+        path = self.project / 'llll2222.jsonl'; path.write_text('\n'.join(lines) + '\n')
+        _, filed = harvest.read_thread('claude', path, self.root)
+        self.assertFalse(filed)
+
+    def test_short_threads_are_skipped(self):
+        self.thread('iiii9999', [('Hi', 'Hello')])
+        with patch.object(harvest, 'MIN_EXCHANGES', 2), self.items() as extract, patch.object(jev, 'api_key', return_value=None):
+            report = harvest.run(self.ws, which='claude:sonnet', progress=lambda m: None)
+        self.assertEqual(report['harvested'], 0)
+        extract.assert_not_called()
+
+    def test_one_thread_from_a_hook_skips_the_idle_wait(self):
+        path = self.thread('jjjj0000', [('We moved the server to the Mac mini.', 'OK.')], age=5)
+        other = self.thread('kkkk1111', [('Another chat.', 'OK.')])
+        item = dict(type='fact', statement='The server moved to the Mac mini.', exchange=1, quote='moved the server to the Mac mini')
+        with self.items(item), patch.object(jev, 'api_key', return_value=None):
+            report = harvest.run(self.ws, which='claude:sonnet', progress=lambda m: None, thread=str(path))
+        self.assertEqual((report['threads'], report['harvested']), (1, 1))
+        self.assertIn('jjjj0000'[:8], report['digests'][0])
+
+    def test_hook_spawns_in_the_background_only_for_this_vault(self):
+        payload = dict(transcript_path=str(self.project / 'x.jsonl'), cwd=str(self.root), hook_event_name='SessionEnd')
+        with patch('subprocess.Popen') as popen:
+            self.assertTrue(harvest.spawn_from_hook(self.ws.state_dir, payload, self.root, language='Turkish'))
+            self.assertFalse(harvest.spawn_from_hook(self.ws.state_dir, dict(payload, cwd=str(self.base)), self.root))
+        args = popen.call_args_list[0][0][0]
+        self.assertIn('--thread', args)
+        self.assertIn('Turkish', args)
+        self.assertTrue(popen.call_args_list[0][1]['start_new_session'])
+        self.assertEqual(popen.call_count, 1)
 
     def test_codex_threads_are_found_by_working_directory(self):
         sessions = self.home / '.codex' / 'sessions' / '2026' / '09' / '27'; sessions.mkdir(parents=True)

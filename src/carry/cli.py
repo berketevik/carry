@@ -289,6 +289,19 @@ def cmd_connect(args):
 
 def cmd_context(args):
     from . import context
+    if args.from_hook:
+        # SessionStart: print the pack only for sessions opened inside the vault; stay silent otherwise.
+        from . import harvest
+        try:
+            payload = harvest.hook_payload(sys.stdin)
+            root = Path(args.vault or payload.get('cwd') or os.getcwd()).expanduser().resolve()
+            if args.vault and not harvest.in_vault(payload.get('cwd') or os.getcwd(), root):
+                return EXIT_OK
+            ws = open_workspace(args.workspace or context.workspace_for(root))
+            print(context.pack(root, workspace=ws, language=args.language, max_chars=args.max_chars))
+        except Exception:
+            pass
+        return EXIT_OK
     root = Path(args.vault or os.getcwd()).expanduser().resolve()
     state = args.workspace or context.workspace_for(root)
     ws = None
@@ -297,7 +310,7 @@ def cmd_context(args):
             ws = open_workspace(state)
         except CarryError:
             ws = None
-    print(context.pack(root, workspace=ws, max_chars=args.max_chars))
+    print(context.pack(root, workspace=ws, language=args.language, max_chars=args.max_chars))
     return EXIT_OK
 
 
@@ -328,6 +341,15 @@ def cmd_search(args):
 
 def cmd_harvest(args):
     from . import harvest
+    if args.from_hook:
+        # SessionEnd from Claude Code or Codex: never fail the client, never block it.
+        try:
+            ws = open_workspace(args.workspace)
+            harvest.spawn_from_hook(ws.state_dir, harvest.hook_payload(sys.stdin), harvest.vault_root(ws, args.vault),
+                                    language=args.language)
+        except Exception:
+            pass
+        return EXIT_OK
     ws = open_workspace(args.workspace)
     if (args.install_schedule or args.remove_schedule) and sys.platform != 'darwin':
         import shutil
@@ -345,12 +367,14 @@ def cmd_harvest(args):
             return EXIT_OK
         carry_bin = shutil.which('carry') or os.path.abspath(sys.argv[0])
         plist.parent.mkdir(parents=True, exist_ok=True)
-        plist.write_text(harvest.schedule_plist(carry_bin, ws.state_dir))
+        extra = (['--vault', args.vault] if args.vault else []) + (['--language', args.language] if args.language else [])
+        plist.write_text(harvest.schedule_plist(carry_bin, ws.state_dir, extra=extra))
         subprocess.run(['launchctl', 'bootstrap', target, str(plist)], capture_output=True)
         _print(dict(schedule=str(plist)), args.json, [f'nightly harvest at 21:30: {plist}'])
         return EXIT_OK
     report = harvest.run(ws, root=args.vault, dry_run=args.dry_run, include_filed=args.include_filed,
                          limit=args.limit, min_idle=args.min_idle, language=args.language, which=args.extractor,
+                         thread=args.thread, min_exchanges=args.min_exchanges,
                          progress=(lambda m: None) if args.json else print)
     _print(report, args.json, [f"threads {report['threads']}: harvested {report['harvested']}, "
                                f"already filed {report['skipped_filed']}, active {report['skipped_active']}, "
@@ -536,6 +560,8 @@ def build_parser():
     cx = sub.add_parser("context", help="state pack for a new thread: recent commits, open items, drafts to review")
     cx.add_argument("--vault", help="vault folder (default: current directory)")
     cx.add_argument("--max-chars", type=int, default=7000)
+    cx.add_argument("--language", choices=("Turkish", "English"))
+    cx.add_argument("--from-hook", action="store_true", help="SessionStart hook: read the client's JSON on stdin")
     cx.set_defaults(func=cmd_context)
 
     se = sub.add_parser("search", help="switch semantic search (embeddinggemma via Ollama) on or off and choose the judge")
@@ -551,6 +577,9 @@ def build_parser():
     hv.add_argument("--limit", type=int, help="at most this many threads per run")
     hv.add_argument("--min-idle", type=int, default=30, help="skip threads written to in the last N minutes")
     hv.add_argument("--language", choices=("Turkish", "English"), help="language of the drafts (default: the vault's)")
+    hv.add_argument("--thread", help="harvest only this transcript file (no idle wait)")
+    hv.add_argument("--from-hook", action="store_true", help="SessionEnd hook: read the client's JSON on stdin, harvest in the background")
+    hv.add_argument("--min-exchanges", type=int, help="skip threads shorter than this (default 2)")
     hv.add_argument("--extractor", help="claude:<model> or codex:<model> (default: claude:sonnet, else codex:gpt-6-astra)")
     hv.add_argument("--install-schedule", action="store_true", help="run every evening at 21:30 (launchd)")
     hv.add_argument("--remove-schedule", action="store_true")
