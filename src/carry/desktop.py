@@ -12,7 +12,7 @@ import sys
 from dataclasses import replace
 
 from . import capture, connections, index, lifecycle, github, maintenance
-from .config import EmbeddingConfig, SourceConfig, Workspace
+from .config import EmbeddingConfig, RetrievalConfig, SourceConfig, Workspace
 from .errors import CarryError
 from .paths import resolve_within
 from .persistence import atomic_text, writer_lock
@@ -49,7 +49,11 @@ class Bridge:
         if not isinstance(state, str) or not state.strip():
             raise CarryError('workspace_required')
         if action == 'initialize':
-            ws = Workspace.create(state, embedding=EmbeddingConfig(provider='hashing'))
+            # Nothing to download and nothing loaded on this Mac: keyword search that the
+            # client's carry-recall subagent queries several times and judges.
+            from .models import KEYWORD_ASSISTANT
+            ws = Workspace.create(state, embedding=EmbeddingConfig(provider='hashing'),
+                                  retrieval=RetrievalConfig(**KEYWORD_ASSISTANT))
             return status(ws)
         ws = Workspace.load(state)
         if action == 'github_account':

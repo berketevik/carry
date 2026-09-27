@@ -84,6 +84,18 @@ class MaintenanceTest(WorkspaceCase):
         self.assertEqual((retrieval.reranker, retrieval.top_k, retrieval.max_chars, retrieval.vector_min_score),
                          ('off', 12, 16000, -1.0))
 
+    def test_keyword_assistant_preset_needs_no_model_and_rebuilds_lexically(self):
+        self.note('Release', 'The release date is October 22.')
+        result = models.setup(self.workspace, 'keyword_assistant')
+        self.assertEqual((result['model'], result['ranking']), (None, 'assistant'))
+        ws = Workspace.load(self.workspace.state_dir)
+        self.assertEqual(ws.embedding.provider, 'hashing')
+        self.assertEqual((ws.retrieval.reranker, ws.retrieval.top_k), ('off', 8))
+        index.build(ws)
+        found = recall(ws, 'release date')
+        self.assertTrue(found['evidence'])
+        self.assertIn('results_are_lexical_only', found['diagnostics']['warnings'])
+
 
 class RelevanceTest(WorkspaceCase):
     def test_lexical_hash_collisions_do_not_return_unmatched_documents(self):

@@ -65,8 +65,21 @@ def ensure_runtime(endpoint):
 ASSISTANT_RANKED = dict(reranker='off', top_k=12, max_chars=16000, vector_min_score=-1.0)
 
 
+# Nothing runs on this Mac beyond SQLite full-text search (about 50 MB, index in
+# seconds): the carry-recall subagent searches with several keyword queries and
+# judges the passages. Needs no Ollama and no download.
+KEYWORD_ASSISTANT = dict(reranker='off', top_k=8, max_chars=10000, vector_min_score=-1.0)
+
+
 def setup(workspace, model):
     from .maintenance import job_progress
+    if model == 'keyword_assistant':
+        with writer_lock(workspace):
+            current = Workspace.load(workspace.state_dir)
+            replace(current, embedding=replace(current.embedding, provider='hashing'),
+                    retrieval=replace(current.retrieval, **KEYWORD_ASSISTANT)).save()
+        job_progress(workspace, stage='model_ready', model=model)
+        return dict(model=None, reranker='off', ranking='assistant', available=True)
     if model == 'assistant_ranked':
         setup(workspace, 'embeddinggemma')
         with writer_lock(workspace):

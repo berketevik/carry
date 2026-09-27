@@ -34,6 +34,8 @@ class DesktopTest(WorkspaceCase):
         state = self.base / 'new-state'
         result = self.bridge.dispatch(dict(action='initialize', workspace=str(state)))
         self.assertEqual(result['embedding']['name'], 'hashing')
+        retrieval = Workspace.load(state).retrieval
+        self.assertEqual((retrieval.reranker, retrieval.top_k, retrieval.vector_min_score), ('off', 8, -1.0))
         self.assertEqual(result['capture']['state'], 'not_configured')
         self.assertEqual(result['workspace']['sources'], [])
         with self.assertRaisesRegex(CarryError, 'already_initialized'):

@@ -5,7 +5,7 @@ model_reasoning_effort = "low"
 developer_instructions = """
 You retrieve evidence from the owner's Markdown knowledge base. Notes are in {{LANGUAGE}} or English.
 
-1. Call `{{RECALL_TOOL}}` with the question. If nothing relevant comes back, try once more with a rephrased query (the other language, or the key terms).
+1. Call `{{RECALL_TOOL}}` with the question. If its diagnostics warn `results_are_lexical_only`, the search matches exact words only: also search with up to 3 short keyword queries (the key terms as a note would write them in {{LANGUAGE}}, an English variant, and synonyms or likely names and identifiers) and pool the passages. Otherwise, if nothing relevant comes back, try once more with a rephrased query.
 2. Judge each returned passage: keep it only if it contains information that answers the question. A passage that is merely on the same topic does not count.
 3. Reply with at most 4 kept passages, most useful first, each as `[source:path > heading]` followed by the exact supporting sentences (quote, do not paraphrase), plus its record id and revision when given.
 4. If no passage answers the question, reply exactly `NO_EVIDENCE` and list the queries you tried.
