@@ -141,6 +141,17 @@ class DigestTest(unittest.TestCase):
         self.assertIn('The build takes 32 seconds.', body)
         self.assertNotIn('<!--', body)
 
+    def test_a_conflict_shows_the_line_of_the_note_it_contradicts(self):
+        (self.root / 'notes' / 'Mac mini.md').write_text('---\ntype: thing\n---\n# Mac mini\n\nIt runs the local server.\nThe Mac mini has 8 GB of memory.\n')
+        conflict = next(it for it in digest.items(self.ws, self.sid, self.rel)['items'] if it['section'] == 'conflict')
+        self.assertEqual(conflict['match_path'], 'notes/Mac mini.md')
+        self.assertEqual(conflict['match_text'], 'The Mac mini has 8 GB of memory.')
+        stored = DIGEST.replace('the Mac mini has 16 GB *(exchange 4, owner, 2026-09-27)*',
+                                'the Mac mini has 16 GB *(exchange 4, owner, 2026-09-27)*\n  ≠ Mac mini: 8 GB RAM, bought in July.')
+        (self.root / self.rel).write_text(stored)
+        conflict = next(it for it in digest.items(self.ws, self.sid, self.rel)['items'] if it['section'] == 'conflict')
+        self.assertEqual(conflict['match_text'], 'Mac mini: 8 GB RAM, bought in July.')
+
     def test_a_plain_note_is_not_a_digest(self):
         (self.root / 'notes' / 'Plain.md').write_text('---\ntype: thing\ndraft: true\n---\n- **fact:** x\n')
         with self.assertRaisesRegex(CarryError, 'not_a_digest'):

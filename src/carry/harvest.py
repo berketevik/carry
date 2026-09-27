@@ -250,6 +250,7 @@ def provenance(items, exchanges):
     return kept, dropped
 
 
+MATCH_TEXT = 600  # characters of the contradicting passage kept in the digest
 CLOSE_MIN = 0.7  # closing an open item hides it from every later session: a coin toss is not enough
 LATER_MAX = 12000  # characters of later exchanges sent with one candidate
 
@@ -335,6 +336,9 @@ def compare(item, workspace, key, since=None):
     if same[0] >= 0.5:
         return 'known', same[1]
     if contra[0] >= 0.5:
+        # The owner decides a conflict by reading both sides: keep the note's side with the item.
+        passage = next(x for x in evidence if x['path'] == contra[1])
+        item['match_text'] = ' '.join(mask(passage['text'])[0].split())[:MATCH_TEXT]
         return 'conflict', contra[1]
     return 'new', None
 
@@ -378,7 +382,8 @@ def write_outputs(root, client, thread_id, exchanges, groups, meta, language, to
         tag = L[it['type']] + (f' · {L["assistant"]}' if it.get('attribution') == 'assistant' else '')
         where = f' ↔ {_link(it["match"], root)}' if it.get('match') else ''
         said = f', {it["at"]}' if it.get('at') else ''
-        return f'- **{tag}:** {it["statement"]}{where}\n  > {it["quote"]} *(exchange {it["exchange"]}, {it["speaker"]}{said})*'
+        line = f'- **{tag}:** {it["statement"]}{where}\n  > {it["quote"]} *(exchange {it["exchange"]}, {it["speaker"]}{said})*'
+        return line + (f'\n  ≠ {it["match_text"]}' if it.get('match_text') else '')
     for key in ('new', 'conflict', 'review'):
         if groups.get(key):
             lines += [f'## {L[key]}', ''] + [item_line(it) for it in groups[key]] + ['']

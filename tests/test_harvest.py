@@ -173,6 +173,15 @@ class HarvestTest(unittest.TestCase):
         with patch('carry.recall.recall', return_value=dict(evidence=passages)), patch.object(jev, 'call', side_effect=fake):
             return harvest.compare(dict(type='open_item', statement='Signing is not done.', quote='not signed'), self.ws, 'k', since=since)
 
+    def test_a_conflict_keeps_the_contradicting_passage_in_the_digest(self):
+        def fake(body, key, timeout=jev.TIMEOUT):
+            return dict(answers={k: dict(type='noul', noul=(0.9 if k == 'p2_contra' else 0.05)) for k in body['questions']})
+        passages = [dict(path='notes/A.md', text='Unrelated.'), dict(path='notes/Mac mini.md', text='The Mac mini has   8 GB.')]
+        item = dict(type='fact', statement='The Mac mini has 16 GB.', quote='16 GB')
+        with patch('carry.recall.recall', return_value=dict(evidence=passages)), patch.object(jev, 'call', side_effect=fake):
+            self.assertEqual(harvest.compare(item, self.ws, 'k'), ('conflict', 'notes/Mac mini.md'))
+        self.assertEqual(item['match_text'], 'The Mac mini has 8 GB.')
+
     def test_an_older_or_undated_passage_cannot_close_an_open_item(self):
         shelved = dict(path='notes/Plan.md', text='The signed pilot was shelved.', date='2026-09-18')
         self.assertEqual(self.closing([shelved], {('p1', 'dropped'): 0.9}), ('new', None))

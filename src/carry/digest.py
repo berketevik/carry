@@ -21,6 +21,7 @@ DECISIONS = ('accepted', 'fixed', 'skipped')
 MARK = re.compile(r'\s*<!-- carry: (accepted|fixed|skipped) (\d{4}-\d{2}-\d{2}) -->\s*$')
 ITEM = re.compile(r'^- \*\*(?P<tag>[^*]+?):\*\* (?P<statement>.+?)(?: ↔ (?P<match>\[\[[^\]]+\]\]))?$')
 QUOTE = re.compile(r'^\s+> (?P<quote>.*?) \*\(exchange (?P<exchange>\d+), (?P<speaker>[^,)]+)(?:, (?P<date>\d{4}-\d{2}-\d{2}))?\)\*\s*$')
+NOTE_SIDE = re.compile(r'^\s+≠ (?P<text>.+)$')
 FOLDED_ITEM = re.compile(r'^- (?P<statement>.+?) → (?P<match>\[\[[^\]]+\]\])\s*$')
 ACTIONABLE = ('new', 'conflict', 'review')
 FOLDED = ('resolved', 'dropped', 'known')
@@ -65,12 +66,13 @@ def parse(text):
         decision, bare = decision_of(line)
         if section in ACTIONABLE and (m := ITEM.match(bare)):
             q = QUOTE.match(lines[n + 1]) if n + 1 < len(lines) else None
+            side = NOTE_SIDE.match(lines[n + 2]) if q and n + 2 < len(lines) else None
             items.append(dict(id=item_id(m['statement']), section=section, tag=m['tag'].strip(),
                               kind=m['tag'].split(' · ')[0].strip(), statement=m['statement'].strip(),
                               match=m['match'] or '', quote=q['quote'] if q else '',
                               exchange=int(q['exchange']) if q else None, speaker=q['speaker'] if q else '',
                               date=(q['date'] if q else None) or str(front.get('created') or ''),
-                              decision=decision, line=n))
+                              match_text=side['text'].strip() if side else '', decision=decision, line=n))
         elif section in FOLDED and (m := FOLDED_ITEM.match(bare)):
             items.append(dict(id=item_id(m['statement']), section=section, statement=m['statement'].strip(),
                               match=m['match'], decision='folded', line=n))
@@ -91,9 +93,43 @@ def _open(ws, source_id, relative):
     return root, path, text, front
 
 
+MATCH_TEXT = 600
+
+
+def note_side(ws, source_id, item):
+    """(path, passage) of the note an item points to: the stored passage, else the paragraph of
+    that note that shares most words with the item (digests written before passages were kept)."""
+    from .harvest import _terms
+    from .vaultview import resolve_link
+    try:
+        path = resolve_link(ws, source_id, item['match'].strip('[]'))['path']
+    except (CarryError, OSError):
+        return '', item.get('match_text', '')
+    if item.get('match_text'):
+        return path, item['match_text']
+    from .vaultview import _local
+    _, root = _local(ws, source_id)
+    try:
+        _, body = parse_frontmatter((root / path).read_text(encoding='utf-8', errors='replace'))
+    except OSError:
+        return path, ''
+    terms = _terms(item['statement'] + ' ' + item.get('quote', ''))
+    lines = [' '.join(l.split()) for l in body.splitlines() if l.strip() and not l.lstrip().startswith('#')]
+    stems = [_terms(l) for l in lines]
+    # Words that run through the whole note (the project's name) say little about which line it is.
+    df = {t: sum(t in st for st in stems) for t in terms}
+    score = [sum(1 / df[t] for t in st & terms) for st in stems]
+    if not lines or max(score) == 0:
+        return path, ''
+    return path, lines[score.index(max(score))][:MATCH_TEXT]
+
+
 def items(ws, source_id, relative):
     _, _, text, front = _open(ws, source_id, relative)
     parsed = parse(text)
+    for it in parsed['items']:
+        if it['section'] == 'conflict' and it['match'] and it['decision'] is None:
+            it['match_path'], it['match_text'] = note_side(ws, source_id, it)
     waiting = sum(1 for it in parsed['items'] if it['decision'] is None)
     return dict(path=relative, items=parsed['items'], waiting=waiting, draft=front.get('draft') is True)
 
