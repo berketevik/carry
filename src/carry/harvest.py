@@ -256,11 +256,12 @@ def compare(item, workspace, key):
     """Candidates come unjudged: recall's judge asks whether a passage answers a question, and a
     statement is not one. The same/contradicts/done questions below decide instead."""
     from dataclasses import replace
-    from .recall import recall
+    from .recall import is_secret, recall
     unjudged = replace(workspace, retrieval=replace(workspace.retrieval, reranker='off', vector_min_score=-1.0))
     extra = [item['quote'][:200]] + [k for k in (item.get('keywords') or []) if isinstance(k, str)][:3]
     found = recall(unjudged, item['statement'], queries=extra)
-    evidence = [x for x in found.get('evidence', []) if 'chat-raw' not in x['path'] and '/harvest/' not in x['path']][:6]
+    evidence = [x for x in found.get('evidence', []) if 'chat-raw' not in x['path'] and '/harvest/' not in x['path']
+                and not is_secret(x.get('metadata'))][:6]
     if not evidence:
         return 'new', None
     state = {'candidate': mask(item['statement'])[0],

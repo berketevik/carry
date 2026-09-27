@@ -170,11 +170,15 @@ POOL_MAX = 32
 MAX_EXTRA_QUERIES = 4
 
 
+def is_secret(metadata):
+    """Notes marked secret never go to an external judge."""
+    return str((metadata or {}).get("sensitivity", "")).lower() == "secret"
+
+
 def _local_only(workspace, files, row):
     """Passages an external judge must never see: notes marked secret. With Jev chosen,
     every other passage may be sent; without it nothing is sent at all."""
-    meta = (files or {}).get((row["source_id"], row["path"]), {}).get("metadata") or {}
-    return str(meta.get("sensitivity", "")).lower() == "secret"
+    return is_secret((files or {}).get((row["source_id"], row["path"]), {}).get("metadata"))
 
 
 def search(workspace, query, con, limit, source_ids=None, diagnostics=None, eligible=None, queries=(), files=None):

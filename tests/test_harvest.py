@@ -129,6 +129,21 @@ class HarvestTest(unittest.TestCase):
         self.assertEqual((verdict, match), ('resolved', 'log/Tests.md'))
         self.assertIn('p1_done', sent[0]['questions'])
 
+    def test_compare_never_sends_secret_notes_to_jev(self):
+        sent = []
+        def fake(body, key, timeout=jev.TIMEOUT):
+            sent.append(body)
+            return dict(answers={k: dict(type='noul', noul=0.05) for k in body['questions']})
+        evidence = dict(evidence=[dict(path='notes/Keys.md', text='The vault key is hidden here.', metadata=dict(sensitivity='secret')),
+                                  dict(path='notes/Plan.md', text='The plan is public.', metadata={})])
+        with patch('carry.recall.recall', return_value=evidence), patch.object(jev, 'call', side_effect=fake):
+            harvest.compare(dict(type='fact', statement='The plan changed.', quote='plan'), self.ws, 'k')
+        self.assertEqual([p['source'] for p in sent[0]['state']['passages'].values()], ['notes/Plan.md'])
+        only_secret = dict(evidence=[evidence['evidence'][0]])
+        with patch('carry.recall.recall', return_value=only_secret), patch.object(jev, 'call', side_effect=fake):
+            self.assertEqual(harvest.compare(dict(type='fact', statement='Key moved.', quote='key'), self.ws, 'k'), ('new', None))
+        self.assertEqual(len(sent), 1)
+
     def test_filed_and_active_threads_are_skipped_and_reruns_are_idempotent(self):
         self.thread('dddd4444', [('Save this.', 'Saved to notes.')], writes='notes/Plan.md')
         self.thread('eeee5555', [('Still talking.', 'Yes.')], age=60)
