@@ -112,7 +112,7 @@ class JevTest(WorkspaceCase):
         self.assertFalse(jev.is_question('varlık sensörü'))
         self.assertFalse(jev.is_question('Home Assistant'))
         self.assertTrue(jev.is_question('Evdeki varlık sensörü nasıl çalışıyor?'))
-        self.assertTrue(jev.is_question('Hermes hangi modeli kullanıyor'))
+        self.assertTrue(jev.is_question('Ajan hangi modeli kullanıyor'))
         self.assertTrue(jev.is_question('Which ad network was caught spoofing events'))
         _, topic = jev.request('Home Assistant', [dict(path='a.md', heading='h', text='t')])
         _, question = jev.request('Which runtime hosts Home Assistant?', [dict(path='a.md', heading='h', text='t')])
