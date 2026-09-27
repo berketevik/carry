@@ -1,4 +1,1 @@
 include tests/_support.py
-recursive-include docs *.md *.json *.png
-recursive-include scripts *.py
-recursive-include macos *.swift

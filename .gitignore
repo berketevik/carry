@@ -10,3 +10,6 @@ workspaces/
 *.db.building
 *.db.lock
 *.status.json
+
+# macOS Finder metadata
+.DS_Store
