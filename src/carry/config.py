@@ -37,8 +37,8 @@ class SourceConfig:
     extensions: tuple = (".md",)
     github: dict = field(default_factory=dict)
     exclude: tuple = ()
-    # False keeps this source's passages away from an external judge (Jev); they are
-    # returned unjudged and marked so, never sent.
+    # No longer used: Jev, when chosen, judges every source (secret notes excepted).
+    # Kept so older workspace files still load.
     external_judge: bool = True
 
     def validate(self):

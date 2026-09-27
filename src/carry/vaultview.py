@@ -421,7 +421,7 @@ EMBEDDING_ONLY = ('qwen3-embedding:0.6b', 'nomic-embed-text')
 RETRIEVAL_FIELDS = dict(top_k=(int, 1, 40), max_chars=(int, 1000, 60000), max_per_document=(int, 1, 10),
                         reranker_min_score=(float, 0.0, 1.0), auto_refresh=(bool, None, None),
                         refresh_seconds=(int, 10, 86400), github_sync_seconds=(int, 30, 86400))
-SOURCE_FIELDS = ('writable', 'external_judge', 'exclude')
+SOURCE_FIELDS = ('writable', 'exclude')
 
 
 def current_preset(ws):
@@ -487,7 +487,7 @@ def update(ws, retrieval=None, sources=None):
                 if not isinstance(fields['exclude'], list) or not all(isinstance(p, str) for p in fields['exclude']):
                     raise CarryError('invalid_source_exclusions')
                 fields['exclude'] = tuple(p.strip() for p in fields['exclude'] if p.strip())
-            for flag in ('writable', 'external_judge'):
+            for flag in ('writable',):
                 if flag in fields and type(fields[flag]) is not bool:
                     raise CarryError('invalid_setting')
             updated_sources.append(replace(s, **fields))

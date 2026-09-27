@@ -56,11 +56,10 @@ class VaultViewTest(unittest.TestCase):
 
     def test_settings_update_validates_and_persists(self):
         vaultview.update(self.ws, retrieval=dict(top_k=12, reranker_min_score=0.6),
-                         sources=dict(notes=dict(exclude=['+', 'x'], external_judge=False)))
+                         sources=dict(notes=dict(exclude=['+', 'x'])))
         again = Workspace.load(self.ws.state_dir)
         self.assertEqual((again.retrieval.top_k, again.retrieval.reranker_min_score), (12, 0.6))
         self.assertEqual(again.source('notes').exclude, ('+', 'x'))
-        self.assertFalse(again.source('notes').external_judge)
         for bad in (dict(top_k=0), dict(top_k=True), dict(chunk_chars=10), dict(auto_refresh='yes')):
             with self.assertRaises(CarryError):
                 vaultview.update(self.ws, retrieval=bad)

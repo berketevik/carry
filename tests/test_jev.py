@@ -92,15 +92,16 @@ class JevTest(WorkspaceCase):
         self.assertTrue(held)
         self.assertGreaterEqual(result['diagnostics']['local_only_unjudged'], 1)
 
-    def test_a_source_can_opt_out_of_the_external_judge(self):
+    def test_an_old_per_folder_opt_out_no_longer_holds_passages_back(self):
+        # The per-folder switch is gone: with Jev chosen, every folder is judged. Older
+        # workspace files that still carry external_judge=False load and are judged too.
         ws = self.workspace.with_sources([replace(s, external_judge=False) if s.source_id == 'corpus' else s
                                           for s in self.workspace.sources]).save()
         sent, fake = self._send_capture()
         with patch.object(jev, 'call', side_effect=fake):
             result = recall(Workspace.load(ws.state_dir), 'Q4 budget')
-        self.assertEqual(sent, [])
+        self.assertTrue(sent)
         self.assertTrue(result['evidence'])
-        self.assertEqual(Workspace.load(ws.state_dir).source('corpus').external_judge, False)
 
     def test_model_is_pinned(self):
         sent, fake = self._send_capture()

@@ -127,11 +127,10 @@ Use **Save changes** (⌘S) for advanced edits.
 | **Choose its new location…** | Reconnects a folder you moved. |
 | **Remove from Carry…** | Stops searching that folder. Its files remain on disk. |
 | **Carry may add its own records here** | Enables storage for assistant proposals and captured prompts. This is not a general lock on user actions such as writing or approving notes. |
-| **Allow sending text… to TypeSafe** | Turn off to exclude this folder from Jev search checks. Its search results can still reach your assistant. |
 | **Leave out of search** | Excludes comma-separated paths or patterns, such as `+, x, *_index.md`. Use it for material your assistant should not retrieve through search. |
 | **List searchable files** | Shows what search includes. Use it to check exclusions. |
 
-For search checks, notes marked `sensitivity: secret` also bypass Jev and can be returned unchecked. **These restrictions do not apply to Jev checks during chat-note processing.**
+Text goes to TypeSafe only when you choose **TypeSafe Jev** as the checker; then passages from every folder can be checked, except notes marked `sensitivity: secret`, which are never sent. Without Jev, search sends nothing to TypeSafe. Chat-note processing uses Jev whenever a TypeSafe key is saved (see Chat notes).
 
 Under **Advanced sources**, you can add a GitHub repository as a read-only knowledge source. Carry keeps a local copy and never pushes to that source. Custom folder settings let you choose a short identifier and permission to store Carry records.
 
@@ -380,11 +379,10 @@ Gelişmiş ayarları **Değişiklikleri kaydet** (⌘S) ile kaydedin.
 | **Klasörün yeni yerini seç…** | Taşıdığınız klasörü yeniden bağlar. |
 | **Carry’den çıkar…** | Klasörde aramayı bırakır. Dosyalar diskte kalır. |
 | **Carry buraya kendi kayıtlarını ekleyebilir** | Asistan önerileri ve kaydedilen kullanıcı mesajları için yer açar. Not yazma veya onaylama gibi kullanıcı işlemlerini engelleyen genel bir kilit değildir. |
-| **Bu klasörden TypeSafe’e metin gönderilmesine izin ver** | Klasörü Jev’in arama kontrollerinden çıkarmak için kapatın. Arama sonuçları yine asistanınıza gidebilir. |
 | **Aramaya dahil etme** | `+, x, *_index.md` gibi yolları veya desenleri virgülle ayırarak yazın. Asistanın arama üzerinden almaması gereken içerik için kullanın. |
 | **Aranabilir dosyaları listele** | Aramaya nelerin dahil olduğunu gösterir. Hariç tutma ayarlarınızı kontrol etmek için kullanın. |
 
-Arama kontrollerinde `sensitivity: secret` işaretli notlar da Jev’e gönderilmez ve kontrol edilmeden dönebilir. **Bu kısıtlamalar, sohbet notları hazırlanırken yapılan Jev kontrollerine uygulanmaz.**
+Metin TypeSafe’e yalnızca kontrolcü olarak **TypeSafe Jev**’i seçtiğinizde gider; o zaman bütün klasörlerdeki bölümler kontrol edilebilir, yalnızca `sensitivity: secret` işaretli notlar asla gönderilmez. Jev seçili değilse arama TypeSafe’e hiçbir şey göndermez. Sohbet notları ise kayıtlı bir TypeSafe anahtarı olduğunda Jev’i kullanır (Sohbet notları bölümüne bakın).
 
 **Gelişmiş kaynaklar** altında bir GitHub deposunu salt okunur bilgi kaynağı olarak ekleyebilirsiniz. Carry yerel bir kopya tutar; bu kaynağa değişiklik göndermez. Özel klasör ayarlarında kısa bir kimlik ve Carry kayıtlarının yazılmasına izin verilip verilmeyeceğini seçebilirsiniz.
 

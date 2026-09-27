@@ -2194,15 +2194,13 @@ struct SourceCard: View {
     let source: [String: Any]
     @State private var exclusions = ""
     @State private var writable = false
-    @State private var judge = true
     @State private var files: [String] = []
     @State private var confirmRemove = false
     @State private var listed = false
     var sid: String { str(source, "source_id") }
     var isGitHub: Bool { (source["github"] as? [String: Any])?.isEmpty == false }
-    var savedJudge: Bool { ((model.settings["sources"] as? [[String: Any]]) ?? []).first { str($0, "source_id") == sid }?["external_judge"] as? Bool ?? true }
     var patterns: [String] { exclusions.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }
-    var dirty: Bool { writable != (source["writable"] as? Bool == true) || judge != savedJudge || patterns != (source["exclude"] as? [String] ?? []) }
+    var dirty: Bool { writable != (source["writable"] as? Bool == true) || patterns != (source["exclude"] as? [String] ?? []) }
     var body: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 10) {
@@ -2237,8 +2235,6 @@ struct SourceCard: View {
                 DisclosureGroup(T("Settings for this folder", "Bu klasörün ayarları")) {
                     VStack(alignment: .leading, spacing: 10) {
                         Toggle(T("Carry may add its own records here (in a carry/ sub-folder)", "Carry buraya kendi kayıtlarını ekleyebilir (carry/ alt klasörüne)"), isOn: $writable).disabled(isGitHub)
-                        Toggle(T("Allow sending text from this folder to TypeSafe (online check)", "Bu klasörden TypeSafe'e metin gönderilmesine izin ver (çevrimiçi kontrol)"), isOn: $judge)
-                        Text(L("Off: this source’s passages are never sent to Jev. Search results can still reach your connected assistant and the model it uses.")).font(.caption).foregroundStyle(.secondary)
                         HStack(spacing: 4) {
                             Text(T("Leave out of search", "Aramaya dahil etme")).fontWeight(.medium)
                             InfoButton(text: T("Folders or files listed here stay visible on the Notes page but your assistant never gets them. Separate with commas. Example: +, x, drafts/old",
@@ -2247,7 +2243,7 @@ struct SourceCard: View {
                         TextField(L("Excluded paths or patterns, separated by commas"), text: $exclusions, axis: .vertical).lineLimit(1...4)
                         FlowLayout {
                             Button(L("Save")) {
-                                model.run("settings_update", ["sources": [sid: ["writable": writable, "external_judge": judge, "exclude": patterns]]]) { value in
+                                model.run("settings_update", ["sources": [sid: ["writable": writable, "exclude": patterns]]]) { value in
                                     model.settings = value; model.notice = L("Source saved. Re-indexing in the background."); model.refresh()
                                 }
                             }.buttonStyle(.borderedProminent).disabled(!dirty)
@@ -2264,7 +2260,6 @@ struct SourceCard: View {
             .onAppear {
                 exclusions = (source["exclude"] as? [String] ?? []).joined(separator: ", ")
                 writable = source["writable"] as? Bool == true
-                judge = savedJudge
             }
             .confirmationDialog(T("Remove “\(URL(fileURLWithPath: str(source, "root")).lastPathComponent)” from Carry?", "“\(URL(fileURLWithPath: str(source, "root")).lastPathComponent)” Carry'den çıkarılsın mı?"), isPresented: $confirmRemove) {
                 Button(L("Remove source"), role: .destructive) { model.run("source_remove", ["source_id": sid]) { value in model.settings = value; model.closeNote(); model.vaultSource = ""; model.notice = L("Source removed. Its files were not touched."); model.refresh() } }

@@ -171,10 +171,8 @@ MAX_EXTRA_QUERIES = 4
 
 
 def _local_only(workspace, files, row):
-    """Passages an external judge must never see: a source opted out, or a secret note."""
-    source = next((s for s in workspace.sources if s.source_id == row["source_id"]), None)
-    if source is not None and not source.external_judge:
-        return True
+    """Passages an external judge must never see: notes marked secret. With Jev chosen,
+    every other passage may be sent; without it nothing is sent at all."""
     meta = (files or {}).get((row["source_id"], row["path"]), {}).get("metadata") or {}
     return str(meta.get("sensitivity", "")).lower() == "secret"
 
