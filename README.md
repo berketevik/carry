@@ -1,6 +1,4 @@
 <img src="assets/carry-icon.png" width="96" alt="Carry icon">
-
-# Carry
 > 🇹🇷 Türkçe için aşağıya bakın: [Türkçe](#carry-türkçe)
 
 Carry is a Mac app that lets **Claude Code and Codex search your notes** and return relevant passages with links to their sources. It also turns chats into draft notes you can review, so earlier decisions and unfinished work are easier to find.
