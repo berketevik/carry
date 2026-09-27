@@ -31,7 +31,7 @@ class SetupTest(unittest.TestCase):
         self.assertTrue((self.base / 'Vault' / '.claude' / 'agents' / 'carry-recall.md').exists())
         mcp = json.loads((self.base / 'Vault' / '.mcp.json').read_text())
         self.assertIn(str(self.base / 'ws'), mcp['mcpServers']['carry']['args'])
-        self.assertIn('YOUR SECOND BRAIN IS READY. ARE YOU?', out.getvalue())
+        self.assertIn('YOUR VAULT IS READY', out.getvalue())
 
     def test_scripted_answers_connect_an_existing_folder_read_only(self):
         notes = self.base / 'notes'; notes.mkdir()
