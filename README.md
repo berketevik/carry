@@ -11,7 +11,7 @@ ends, Carry picks out what was decided and what is still open and saves it as a
 draft note for you to check. Your notes stay ordinary text files, in a folder you
 choose, on your Mac.
 
-Version 0.6.0 · macOS 14 or later · internal pilot (not yet Developer ID signed)
+Version 0.6.0 · macOS 14 or later · pilot (not yet Developer ID signed)
 
 ---
 
@@ -399,7 +399,7 @@ Design rules:
 
 ## Known limits
 
-- Internal pilot: the app is ad-hoc signed and built locally; there is no signed,
+- Pilot: the app is ad-hoc signed and built locally; there is no signed,
   notarised release, and installation on a second, clean Mac is still being
   verified.
 - Secret masking is best effort; a new token format can slip through.
@@ -410,114 +410,118 @@ Design rules:
 - Source scope labels are for attribution, not access control; multi-user
   permissions are out of scope.
 
+<sub>Made by **Berke Tevik**.</sub>
+
 ---
 ---
 
 # Carry (Türkçe)
 
-**Notlarınız, yapay zekâ asistanınızın hafızası.**
+**Notlarınız, yapay zekâ asistanınızın hafızası olsun.**
 
-Carry, Mac'inizdeki Markdown notlarını zaten kullandığınız yapay zekâ asistanlarına,
-yani Claude Code ve Codex'e bağlar. Asistanınıza bir şey sorduğunuzda, önce Carry
-üzerinden notlarınızın ilgili bölümlerine kaynak göstererek bakar. Bir sohbet
-bittiğinde Carry neyin kararlaştırıldığını ve neyin açık kaldığını seçip kontrol
-etmeniz için taslak not olarak kaydeder. Notlarınız sıradan metin dosyaları olarak,
-seçtiğiniz bir klasörde, Mac'inizde kalır.
+Claude Code ya da Codex ile çalışıyorsanız bilirsiniz: her yeni sohbet sıfırdan
+başlar. Projeyi baştan anlatırsınız, geçen hafta aldığınız kararı yeniden
+hatırlatırsınız, dün konuşulan yapılacaklar bir yerde kaybolur.
 
-Sürüm 0.6.0 · macOS 14 ve üzeri · şirket içi pilot (henüz Developer ID imzalı değil)
+Carry bu boşluğu kapatır. Mac'inizdeki notlarınızı asistanınıza bağlar; asistan bir
+soruyu cevaplamadan önce notlarınıza bakar ve cevabın hangi nottan geldiğini
+gösterir. Sohbet bittiğinde de Carry o sohbette ne kararlaştırıldığını, neyin yarım
+kaldığını not eder ve size onaya sunar. Notlarınız her zamanki gibi sizin seçtiğiniz
+bir klasörde, düz metin dosyaları olarak durur.
+
+Sürüm 0.6.0 · macOS 14 ve üzeri · pilot (henüz Developer ID ile imzalı değil)
 
 ## İçindekiler
 
-- [Neden Carry](#neden-carry)
-- [Nasıl çalışır](#nasıl-çalışır)
-- [Temel kavramlar](#temel-kavramlar)
-- [Gizlilik: ne kalır, ne gider](#gizlilik-ne-kalır-ne-gider)
+- [Carry ne yapar?](#carry-ne-yapar)
+- [Nasıl çalışır?](#nasıl-çalışır)
+- [Bilmeniz gereken birkaç kavram](#bilmeniz-gereken-birkaç-kavram)
+- [Verileriniz nerede kalır?](#verileriniz-nerede-kalır)
 - [Kurulum](#kurulum)
-- [Uygulamanın kullanımı](#uygulamanın-kullanımı)
-- [Ayarlar, tek tek](#ayarlar-tek-tek)
-- [Asistanlar Carry'yi nasıl kullanır](#asistanlar-carryyi-nasıl-kullanır)
+- [Uygulamayı kullanmak](#uygulamayı-kullanmak)
+- [Ayarlar](#ayarlar)
+- [Asistan Carry'yi nasıl kullanır?](#asistan-carryyi-nasıl-kullanır)
 - [Komut satırı](#komut-satırı)
 - [Geliştiriciler için](#geliştiriciler-için)
 - [Bilinen sınırlar](#bilinen-sınırlar)
 
-## Neden Carry
+## Carry ne yapar?
 
-Yapay zekâ asistanları unutur. Her yeni sohbet sıfırdan başlar: projeyi yeniden
-anlatırsınız, geçen hafta aldığınız kararı tekrarlarsınız, dünkü oturumun sonunda
-çıkan yapılacaklar kaybolur. Carry bunu üç şeyle çözer:
+- **Asistanınız notlarınızdan yararlanır.** Bir şey sorduğunuzda Claude Code ya da
+  Codex önce notlarınızda arar. Soruyla ilgili bölümleri, hangi nottan geldiklerini
+  göstererek alır ve cevabını onlara dayandırır.
+- **Sohbetler kaybolmaz.** Bir sohbet bittiğinde Carry onu okur; kararları,
+  bilgileri, tercihleri ve yarım kalan işleri ayıklar, Gelen kutunuza taslak not
+  olarak koyar. Her madde sohbetten birebir bir alıntıyla gelir, yani uydurma olmaz.
+- **Son söz sizde.** Asistanın yazdığı hiçbir şey kendiliğinden "doğru bilgi"
+  sayılmaz. Taslaklar siz onaylayana kadar taslak kalır. Yeni bir sohbet açtığınızda
+  da asistan, hâlâ açık olan işlerin kısa bir özetiyle başlar.
 
-1. **Asistanınız notlarınızı kullanır.** Claude Code ya da Codex cevap vermeden önce
-   notlarınızda arar ve soruyu yanıtlayan bölümleri, geldikleri notu göstererek alır.
-2. **Sohbetler nota dönüşür.** Bir sohbet bittiğinde Carry onu okur; kararları,
-   bilgileri, tercihleri ve yarım kalan işleri çıkarıp Gelen kutunuza taslak olarak
-   kaydeder. Her madde sohbetten birebir bir alıntı taşır; hiçbir şey uydurulmaz.
-3. **Kontrol sizdedir.** Asistanın yazdığı hiçbir şey kendiliğinden kesin bilgi
-   olmaz. Taslaklar siz onaylayana kadar bekler; bir sonraki sohbet de hâlâ açık olan
-   işlerin kısa bir özetiyle başlar.
-
-## Nasıl çalışır
+## Nasıl çalışır?
 
 ```
- Not klasörünüz (Markdown)             Mac'inizde Carry                   Asistanınız
- ┌─────────────────────────┐   okur    ┌──────────────────────────┐  MCP  ┌───────────────┐
- │ notes/  log/  sources/  │ ────────▶ │ arama dizini (silinebilir)│◀────▶│ Claude Code   │
- │ + (Gelen kutusu)        │           │ carry_recall / catalog   │       │ Codex         │
- └─────────────────────────┘           └──────────────────────────┘       └───────┬───────┘
-            ▲                                                                     │ sohbet biter
-            │   taslak notlar (onayınız için)      ┌──────────────────────────┐   │
-            └───────────────────────────────────── │ harvest: karar, yapılacak│ ◀─┘
-                                                   └──────────────────────────┘
+ Not klasörünüz                    Carry (Mac'inizde)                 Asistanınız
+ ┌──────────────────────┐   okur   ┌─────────────────────────┐  MCP  ┌──────────────┐
+ │ notes/ log/ sources/ │ ───────▶ │ arama dizini            │◀─────▶│ Claude Code  │
+ │ + (Gelen kutusu)     │          │ (silinse de sorun olmaz)│       │ Codex        │
+ └──────────────────────┘          └─────────────────────────┘       └──────┬───────┘
+            ▲                                                               │ sohbet bitti
+            │   taslak notlar (onayınızı bekler)   ┌──────────────────────┐ │
+            └───────────────────────────────────── │ sohbet notları       │◀┘
+                                                   │ (karar, yapılacak iş)│
+                                                   └──────────────────────┘
 ```
 
-- **Doğruluk kaynağı notlardır.** Carry yalnızca yanlarında bir arama dizini
-  oluşturur. Dizin istenildiği zaman silinip yeniden oluşturulabilir; hiçbir not
-  kaybolmaz.
-- **Arama** iki adımda çalışır: aday bölümleri *bulmak* (kelimeyle ya da küçük bir
-  yerel modelle anlamına göre) ve hangilerinin soruyu gerçekten yanıtladığını
-  *kontrol etmek* (TypeSafe Jev, kendi asistanınız ya da büyük bir yerel model).
-- **Zaman ifadeleri çalışır.** "Geçen hafta ne yaptık?", "dün", "son 7 gün",
-  "Eylül'de" gibi ifadeler aramayı o döneme tarihlenmiş notlarla sınırlar.
-- **Harvest** bir sohbet bittiğinde (isterseniz her akşam da) çalışır ve her sohbet
-  için Gelen kutusuna bir taslak özet yazar.
+- **Asıl olan notlarınızdır.** Carry yalnızca onların yanında bir arama dizini
+  tutar. Bu dizin silinse bile hiçbir not kaybolmaz; Carry onu yeniden oluşturur.
+- **Arama iki adımdır.** Önce Carry aday bölümleri *bulur*: sorudaki kelimelerle ya
+  da Mac'inizde çalışan küçük bir modelle anlamına bakarak. Sonra bunlardan hangisinin
+  soruyu gerçekten cevapladığı *kontrol edilir*: TypeSafe Jev ile, kendi asistanınızla
+  ya da Mac'inizdeki büyük bir modelle.
+- **Tarihleri anlar.** "Geçen hafta ne yaptık?", "dün", "son 7 gün", "Eylül'de" gibi
+  ifadeler aramayı o tarihlerdeki notlarla sınırlar.
+- **Sohbet notları kendiliğinden çıkar.** Bir sohbet bitince (isterseniz her akşam
+  da) Carry her sohbet için Gelen kutusuna bir taslak özet yazar.
 
-## Temel kavramlar
+## Bilmeniz gereken birkaç kavram
 
-| Kavram | Anlamı |
+| Kavram | Ne demek? |
 |---|---|
-| **Not klasörü** | Notlarınızın `.md` dosyaları olarak durduğu klasör. Obsidian gibi uygulamalar buna *vault* der. Carry onu okur, asla yeniden düzenlemez. |
-| **Asistan** | Konuştuğunuz yapay zekâ aracı: Claude Code ya da Codex. Bağlandığında notlarınızda arama yapabilir. |
-| **Arama dizini** | Carry'nin doğru notu hızlıca bulmak için notlarınızdan hazırladığı bilgiler. Kendiliğinden güncellenir; her zaman yeniden oluşturulabilir. |
-| **Sohbet notları (harvest)** | Carry'nin biten sohbetlerinizden yazdığı taslaklar: kararlar, bilgiler, tercihler, yarım kalan işler. |
-| **Gelen kutusu** | Not klasörünüzdeki `+` klasörü; yeni taslaklar buraya düşer. |
-| **Taslak** | Henüz kontrol etmediğiniz not (`draft: true`). Onaylamak bu işareti kaldırır; metin değişmez. |
-| **Değişiklik önerisi** | Asistanın kendisinin değiştiremediği bir not için önerdiği düzeltme. Kabul eder ya da reddedersiniz. |
-| **Ayar klasörü** | Carry'nin ayarlarını ve arama dizinini tuttuğu yer (varsayılan `~/Library/Application Support/Carry`). Notlarınız asla burada saklanmaz. |
+| **Not klasörü** | Notlarınızın `.md` dosyaları olarak durduğu klasör. Obsidian gibi uygulamalar buna *vault* der. Carry bu klasörü okur, düzenini asla değiştirmez. |
+| **Asistan** | Konuştuğunuz yapay zekâ aracı: Claude Code ya da Codex. Bağlandıktan sonra notlarınızda arama yapabilir. |
+| **Arama dizini** | Carry'nin doğru notu hızlıca bulmak için notlarınızdan hazırladığı özet bilgi. Kendiliğinden güncellenir, her zaman yeniden oluşturulabilir. |
+| **Sohbet notları** | Carry'nin biten sohbetlerinizden çıkardığı taslaklar: kararlar, bilgiler, tercihler, yarım kalan işler. |
+| **Gelen kutusu** | Not klasörünüzdeki `+` klasörü. Yeni taslaklar önce buraya düşer. |
+| **Taslak** | Henüz göz atmadığınız not (`draft: true`). Onayladığınızda yalnızca bu işaret kalkar, metne dokunulmaz. |
+| **Değişiklik önerisi** | Asistanın kendisinin değiştiremediği bir not için önerdiği düzeltme. Kabul etmek ya da reddetmek size kalmış. |
+| **Ayar klasörü** | Carry'nin ayarlarını ve arama dizinini tuttuğu yer (varsayılan olarak `~/Library/Application Support/Carry`). Notlarınız burada durmaz. |
 
-## Gizlilik: ne kalır, ne gider
+## Verileriniz nerede kalır?
 
-- **Mac'inizde kalır:** notlarınız, arama dizini, ayarlar ve "anlamına göre bulma"
-  modeli (Ollama yerelde çalışır).
-- **Kullandığınız asistana gider:** Carry'nin bir soru için döndürdüğü bölümler;
-  tıpkı onları kendiniz yapıştırmışsınız gibi.
-- **TypeSafe'e gider (yalnızca Jev kontrolünü seçerseniz):** soru ve en fazla 32
-  bulunan bölüm; gizli bilgiler elden geldiğince maskelenir. TypeSafe bunlarla model
-  eğitmediğini belirtiyor. Bir klasör bundan klasör bazında hariç tutulabilir;
-  `sensitivity: secret` işaretli notlar asla gönderilmez.
-- Carry analiz verisi göndermez.
+- **Mac'inizde kalanlar:** notlarınız, arama dizini, ayarlar ve "anlamına göre bul"
+  modeli. Bu model Ollama ile tamamen Mac'inizde çalışır.
+- **Asistanınıza gidenler:** Carry'nin bir soru için bulduğu not bölümleri. Bunlar,
+  sanki siz kopyalayıp yapıştırmışsınız gibi, zaten kullandığınız asistana gider.
+- **TypeSafe'e gidenler (yalnızca Jev kontrolünü seçerseniz):** soru ve bulunan en
+  fazla 32 bölüm. Gizli bilgiler elden geldiğince maskelenir; TypeSafe bu verilerle
+  model eğitmediğini belirtiyor. İsterseniz belirli bir klasörü bundan tamamen hariç
+  tutabilirsiniz. `sensitivity: secret` işaretli notlar hiçbir zaman gönderilmez.
+- Carry kullanım verisi toplamaz, hiçbir yere analiz göndermez.
 
 ## Kurulum
 
-### Gerekenler
+### Neler gerekiyor?
 
-- macOS 14 ve üzeri.
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) ve/veya
-  [Codex](https://github.com/openai/codex): en az biri.
-- Carry'yi kurmak için [uv](https://docs.astral.sh/uv/) (kendi Python'unu getirir).
-- macOS uygulamasını derlemek için Xcode Command Line Tools (`xcode-select --install`).
+- macOS 14 ya da daha yeni bir sürüm.
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) ya da
+  [Codex](https://github.com/openai/codex); ikisinden biri yeterli.
+- Carry'yi kurmak için [uv](https://docs.astral.sh/uv/). Kendi Python'unu getirir,
+  ayrıca Python kurmanız gerekmez.
+- Uygulamayı derlemek için Xcode Command Line Tools (`xcode-select --install`).
 - İsteğe bağlı: anlamına göre arama için [Ollama](https://ollama.com) (yoksa kurulum
-  Homebrew ile kurar) ve Jev kontrolü için bir TypeSafe erişim anahtarı.
+  sırasında Homebrew ile kurulur) ve Jev kontrolü için bir TypeSafe erişim anahtarı.
 
-### Adımlar
+### Adım adım
 
 ```sh
 gh auth login && gh auth setup-git                      # repo şimdilik özel
@@ -525,262 +529,294 @@ uv tool install "git+https://github.com/<owner>/carry"   # size verilen repo
 carry setup
 ```
 
-`carry setup` kısa bir terminal sihirbazıdır. Ayar klasörünü oluşturur, şablondan
-yeni bir not klasörü açar (ya da mevcut klasörünüzü kullanır), anlamına göre aramayı
-açar, Claude Code ve Codex'i bağlar, macOS uygulamasını `~/Applications/Carry.app`
-olarak derler ve notlarınızı indeksler. `carry setup --yes --vault ~/Notlar` her
-varsayılanı kabul eder. `--no-semantic` Mac'te hiç model çalıştırmaz, `--no-app`
-uygulamayı atlar.
+`carry setup` birkaç soru soran kısa bir terminal sihirbazıdır. Sırasıyla:
 
-Tıklayarak kurmayı mı tercih edersiniz? `carry app install` çalıştırın,
-`~/Applications`'tan **Carry**'yi açın; uygulamanın kurulum rehberi aynı adımları
-yapar.
+1. Carry'nin ayar klasörünü oluşturur.
+2. Size yeni bir not klasörü hazırlar ya da mevcut klasörünüzü kullanır.
+3. Anlamına göre aramayı açar.
+4. Claude Code ve Codex'i bağlar.
+5. Uygulamayı `~/Applications/Carry.app` olarak derler.
+6. Notlarınızı tarar ve arama dizinini hazırlar.
 
-Güncellemek için `uv tool upgrade carry`, ardından uygulamayı yeni sürüme göre
+Hepsini varsayılanlarla geçmek için `carry setup --yes --vault ~/Notlar`. Mac'inizde
+hiç model çalışmasın istiyorsanız `--no-semantic`, uygulama istemiyorsanız `--no-app`.
+
+Tıklayarak kurmayı mı seversiniz? `carry app install` yazın, `~/Applications`
+içinden **Carry**'yi açın; uygulamanın kurulum rehberi aynı adımlardan sizi geçirir.
+
+Güncellemek için önce `uv tool upgrade carry`, ardından uygulamayı yeni sürümle
 yeniden derlemek için `carry app install`.
 
-## Uygulamanın kullanımı
+## Uygulamayı kullanmak
 
-Kenar çubuğunda beş sayfa vardır: **Ana sayfa · İncele · Notlar · Notlarda ara ·
-Ayarlar**. En altta **Carry nasıl çalışır?** (kısa rehber ve sözlük) bulunur.
-Arayüz Türkçe ya da İngilizcedir (Ayarlar › Genel).
+Soldaki menüde beş sayfa var: **Ana sayfa**, **İncele**, **Notlar**, **Notlarda
+ara** ve **Ayarlar**. En altta **Carry nasıl çalışır?** bağlantısı kısa bir rehber ve
+sözlük açar. Arayüzü Türkçe ya da İngilizce kullanabilirsiniz (Ayarlar › Genel).
 
 ### İlk açılış: kurulum rehberi
 
-1. **Tanışma.** Carry'nin ne yaptığı, üç maddede. Carry'nin Claude Code ve Codex
-   ile çalıştığını, Claude'un ya da ChatGPT'nin normal sohbet uygulamalarıyla
-   çalışmadığını açıkça söyler.
-2. **Notlarınız.** İki seçenek:
-   - *Yeni bir not klasörü oluştur*: Carry, asistanınız için kısa bir kılavuz ve
-     düzenli alt klasörlerle bir klasör hazırlar (varsayılan
-     `~/Documents/Carry Notları`). Sohbet notlarının dilini de burada seçersiniz.
-   - *Bilgisayarımda .md not dosyalarım var*: klasörü seçin (örneğin bir Obsidian
-     vault'u). Carry içinde gerçekten `.md` dosyası olup olmadığını kontrol eder ve
-     yalnızca okur.
-3. **Asistan.** Her asistan için bir kart: kurulu mu, bağlı mı. **Bağla**, not
-   klasörünüze küçük bir ayar dosyası ekler (önce değişikliğin tamamını
-   görebilirsiniz). Tek asistan yeterlidir.
-4. **Hazır.** Klasör boşsa **İlk notumu yaz**; ayrıca Terminal'i not klasörünüzde
-   açıp asistanı başlatan **Claude Code'u / Codex'u başlat**. İlk seferde asistan
-   Carry'yi kullanmak için izin ister: izin verin.
+Uygulamayı ilk açtığınızda sizi dört adımlık bir rehber karşılar:
 
-Rehberi istediğiniz zaman Ayarlar › Genel'den yeniden açabilirsiniz.
+1. **Tanışma.** Carry'nin ne yaptığını üç maddede anlatır. Carry'nin Claude Code ve
+   Codex ile çalıştığını, Claude ya da ChatGPT'nin sohbet uygulamalarıyla
+   çalışmadığını da açıkça belirtir.
+2. **Notlarınız.** İki yol var:
+   - **Yeni bir not klasörü oluştur:** Carry, asistanınız için kısa bir kılavuz ve
+     düzenli alt klasörlerle hazır bir klasör açar (varsayılan olarak
+     `~/Documents/Carry Notları`). Sohbet notlarının hangi dilde yazılacağını da
+     burada seçersiniz.
+   - **Bilgisayarımda .md not dosyalarım var:** Notlarınızın durduğu klasörü
+     seçersiniz (örneğin bir Obsidian vault'u). Carry içinde gerçekten `.md` dosyası
+     olup olmadığına bakar ve klasörü yalnızca okur.
+3. **Asistan.** Her asistan için bir kart görürsünüz: kurulu mu, bağlı mı? **Bağla**
+   düğmesi not klasörünüze küçük bir ayar dosyası ekler; isterseniz önce tam olarak
+   neyin değişeceğini görebilirsiniz. Bir asistan bağlamanız yeterli.
+4. **Hazır.** Klasörünüz boşsa **İlk notumu yaz** ile başlayabilirsiniz. **Claude
+   Code'u başlat** (ya da Codex'i) Terminal'i not klasörünüzde açar ve asistanı
+   çalıştırır. İlk seferde asistan Carry'yi kullanmak için izin ister; izin verin.
+
+Rehberi daha sonra Ayarlar › Genel'den istediğiniz zaman yeniden açabilirsiniz.
 
 ### Ana sayfa
 
-- **Durum satırı.** Her şey çalışıyorsa tek cümle ("Her şey hazır. Asistanınız 541
-  notunuzda arama yapabiliyor.") ve tam kontrol listesi için **Ayrıntılar**: not
-  klasörü, arama, her asistan, sohbet notları. Yapılması gereken bir şey varsa liste
-  kendiliğinden açılır ve eksik adımın yanında bir düğme olur.
-- **Üç kart.** **İncele** (taslak bekliyorsa vurgulu), **Notlarda ara**, **Yeni not**.
-- **Sohbetlerinizden yarım kalan işler** ve **son kararlar**: son sohbet
-  notlarından alınır, her birinin nereden geldiğine bağlantısı vardır.
-- **Son değişen** notlar.
+- **Durum.** Her şey yolundaysa tek bir cümle görürsünüz: "Her şey hazır. Asistanınız
+  541 notunuzda arama yapabiliyor." **Ayrıntılar**'a tıklarsanız tam kontrol listesi
+  açılır: not klasörü, arama, her asistan ve sohbet notları. Eksik bir şey olduğunda
+  liste kendiliğinden açılır ve eksik adımın yanında onu düzelten bir düğme durur.
+- **Üç büyük kart.** **İncele** (bekleyen taslak varsa mavi yanar), **Notlarda ara**
+  ve **Yeni not**.
+- **Sohbetlerinizden yarım kalan işler** ve **son kararlar.** Son sohbet notlarından
+  gelir; her birinin yanında nereden çıktığını gösteren bir bağlantı vardır.
+- **Son değişenler.** En son düzenlenen notlarınız.
 
 ### İncele
 
-Taslakları gözden geçirmenin tek yeri.
+Taslakları gözden geçirdiğiniz yer burası.
 
-- Liste onaylanabilecek tüm taslakları en yeniden eskiye, notun kendi başlığıyla
-  gösterir (kurulum dosyaları, kilitli notlar ve sohbet kaydı gibi ham kayıtlar
-  dışarıda kalır). **Klasör** menüsü listeyi daraltır (Gelen kutusu, notes, log…).
-- **N taslağın hepsini onayla…** görünenlerin hepsini, bir onay penceresinden sonra
-  onaylar. Bir kısmı için kutuları işaretleyip **Seçilenleri onayla**.
-- Sağda okumak için bir taslağa tıklayın. Metnin üstünde: **Onayla, sonrakine geç**
-  (⌘↩), **Onayla**, **Atla**, **Çöp kutusuna taşı…** (Finder'daki Çöp Sepeti'nden
-  geri alınabilir).
-- Onaylamak yalnızca `draft: true` satırını kaldırır; metin asla değişmez.
-- Bir asistan değişiklik önerisi göndermişse, en üstteki turuncu satır **Değişiklik
-  önerileri** sayfasını açar. Orada önerilen metni ve mevcut nottan farkını görür,
-  kabul eder ya da reddedersiniz.
+- Listede onaylayabileceğiniz bütün taslaklar, en yenisi en üstte ve notun kendi
+  başlığıyla sıralanır. Kurulum dosyaları, kilitli notlar ve sohbet kaydı gibi ham
+  kayıtlar bu listeye girmez. **Klasör** menüsünden yalnızca bir klasörün
+  taslaklarını gösterebilirsiniz (Gelen kutusu, notes, log…).
+- **Hepsini onayla** düğmesi, bir kez daha sorduktan sonra listedeki bütün taslakları
+  onaylar. Yalnızca bazılarını onaylamak için kutucukları işaretleyip **Seçilenleri
+  onayla**'ya basın.
+- Bir taslağa tıklayınca sağda açılır. Metnin üstünde dört düğme var: **Onayla,
+  sonrakine geç** (kısayolu ⌘↩), **Onayla**, **Atla** ve **Çöp kutusuna taşı**. Çöpe
+  taşıdığınız notu Finder'daki Çöp Sepeti'nden geri alabilirsiniz.
+- Onaylamak yalnızca `draft: true` işaretini kaldırır; notun metnine dokunulmaz.
+- Bir asistan değişiklik önerisi gönderdiyse sayfanın üstünde turuncu bir satır
+  çıkar. Tıklayınca önerilen metni ve mevcut hâlinden farkını görür, kabul eder ya da
+  reddedersiniz.
 
 ### Notlar
 
-Not klasörünüzün tamamı için bir okuyucu.
+Not klasörünüzün tamamını buradan okursunuz.
 
-- Solda: ada, klasöre ya da özete göre bulma; bir filtre (Kendi notlarım, Bu hafta
-  değişenler, Gelen kutusu, Taslaklar, Aramaya dahil olmayanlar, Kurulum dosyaları ve
-  şablonlar, Hepsi, tek bir klasör); son değişene ya da A–Z'ye göre sıralama;
-  **Yeni not**.
-- Her satırdaki küçük işaretler: turuncu nokta = taslak, çizili göz = aramaya dahil
-  değil, dönen oklar = değişti ve dizine eklenmeyi bekliyor, kilit = kilitli.
-  Listenin yanındaki **?** bunları açıklar.
-- Sağda: notun özellikleri, metni, bağlantıları (Carry içinde açılır) ve ona
-  bağlantı veren notlar. ⌘[ ve ⌘] ile geri/ileri. Düğmeler notu Obsidian'da,
-  varsayılan uygulamasında ya da Finder'da açar.
+- **Sol taraf:** notları adına, klasörüne ya da özetine göre bulabilirsiniz. Filtreler:
+  Kendi notlarım, Bu hafta değişenler, Gelen kutusu, Taslaklar, Aramaya dahil
+  olmayanlar, Kurulum dosyaları ve şablonlar, Hepsi ve tek tek klasörler. Sıralama:
+  son değişen ya da A–Z. Yanında **Yeni not** düğmesi.
+- **Satırlardaki küçük işaretler:** turuncu nokta taslak demek; üstü çizili göz
+  aramaya dahil değil demek; dönen oklar not değişti, dizine birazdan eklenecek demek;
+  kilit ise not kilitli demek. Listenin yanındaki **?** bunları hatırlatır.
+- **Sağ taraf:** notun bilgileri, metni, içindeki bağlantılar (Carry'nin içinde
+  açılır) ve bu nota bağlantı veren diğer notlar. ⌘[ ve ⌘] ile geri ve ileri
+  gidebilirsiniz. Düğmelerle notu Obsidian'da, varsayılan uygulamasında ya da
+  Finder'da açarsınız.
 
 ### Notlarda ara
 
-Bir soru yazın ve Carry'nin asistanınıza tam olarak ne vereceğini görün. Burada
-sohbet yanıtı oluşturulmaz.
+Buraya bir soru yazdığınızda Carry'nin asistanınıza tam olarak neyi vereceğini
+görürsünüz. Bu sayfa bir sohbet cevabı yazmaz; yalnızca bulunan not bölümlerini
+gösterir.
 
-- **Zaman ifadeleri** sonuçları bir döneme sınırlar: "geçen hafta ne yaptık" o
-  haftanın notlarını, güne göre gruplanmış ve en yeniden eskiye gösterir. Özet
-  satırı Carry'nin ifadeyi nasıl anladığını söyler ("“geçen hafta” = 14–20 Eylül
-  2026") ve tek tıkla başka dönemler sunar.
-- Hem konu hem zaman içeren bir soru ("geçen hafta fiyatlandırma hakkında ne karar
-  verdik") önce o dönemin sonuçlarını, ardından diğer tarihlerden ilgili notları
-  **başka tarih** etiketiyle gösterir: olay daha sonra yazıya geçirilmiş olabilir.
-- Zaman yoksa özet, Carry'nin kaç bölüme baktığını ve kaçını tuttuğunu söyler. Her
-  sonuç tarihini ve bir eşleşme etiketini (güçlü, iyi, zayıf) gösterir.
+- **Zaman ifadeleri** sonuçları o tarihlerle sınırlar. "Geçen hafta ne yaptık" diye
+  sorarsanız o haftanın notları, günlere ayrılmış ve en yenisi üstte olacak şekilde
+  gelir. En üstteki özet, Carry'nin ifadeyi nasıl anladığını söyler ("“geçen hafta” =
+  14–20 Eylül 2026") ve tek tıkla başka bir döneme geçmenizi sağlar.
+- **Hem konu hem tarih** içeren sorularda ("geçen hafta fiyatlar hakkında ne karar
+  verdik") önce o dönemin sonuçları gelir, ardından başka tarihlerdeki ilgili notlar
+  **başka tarih** etiketiyle gösterilir. Çünkü bir olay bazen günler sonra yazıya
+  geçer.
+- **Tarih yoksa** özet, Carry'nin kaç bölüme baktığını ve kaçını elinde tuttuğunu
+  söyler. Her sonucun yanında tarihi ve ne kadar iyi eşleştiği (güçlü, iyi, zayıf)
+  yazar.
 
-## Ayarlar, tek tek
+## Ayarlar
 
-Ayarlarda beş sekme vardır: **Arama · Not klasörleri · Sohbet notları · Asistanlar ·
-Genel**.
+Ayarlar beş sekmeden oluşur: **Arama**, **Not klasörleri**, **Sohbet notları**,
+**Asistanlar** ve **Genel**.
 
 ### Arama
 
-**Carry nasıl arasın?** iki sorudan oluşur. Seçtiğiniz birleşim **Seçiminiz**
-altında görünür; **Bunu kullan** ona geçer (anlamına göre arama modelini indirir ve
-arka planda yeniden indeksler).
+"Carry nasıl arasın?" sorusu iki ayrı karara bölünmüştür. İkisini seçtiğinizde altta
+**Seçiminiz** satırı birleşimi özetler; **Bunu kullan**'a basınca geçiş yapılır.
+Anlamına göre arama seçildiyse gereken model indirilir ve notlar arka planda yeniden
+taranır.
 
 **1. Notları nasıl bulsun?**
 
-| Seçenek | Kullanır | Ne yapar |
+| Seçenek | Ne kullanır | Açıklama |
 |---|---|---|
-| **Anlamına göre** (önerilen) | Ollama | Mac'inizde çalışan küçük bir model (embeddinggemma: 0,6 GB indirme, arama sırasında yaklaşık 0,7 GB bellek, boştayken bellekten çıkar) başka kelimelerle yazılmış notları da bulur. |
-| **Kelimelerine göre** | yerleşik | Sorudaki kelimeleri içeren notları bulur. Kurulacak bir şey yok. |
+| **Anlamına göre** (önerilen) | Ollama | Mac'inizde küçük bir model çalışır (embeddinggemma: 0,6 GB indirme, arama sırasında yaklaşık 0,7 GB bellek, boştayken bellekten çıkar). Aynı şeyi başka kelimelerle anlatan notları da bulur. |
+| **Kelimelerine göre** | yerleşik | Sorudaki kelimeleri içeren notları bulur. Kurulacak bir şey yoktur. |
 
-**2. Sonuçları kim kontrol etsin?** Kontrol, yalnızca soruyu gerçekten yanıtlayan
-bölümleri tutar; böylece asistan gevşek bağlantılı metinlerle yanılmaz.
+**2. Sonuçları kim kontrol etsin?** Kontrol adımı, bulunan bölümlerden yalnızca
+soruyu gerçekten cevaplayanları bırakır; böylece asistan alakasız metinlerle kafa
+karıştırmaz.
 
-| Seçenek | Kullanır | Ne yapar |
+| Seçenek | Ne kullanır | Açıklama |
 |---|---|---|
-| **TypeSafe Jev** (önerilen) | çevrimiçi hizmet, erişim anahtarı | En isabetli ve en hızlı (yaklaşık yarım saniye). Soru ve en fazla 32 bölüm TypeSafe'e gider. |
-| **Kendi asistanım (Claude ya da GPT)** | Claude Code: Claude Haiku · Codex: GPT | Ek hizmet ya da anahtar yok. Carry biraz daha fazla bölüm verir; Claude Code'da bunları yardımcı bir adımda küçük bir Claude modeli, Codex'te Codex'in kendi GPT modeli ayıklar. Biraz daha yavaş, soru başına biraz daha fazla token. |
-| **Bu Mac'te büyük bir model** | 2 GB yerel model | Kontrol için hiçbir şey çevrimiçine gitmez. Arama sırasında yaklaşık 3 GB boş bellek ister; 16 GB ve üzeri Mac'ler için. Yalnızca "Anlamına göre" ile çalışır. |
+| **TypeSafe Jev** (önerilen) | çevrimiçi hizmet, erişim anahtarı | En isabetli ve en hızlı seçenek (yaklaşık yarım saniye). Soru ve en fazla 32 bölüm TypeSafe'e gider. |
+| **Kendi asistanım (Claude ya da GPT)** | Claude Code'da Claude Haiku, Codex'te GPT | Ek bir hizmete ya da anahtara gerek yoktur. Carry asistana biraz daha fazla bölüm verir, hangilerinin işe yaradığına asistan karar verir: Claude Code'da bunu yardımcı bir adımda küçük bir Claude modeli, Codex'te Codex'in kendi GPT modeli yapar. Biraz daha yavaştır ve soru başına biraz daha fazla token harcar. |
+| **Bu Mac'te büyük bir model** | 2 GB yerel model | Kontrol için hiçbir şey internete çıkmaz. Arama sırasında yaklaşık 3 GB boş bellek ister; 16 GB ve üzeri belleği olan Mac'ler içindir. Yalnızca "Anlamına göre" ile birlikte çalışır. |
 
-Carry'nin 36 soruluk değerlendirmesinde *anlamına göre + Jev* doğru notu 34 kez,
-*kelimelerine göre + Jev* 33 kez ilk sıraya koydu.
+Carry'nin 36 soruluk testinde *anlamına göre + Jev* doğru notu 36 sorunun 34'ünde,
+*kelimelerine göre + Jev* ise 33'ünde ilk sıraya koydu.
 
-**TypeSafe erişim anahtarı.** Bir Jev seçeneği seçiliyken görünür (değilse
-katlıdır). console.typesafe.ai › API Keys'ten aldığınız anahtarı yapıştırıp
-**Anahtarı kaydet**'e basın; anahtar macOS Anahtar Zinciri'nde saklanır, asla
-Carry'nin dosyalarında değil. **Kontrol et** anahtar kayıtlı mı söyler.
+**TypeSafe erişim anahtarı.** Jev'li bir seçenek seçiliyse görünür, değilse
+katlanmış durur. console.typesafe.ai › API Keys'ten aldığınız anahtarı yapıştırıp
+**Anahtarı kaydet**'e basın. Anahtar macOS Anahtar Zinciri'nde saklanır, Carry'nin
+dosyalarına hiç yazılmaz. **Kontrol et** kayıtlı bir anahtar olup olmadığını söyler.
 
-**Gelişmiş** (katlı):
+**Gelişmiş** (katlanmış durur; çoğu zaman dokunmanız gerekmez):
 
-| Ayar | Varsayılan | Anlamı |
+| Ayar | Varsayılan | Ne işe yarar? |
 |---|---|---|
-| Arama başına metin parçası | 8 | Asistanın en fazla kaç bölüm alacağı. |
-| Asistana gönderilecek en fazla metin | 10.000 karakter | Bu bölümlerin toplam uzunluğunun üst sınırı. |
-| Bir nottan en fazla parça | 2 | Tek bir uzun notun bütün yerleri doldurmasını önler. |
-| Jev alaka eşiği | 0,50 | Yalnızca Jev ile. Yüksek değer daha az ama daha emin bölüm döndürür. |
-| Notlar değişince aramayı kendiliğinden güncelle | açık | Carry değişiklikleri kendisi fark eder. |
-| Değişiklikleri kontrol etme sıklığı | 60 sn | Ne sıklıkla baktığı. |
-| GitHub klasörlerini eşitleme sıklığı | 5 dk | GitHub bilgi tabanları için (aşağıya bakın). |
+| Arama başına metin parçası | 8 | Asistanın bir soruda en fazla kaç bölüm alacağı. |
+| Asistana gönderilecek en fazla metin | 10.000 karakter | Bu bölümlerin toplam uzunluğu için üst sınır. |
+| Bir nottan en fazla parça | 2 | Tek bir uzun notun bütün yeri kaplamasını önler. |
+| Jev alaka eşiği | 0,50 | Yalnızca Jev ile. Yükselttikçe daha az ama daha emin sonuç gelir. |
+| Notlar değişince aramayı kendiliğinden güncelle | açık | Bir notu düzenlediğinizde Carry bunu kendisi fark eder. |
+| Değişiklikleri kontrol etme sıklığı | 60 saniye | Carry'nin ne sıklıkla değişiklik aradığı. |
+| GitHub klasörlerini eşitleme sıklığı | 5 dakika | GitHub'daki bilgi tabanları için (aşağıda anlatılıyor). |
 
-Bir şey değiştiğinde altta bir çubuk belirir: **Değişiklikleri kaydet** (⌘S) ya da
-**Vazgeç**.
+Bir ayarı değiştirdiğinizde altta bir çubuk belirir: **Değişiklikleri kaydet**
+(kısayolu ⌘S) ya da **Vazgeç**.
 
 ### Not klasörleri
 
-- Her klasör için bir kart: adı ve yolu, Carry'nin oraya kayıt ekleyip
-  ekleyemeyeceği, **Notları göster** (Notlar sayfasında açar) ve **Carry'den çıkar…**
-  (Carry o klasörde aramayı bırakır; klasöre ve dosyalarına dokunulmaz). Klasör
-  taşındıysa **Klasörün yeni yerini seç…** yeniden bağlar.
-- **Bu klasörün ayarları** (katlı):
-  - *Carry buraya kendi kayıtlarını ekleyebilir (`carry/` alt klasörüne)*: yalnızca
+- Carry'nin okuduğu her klasör için bir kart var. Kartta klasörün adı ve yeri,
+  Carry'nin oraya kayıt ekleyip ekleyemeyeceği, **Notları göster** (klasörü Notlar
+  sayfasında açar) ve **Carry'den çıkar** düğmeleri bulunur. Çıkarmak yalnızca
+  Carry'nin o klasörde aramayı bırakması demektir; klasöre ve dosyalarına
+  dokunulmaz. Klasörü başka bir yere taşıdıysanız **Klasörün yeni yerini seç** ile
+  yeniden bağlarsınız.
+- **Bu klasörün ayarları** (katlanmış):
+  - *Carry buraya kendi kayıtlarını ekleyebilir (`carry/` alt klasörüne):* yalnızca
     değişiklik önerileri ve istem kaydı için gerekir.
-  - *Bu klasörden TypeSafe'e metin gönderilmesine izin ver*: bu klasörün
-    bölümlerini Jev kontrolünden uzak tutmak için kapatın; o zaman kontrol
-    edilmeden döndürülür.
-  - *Aramaya dahil etme*: virgülle ayrılmış klasörler, dosyalar ya da desenler
-    (örneğin `+, x, workbench, *_index.md`). Notlar sayfasında görünmeye devam
-    ederler ama aramada asla dönmezler. **Kaydet** arka planda yeniden indeksler.
-  - *Aranabilir dosyaları listele* gerçekte neyin indekslendiğini gösterir.
-- **Yeni not klasörü oluştur…** kurulum rehberinin notlar adımını açar.
-- **Not klasörü ekle…** mevcut bir klasörü salt okunur olarak ekler.
-- **Gelişmiş kaynaklar** (katlı): salt okunur bir **GitHub bilgi tabanı** (cihaz
-  koduyla giriş, repo, dal ve klasör seçimi; Carry bir kopya tutar, beş dakikada bir
-  güncellemeleri kontrol eder ve asla push etmez) ve **Özel ayarlarla klasör ekle**
-  (kendi kısa adınız, yazılabilir ya da değil).
+  - *Bu klasörden TypeSafe'e metin gönderilmesine izin ver:* kapatırsanız bu
+    klasördeki notlar Jev kontrolüne hiç gitmez, kontrol edilmeden döner.
+  - *Aramaya dahil etme:* aramada görünmesini istemediğiniz klasörleri, dosyaları ya
+    da desenleri virgülle ayırarak yazın (örneğin `+, x, workbench, *_index.md`). Bu
+    dosyalar Notlar sayfasında görünmeye devam eder ama aramada hiç çıkmaz.
+    **Kaydet**'e basınca notlar arka planda yeniden taranır.
+  - *Aranabilir dosyaları listele:* aramaya gerçekte hangi dosyaların girdiğini
+    gösterir.
+- **Yeni not klasörü oluştur** kurulum rehberinin notlar adımını açar.
+- **Not klasörü ekle** zaten var olan bir klasörü yalnızca okunacak şekilde ekler.
+- **Gelişmiş kaynaklar** (katlanmış):
+  - **GitHub bilgi tabanı:** GitHub'daki bir repoyu yalnızca okunacak şekilde
+    ekler. Cihaz koduyla giriş yaparsınız, repoyu, dalı ve klasörü seçersiniz. Carry
+    bir kopya tutar, beş dakikada bir güncellemelere bakar ve repoya hiçbir şey
+    göndermez.
+  - **Özel ayarlarla klasör ekle:** klasöre kendi kısa adınızı verir, Carry'nin
+    oraya yazıp yazamayacağını seçersiniz.
 
 ### Sohbet notları
 
-- **Taslaklar › Taslakların dili**: Türkçe ya da English; hemen kaydedilir ve tüm
-  harvest çalışmalarında kullanılır: gecelik, elle başlatılan ve sohbet sonu.
-- **Her akşam**: akşam çalışmasını açıp kapatın, saati seçin (varsayılan 21:30) ve
-  **Akşam planını kaydet**. Oturumunuz açıkken macOS launchd üzerinden çalışır. Her
-  Mac kullanıcısı için tek bir akşam çalışması vardır; başka bir Carry kurulumuna
-  aitse Carry bunu söyler ve taşımadan önce sorar.
-- **Bir sohbet bittiğinde**: Claude Code ve Codex'in bu not klasöründe biten bir
-  sohbeti Carry'ye verecek şekilde kurulu olup olmadığını gösterir. Carry'nin
-  oluşturduğu klasörlerde bu baştan açıktır; önceden sahip olduğunuz bir klasör için
-  bunun yerine akşam çalışmasını açın. Codex kancasını bir kez onaylamanızı ister.
-- **Son çalışmalar**: **Sohbetlerden şimdi not çıkar** bir çalışma başlatır ve
-  sonucunu bildirir ("2 yeni taslak, İncele" ya da "yeni taslak yok"). **Kaydın
-  tamamını aç**, **Gelen kutusunu göster** ve katlı bir teknik kayıt.
+- **Taslakların dili:** Türkçe ya da English. Seçtiğiniz anda kaydedilir ve bütün
+  sohbet notlarında kullanılır: akşam çalışmasında, elle başlattığınızda ve sohbet
+  bittiğinde.
+- **Her akşam:** Akşam çalışmasını açıp kapatır, saatini seçersiniz (varsayılan
+  21:30). **Akşam planını kaydet**'e basmayı unutmayın. Çalışma, oturumunuz açıkken
+  macOS'un kendi zamanlayıcısıyla (launchd) yapılır. Her Mac kullanıcısı için tek bir
+  akşam çalışması olabilir; başka bir Carry kurulumu bunu kullanıyorsa Carry size
+  söyler ve devralmadan önce sorar.
+- **Bir sohbet bittiğinde:** Claude Code ve Codex'in bu not klasöründe biten bir
+  sohbeti Carry'ye iletecek şekilde kurulu olup olmadığını gösterir. Carry'nin
+  oluşturduğu klasörlerde bu baştan açıktır. Önceden sahip olduğunuz bir klasörde ise
+  akşam çalışmasını açmanız yeterli. Codex bu kancayı ilk seferde bir kez onaylamanızı
+  ister.
+- **Son çalışmalar:** **Sohbetlerden şimdi not çıkar** hemen bir çalışma başlatır ve
+  bitince sonucu söyler ("2 yeni taslak, İncele" ya da "yeni taslak yok"). Buradan
+  kaydın tamamını ve Gelen kutusunu da açabilirsiniz; teknik ayrıntılar katlanmış
+  bir bölümde durur.
 
 ### Asistanlar
 
-- **Claude Code** ve **Codex** için birer kart: kurulu mu, bağlantı ayarlı mı.
-  - **Bağla**, neyin değişeceğini sade bir dille gösterir (not klasörünüzde tek bir
-    ayar dosyası); değişikliğin tamamı *Teknik ayrıntılar* altındadır.
-  - **Notlarımla başlat**, Terminal'i not klasörünüzde açıp asistanı başlatır.
-    macOS, Carry'nin Terminal'i kontrol etmesi için bir kez izin ister.
-  - Asistan kurulu değilse: **Kurulum adımlarını aç** ve **Yeniden kontrol et**.
-- **Gelişmiş** (katlı): başka bir proje klasörünü bağlama; o projede *kullanıcı
-  istemlerinin tamamını kaydetme* (yalnızca sizin istemleriniz, asla yanıtlar; her
-  biri onaylanmamış bir taslak olur; maskeleme elden geldiğince yapılır); *bu
-  istemcinin taslak karar önermesine izin verme*; değişiklikleri önizleme, uygulama,
-  kaydı duraklatma ve önceki herhangi bir bağlantı için **Kurulumu geri al**.
+- **Claude Code** ve **Codex** için birer kart vardır: kurulu mu, bağlantısı ayarlı
+  mı?
+  - **Bağla:** neyin değişeceğini sade bir dille anlatır (not klasörünüze tek bir
+    ayar dosyası eklenir). Değişikliğin tamamını görmek isterseniz *Teknik
+    ayrıntılar*'a bakın.
+  - **Notlarımla başlat:** Terminal'i not klasörünüzde açar ve asistanı başlatır.
+    macOS ilk seferde Carry'nin Terminal'i açmasına izin vermenizi ister.
+  - Asistan kurulu değilse **Kurulum adımlarını aç** ve kurduktan sonra **Yeniden
+    kontrol et** düğmeleri çıkar.
+- **Gelişmiş** (katlanmış): başka bir proje klasörünü bağlayabilir, o projede
+  yazdığınız mesajların kaydedilmesini açabilirsiniz. Bu kayıtlarda yalnızca sizin
+  mesajlarınız olur, asistanın cevapları asla olmaz; her biri onay bekleyen bir taslak
+  hâline gelir. Asistanın karar önerisi göndermesine izin verebilir, değişiklikleri
+  uygulamadan önce görebilir, kaydı duraklatabilir ve daha önce yaptığınız herhangi
+  bir bağlantıyı **Kurulumu geri al** ile kaldırabilirsiniz.
 
 ### Genel
 
-- **Dil**: uygulamanın arayüz dili (Türkçe / English).
-- **Yardım**: **Kurulum rehberini aç** (sahip olduğunuz hiçbir şey silinmez),
-  **Carry nasıl çalışır?** ve **Ana sayfadaki kullanım ipuçlarını yeniden göster**.
-- **Sorun giderme** (katlı):
-  - *Carry'nin ayar klasörü*: yolu, **Finder'da göster**, **Başka bir ayar klasörü
-    aç**. Buradaki arama verileri her zaman yeniden oluşturulabilir; klasörün
-    kendisini silmeyin.
-  - *Arama ve bağlantı durumu*: kullanılan arama altyapısı; **Not aramasını yeniden
-    hazırla**; **Carry arama hizmetini kontrol et** (Carry'nin kendi MCP sunucusunu
-    test eder; asistanın izni asistanın kendisinde kontrol edilir); **Sağlayıcıyı
+- **Dil:** uygulamanın dili (Türkçe ya da English).
+- **Yardım:** **Kurulum rehberini aç** (mevcut hiçbir şey silinmez), **Carry nasıl
+  çalışır?** ve ana sayfadaki kullanım ipuçlarını geri getiren düğme.
+- **Sorun giderme** (katlanmış):
+  - *Carry'nin ayar klasörü:* nerede olduğu, **Finder'da göster** ve **Başka bir ayar
+    klasörü aç**. Buradaki arama verileri her zaman yeniden oluşturulabilir; yine de
+    klasörün kendisini silmeyin.
+  - *Arama ve bağlantı durumu:* kullanılan arama altyapısı, **Not aramasını yeniden
+    hazırla**, **Carry arama hizmetini kontrol et** (Carry'nin kendi MCP sunucusunu
+    dener; asistanın verdiği izin asistanın içinden kontrol edilir) ve **Sağlayıcıyı
     yokla**.
-  - *Tanılama*: hata bildirimleri için tüm durumun JSON hâli.
+  - *Tanılama:* bir sorun bildirmeniz gerekirse işe yarayacak, bütün durumun JSON
+    hâli.
 
-## Asistanlar Carry'yi nasıl kullanır
+## Asistan Carry'yi nasıl kullanır?
 
 Carry, Claude Code ve Codex'in not klasörünüz için başlattığı bir MCP sunucusudur
-(`carry.mcp_server`). Sunduğu araçlar:
+(`carry.mcp_server`). Asistana şu araçları verir:
 
-- **`carry_recall(query, queries?, source_ids?, budget?)`**: soruyu yanıtlayan
-  bölümler; her biri kaynak, tarih, kayıt kimliği ve revizyonla, ayrıca makinece
-  okunabilir bir arama durumu (dizin tazeliği, eksik yetenekler, kullanılan tarih
-  aralığı). Sorgudaki zaman ifadelerini koruyun; bütçe yalnızca düşürülebilir, asla
-  artırılamaz.
-- **`carry_catalog(folder?, source_ids?)`**: aranabilir her dosya ve tek satırlık
-  özeti; recall bir şey bulamadığında kullanılır.
-- **`carry_status()`**: kaynaklar, dizin tazeliği ve eksik yetenekler; asla not
-  metni içermez.
-- **`carry_propose`**: yalnızca o istemci için önerileri açtıysanız; taslak bir
-  düzeltme oluşturur ve onu asla kabul edemez.
+- **`carry_recall(query, queries?, source_ids?, budget?)`:** soruyu cevaplayan
+  bölümler. Her biri kaynağı, tarihi, kayıt kimliği ve revizyonuyla gelir; yanında
+  arama durumunu anlatan makinece okunur bir özet vardır (dizin güncel mi, eksik bir
+  şey var mı, hangi tarih aralığı kullanıldı). Sorudaki zaman ifadeleri korunmalıdır.
+  Bütçe yalnızca düşürülebilir, artırılamaz.
+- **`carry_catalog(folder?, source_ids?)`:** aranabilir bütün dosyalar ve tek
+  satırlık özetleri. `carry_recall` bir şey bulamadığında işe yarar.
+- **`carry_status()`:** kaynaklar, dizinin güncelliği ve eksikler. Asla not metni
+  döndürmez.
+- **`carry_propose`:** yalnızca o asistan için önerileri açtıysanız vardır. Taslak
+  bir düzeltme oluşturur; onu kendisi asla kabul edemez.
 
-Dönen bölümler talimat değil veridir; yanıt, asistandan kullandığı şeyi kaynak
-göstermesini ve kanıt yetersizse bunu söylemesini ister.
+Carry'nin döndürdüğü bölümler talimat değil, veridir. Carry asistandan kullandığı
+bölümün kaynağını göstermesini ve kanıt yetersizse bunu açıkça söylemesini ister.
 
 ## Komut satırı
 
-| Komut | Ne yapar |
+| Komut | Ne yapar? |
 |---|---|
 | `carry setup` | Rehberli kurulum ([Kurulum](#kurulum) bölümüne bakın). |
 | `carry app install \| open \| remove` | `~/Applications/Carry.app`'i derler, açar ya da kaldırır. |
-| `carry search --semantic on\|off [--judge jev\|assistant]` | Carry'nin nasıl bulup kontrol ettiğini değiştirir. |
-| `carry recall "soru"` | Terminalden arama. |
-| `carry status [--probe]` | Neyin bağlı, güncel ya da eksik olduğu. |
+| `carry search --semantic on\|off [--judge jev\|assistant]` | Carry'nin nasıl bulup nasıl kontrol edeceğini değiştirir. |
+| `carry recall "soru"` | Terminalden arama yapar. |
+| `carry status [--probe]` | Neyin bağlı, neyin güncel, neyin eksik olduğunu gösterir. |
 | `carry index` | Arama dizinini yeniden oluşturur. |
-| `carry harvest [--dry-run] [--install-schedule \| --remove-schedule]` | Hemen sohbet notları ya da akşam zamanlaması. |
-| `carry context` | Yeni bir sohbetin başladığı durum özeti. |
-| `carry connect claude\|codex <klasör>` · `list` · `undo` | Bir proje klasöründe asistan bağlama (önizlemeli, geri alınabilir). |
-| `carry vault init <klasör>` | Şablondan not klasörü oluşturur. |
-| `carry github …` | Salt okunur GitHub bilgi kaynakları. |
-| `carry proposal list \| show \| accept \| reject` | Terminalden değişiklik önerileri. |
+| `carry harvest [--dry-run] [--install-schedule \| --remove-schedule]` | Sohbet notlarını hemen çıkarır ya da akşam zamanlamasını kurar/kaldırır. |
+| `carry context` | Yeni bir sohbetin başladığı durum özetini gösterir. |
+| `carry connect claude\|codex <klasör>` · `list` · `undo` | Bir proje klasöründe asistanı bağlar (önizlenir, geri alınabilir). |
+| `carry vault init <klasör>` | Şablondan yeni bir not klasörü oluşturur. |
+| `carry github …` | Salt okunur GitHub bilgi kaynaklarını yönetir. |
+| `carry proposal list \| show \| accept \| reject` | Değişiklik önerilerini terminalden yönetir. |
 
-Birden fazla kurulum kullanıyorsanız `--workspace <ayar klasörü>` ekleyin (ya da
-`CARRY_WORKSPACE` ayarlayın); makinece okunabilir çıktı için `--json`.
+Birden fazla Carry kurulumu kullanıyorsanız komutlara `--workspace <ayar klasörü>`
+ekleyin (ya da `CARRY_WORKSPACE` değişkenini ayarlayın). Makinece okunur çıktı için
+`--json` kullanın.
 
 ## Geliştiriciler için
 
@@ -790,40 +826,46 @@ uv venv --python 3.13 .venv
 .venv/bin/python -m unittest discover -s tests -q
 ```
 
-İsteğe bağlı ekler: `.[embed]` (numpy, daha hızlı vektör araması), `.[yaml]`
-(PyYAML, daha geniş frontmatter desteği), `.[rerank]` (yerel cross-encoder).
-Çekirdek bunlar olmadan da çalışır ve eksikliği bildirir. `carry demo --into
-~/carry-demo` denemek için küçük bir sentetik not kümesi kurar.
+İsteğe bağlı ekler: `.[embed]` (numpy ile daha hızlı vektör araması), `.[yaml]`
+(PyYAML ile daha geniş frontmatter desteği) ve `.[rerank]` (yerel cross-encoder).
+Çekirdek bunlar olmadan da çalışır, yalnızca neyin eksik olduğunu bildirir. Denemek
+için `carry demo --into ~/carry-demo` küçük, uydurma bir not kümesi kurar.
 
-Yapı: `src/carry/` (Python çekirdeği, MCP sunucusu, CLI, harvest, zaman aralıkları
-`timeframe.py`'de), `src/carry/app/CarryApp.swift` (SwiftUI uygulaması;
-`desktop.py`'deki JSON köprüsünün üzerinde bir kabuk; arayüz metinleri `L()`/`T()`
-üzerinden geçer, Türkçesi `TR` tablosundadır), `src/carry/templates/vault/` (not
-klasörü şablonu), `tests/`.
+Klasör yapısı:
 
-Tasarım kuralları:
+- `src/carry/`: Python çekirdeği, MCP sunucusu, komut satırı, sohbet notları;
+  tarih aralıkları `timeframe.py` içinde.
+- `src/carry/app/CarryApp.swift`: SwiftUI uygulaması. `desktop.py`'deki JSON
+  köprüsünün üzerinde çalışan bir kabuktur. Arayüz metinleri `L()`/`T()` üzerinden
+  geçer; Türkçeleri `TR` tablosundadır.
+- `src/carry/templates/vault/`: yeni not klasörü şablonu.
+- `tests/`: testler.
 
-- **Markdown asıl, dizin silinebilir.** Yeniden oluşturma yalnızca ayar klasörünün
-  içine yazar; yeni dizin tek adımda yayımlanır, bu yüzden başarısız bir oluşturma
-  eski dizini çalışır bırakır.
-- **Sınırlar içinde kalma.** Her yol kendi kök klasörünün içinde çözülür; dışarı
-  çıkan yollar ve sembolik bağlantılar reddedilir.
-- **Üzerine yazmak yerine geçmiş.** Bir düzeltme yeni bir revizyon yazar ve eskisini
-  "yerini aldı" olarak işaretler; eski bir revizyona karşı yazma reddedilir.
-- **Dürüst eksiklik bildirimi.** Yalnızca kelimeyle arama, eskimiş bir dizin ya da
-  erişilemeyen bir sağlayıcı bildirilir, asla gizlenmez.
+Tasarım ilkeleri:
+
+- **Asıl olan Markdown, dizin gözden çıkarılabilir.** Dizin yeniden oluşturulurken
+  yalnızca ayar klasörüne yazılır. Yeni dizin tek adımda devreye girer; bir hata
+  olursa eski dizin çalışmaya devam eder.
+- **Klasör dışına çıkılmaz.** Her dosya yolu kendi kök klasörünün içinde çözülür;
+  dışarı taşan yollar ve sembolik bağlantılar reddedilir.
+- **Üzerine yazmak yok, geçmiş var.** Bir düzeltme yeni bir revizyon olarak yazılır,
+  eskisi "yerini yenisi aldı" diye işaretlenir. Eskimiş bir revizyonun üzerine yazma
+  denemesi reddedilir.
+- **Eksik neyse söylenir.** Yalnızca kelimeyle arama, güncel olmayan dizin ya da
+  ulaşılamayan bir sağlayıcı gizlenmez, açıkça bildirilir.
 
 ## Bilinen sınırlar
 
-- Şirket içi pilot: uygulama ad-hoc imzalı ve yerelde derleniyor; imzalı ve
-  notarize edilmiş bir sürüm yok, ikinci ve temiz bir Mac'e kurulum hâlâ
-  doğrulanıyor.
-- Gizli bilgi maskeleme elden geldiğince yapılır; yeni bir anahtar biçimi gözden
-  kaçabilir.
-- Zaman ifadelerinin tarihleri, dosya adlarındaki tarihlerden, tarihli
-  başlıklardan ve created/date/updated alanlarından gelir. Bunların hiçbiri olmayan
-  bir notun tarihi yoktur.
-- Tarih aralığı yedek listesi notları konuya göre sıralarken aynı kökü paylaşan
-  kelimeler gevşek eşleşebilir (örneğin "carry", "carrying" ile de eşleşir).
-- Kaynak kapsam etiketleri erişim denetimi değil, yalnızca köken bilgisidir; çok
-  kullanıcılı izinler kapsam dışıdır.
+- Carry bir pilot: uygulama yerelde derleniyor ve ad-hoc imzalı. İmzalı, notarize
+  edilmiş bir sürüm henüz yok; temiz ikinci bir Mac'e kurulum hâlâ doğrulanıyor.
+- Gizli bilgi maskeleme elden geldiğince yapılır; hiç görülmemiş bir anahtar biçimi
+  gözden kaçabilir.
+- Zaman ifadeleri için tarihler dosya adındaki tarihten, tarihli başlıklardan ve
+  created/date/updated alanlarından okunur. Bunların hiçbiri olmayan bir notun tarihi
+  bilinmez.
+- Bir konuyu tarih aralığı içinde ararken, aynı kökten gelen kelimeler gevşek
+  eşleşebilir (örneğin "carry" araması "carrying" geçen notları da getirebilir).
+- Kaynaklara verilen kapsam etiketleri yalnızca kökeni gösterir, erişim denetimi
+  değildir. Çok kullanıcılı yetkilendirme kapsam dışındadır.
+
+<sub>**Berke Tevik** tarafından geliştirildi.</sub>

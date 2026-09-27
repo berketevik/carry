@@ -21,6 +21,9 @@ FORBIDDEN = (
 )
 
 
+# The author's credit is deliberate; it is not a trace of the vault the code came from.
+AUTHOR_CREDIT = "Berke Tevik"
+
 SELF = Path(__file__).resolve()
 
 
@@ -51,7 +54,7 @@ class PackageTest(unittest.TestCase):
     def test_no_personal_paths_or_private_content(self):
         offences = []
         for path in project_files():
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = path.read_text(encoding="utf-8", errors="replace").replace(AUTHOR_CREDIT, "")
             for pattern in FORBIDDEN:
                 for match in pattern.finditer(text):
                     line = text[:match.start()].count("\n") + 1
