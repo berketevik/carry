@@ -21,6 +21,7 @@ from .persistence import writer_lock
 MAX_FILES = 20_000
 HEAD_BYTES = 4096
 MAX_NOTE_BYTES = 2_000_000
+MARK = re.compile(r' ?<!-- carry: (?:accepted|fixed|skipped) \d{4}-\d{2}-\d{2} -->')
 WIKILINK_RE = re.compile(r"\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]")
 INBOX = '+'
 
@@ -153,7 +154,7 @@ def browse(ws, source_id):
             locked=front.get('lock') is True, system=is_system(rel, managed),
             approvable=not is_system(rel, managed) and cannot_approve(front) is None,
             review=not is_system(rel, managed) and awaits_review(rel, front),
-            digest=isinstance(front.get('harvest'), dict) and 'extractor' in front['harvest']))
+            digest=is_digest(front)))
     return dict(source_id=src.source_id, root=str(root), files=files, truncated=truncated)
 
 
@@ -172,7 +173,7 @@ def note(ws, source_id, relative):
     return dict(source_id=src.source_id, path=rel, absolute=str(path), title=_text(front.get('title')) or heading or path.stem,
                 frontmatter={k: v if isinstance(v, (str, int, float, bool, list)) or v is None else str(v)
                              for k, v in (front or {}).items()},
-                body=body, modified=path.stat().st_mtime, indexed=not excluded(rel, src.exclude),
+                body=MARK.sub('', body) if is_digest(front) else body, modified=path.stat().st_mtime, indexed=not excluded(rel, src.exclude),
                 index_state=_index_state(rel, src, _indexed_paths(ws, src.source_id), path), links=links)
 
 
@@ -247,8 +248,11 @@ def create_note(ws, source_id, title, body=''):
 RAW_TYPES = ('chat-raw', 'source')
 
 
-def cannot_approve(front):
-    """Why a note cannot be approved, or None. One rule for single and bulk approval and the app."""
+def is_digest(front):
+    return isinstance(front.get('harvest'), dict) and 'extractor' in front['harvest']
+
+
+def _blocked(front):
     if front.get('lock') is True:
         return 'locked'
     if str(front.get('type', '')).lower() in RAW_TYPES or front.get('source_type') == 'clip':
@@ -258,11 +262,18 @@ def cannot_approve(front):
     return None
 
 
+def cannot_approve(front):
+    """Why a note cannot be approved as a whole, or None. One rule for single and bulk approval and
+    the app. A chat digest is decided item by item (digest.decide), never approved wholesale: that
+    would clear it from review without saving any item."""
+    return _blocked(front) or ('digest' if is_digest(front) else None)
+
+
 def awaits_review(rel, front):
-    """What waits for the owner: approvable drafts in the inbox (chat digests, captures). Agent notes
-    elsewhere keep `draft: true` as an unchecked mark and stay searchable; they are not a queue.
-    A capture already routed (`routed_into:` set) is done even if its draft flag stayed."""
-    return rel.startswith(INBOX + '/') and cannot_approve(front) is None and not front.get('routed_into')
+    """What waits for the owner: drafts in the inbox (chat digests, captures). Agent notes elsewhere
+    keep `draft: true` as an unchecked mark and stay searchable; they are not a queue. A capture
+    already routed (`routed_into:` set) is done even if its draft flag stayed."""
+    return rel.startswith(INBOX + '/') and _blocked(front) is None and not front.get('routed_into')
 
 
 def approve_note(ws, source_id, relative):
@@ -279,6 +290,13 @@ def approve_note(ws, source_id, relative):
         return dict(path=relative, changed=False)
     if reason:
         raise CarryError(f'note_{reason}')
+    return clear_draft(path, relative, raw)
+
+
+def clear_draft(path, relative, raw=None):
+    """Drop the frontmatter `draft: true` line and nothing else."""
+    from .persistence import atomic_text
+    raw = path.read_text(encoding='utf-8') if raw is None else raw
     end = raw.find('\n---', 3)
     head, rest = raw[:end], raw[end:]
     import re as _re

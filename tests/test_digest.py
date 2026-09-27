@@ -124,6 +124,23 @@ class DigestTest(unittest.TestCase):
         digest.decide(self.ws, self.sid, rel, items['The pilot ships on 15 October.']['id'], 'skip')
         self.assertNotIn('15 October', context.pack(self.root))
 
+    def test_a_digest_is_never_approved_wholesale(self):
+        with self.assertRaisesRegex(CarryError, 'note_digest'):
+            vaultview.approve_note(self.ws, self.sid, self.rel)
+        result = vaultview.approve_many(self.ws, self.sid, [self.rel])
+        self.assertEqual((result['approved'], result['skipped'][0]['reason']), ([], 'digest'))
+        files = {f['path']: f for f in vaultview.browse(self.ws, self.sid)['files']}
+        self.assertTrue(files[self.rel]['review'])
+        self.assertFalse(files[self.rel]['approvable'])
+        self.assertIn('draft: true', (self.root / self.rel).read_text())
+
+    def test_the_reader_does_not_show_decision_markers(self):
+        items = self.ids()
+        digest.decide(self.ws, self.sid, self.rel, items['The build takes 32 seconds.']['id'], 'skip')
+        body = vaultview.note(self.ws, self.sid, self.rel)['body']
+        self.assertIn('The build takes 32 seconds.', body)
+        self.assertNotIn('<!--', body)
+
     def test_a_plain_note_is_not_a_digest(self):
         (self.root / 'notes' / 'Plain.md').write_text('---\ntype: thing\ndraft: true\n---\n- **fact:** x\n')
         with self.assertRaisesRegex(CarryError, 'not_a_digest'):

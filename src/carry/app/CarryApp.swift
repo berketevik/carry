@@ -1151,6 +1151,8 @@ struct ReviewView: View {
     func top(_ f: [String: Any]) -> String { str(f, "path").contains("/") ? String(str(f, "path").split(separator: "/")[0]) : "" }
     var all: [[String: Any]] { reviewable(model.files) }
     var drafts: [[String: Any]] { folder.isEmpty ? all : all.filter { top($0) == folder } }
+    /// What bulk approval may touch: chat digests are decided item by item, never approved wholesale.
+    var bulk: [[String: Any]] { drafts.filter { $0["approvable"] as? Bool == true } }
     var folders: [(String, Int)] {
         var counts: [String: Int] = [:]
         for f in all { counts[top(f), default: 0] += 1 }
@@ -1160,8 +1162,8 @@ struct ReviewView: View {
         HSplitView {
             VStack(alignment: .leading, spacing: 12) {
                 Text(pageName("Review")).font(.title.bold())
-                Text(T("What Carry took from your chats, waiting in your Inbox. Approve the ones that are right: they stop being drafts. The text does not change. Notes your assistants write elsewhere are searchable as they are and do not wait here; find them with the Drafts filter on the Notes page.",
-                       "Carry'nin sohbetlerinizden çıkardıkları, Gelen kutunuzda bekliyor. Doğru olanları onaylayın: taslak olmaktan çıkarlar. Metin değişmez. Asistanlarınızın başka klasörlere yazdığı notlar olduğu gibi aranabilir ve burada beklemez; Notlar sayfasındaki Taslaklar filtresiyle bulursunuz."))
+                Text(T("What waits in your Inbox. Open a chat draft and accept, fix or skip each item; accepted items go to that day's log. Other captures you approve as a whole. Notes your assistants write elsewhere are searchable as they are and do not wait here; find them with the Drafts filter on the Notes page.",
+                       "Gelen kutunuzda bekleyenler. Bir sohbet taslağını açıp her maddeyi kabul edin, düzeltin ya da atlayın; kabul edilenler o günün log'una gider. Diğer kayıtları bütün olarak onaylarsınız. Asistanlarınızın başka klasörlere yazdığı notlar olduğu gibi aranabilir ve burada beklemez; Notlar sayfasındaki Taslaklar filtresiyle bulursunuz."))
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 if model.pendingReview > 0 {
                     Button { model.page = "Proposals" } label: {
@@ -1182,19 +1184,25 @@ struct ReviewView: View {
                             ForEach(folders, id: \.0) { Text("\(folderLabel($0.0.isEmpty ? "(root)" : $0.0)) (\($0.1))").tag($0.0) }
                         }.onChange(of: folder) { picked = [] }
                     }
-                    FlowLayout {
-                        Button(T("Approve all (\(drafts.count))…", "Hepsini onayla (\(drafts.count))…")) { confirmAll = true }.buttonStyle(.borderedProminent)
-                        Button(picked.count == drafts.count ? T("Clear selection", "Seçimi temizle") : T("Select all", "Tümünü seç")) {
-                            picked = picked.count == drafts.count ? [] : Set(drafts.map { str($0, "path") })
-                        }.buttonStyle(.link)
+                    if !bulk.isEmpty {
+                        FlowLayout {
+                            Button(T("Approve all (\(bulk.count))…", "Hepsini onayla (\(bulk.count))…")) { confirmAll = true }.buttonStyle(.borderedProminent)
+                            Button(picked.count == bulk.count ? T("Clear selection", "Seçimi temizle") : T("Select all", "Tümünü seç")) {
+                                picked = picked.count == bulk.count ? [] : Set(bulk.map { str($0, "path") })
+                            }.buttonStyle(.link)
+                        }
                     }
                     List {
                         ForEach(drafts.map { str($0, "path") }, id: \.self) { path in
                             let f = drafts.first { str($0, "path") == path } ?? [:]
                             HStack(alignment: .top, spacing: 10) {
-                                Button { if picked.contains(path) { picked.remove(path) } else { picked.insert(path) } } label: {
-                                    Image(systemName: picked.contains(path) ? "checkmark.square.fill" : "square").font(.title3).foregroundStyle(picked.contains(path) ? Color.accentColor : .secondary)
-                                }.buttonStyle(.plain).help(T("Select", "Seç"))
+                                if f["approvable"] as? Bool == true {
+                                    Button { if picked.contains(path) { picked.remove(path) } else { picked.insert(path) } } label: {
+                                        Image(systemName: picked.contains(path) ? "checkmark.square.fill" : "square").font(.title3).foregroundStyle(picked.contains(path) ? Color.accentColor : .secondary)
+                                    }.buttonStyle(.plain).help(T("Select", "Seç"))
+                                } else {
+                                    Image(systemName: "checklist").font(.title3).foregroundStyle(.orange).help(T("Decide item by item", "Madde madde karar verin"))
+                                }
                                 Button { model.openNote(path) } label: {
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(str(f, "title", str(f, "name"))).fontWeight(.medium).lineLimit(2)
@@ -1216,8 +1224,8 @@ struct ReviewView: View {
             }.padding(18).frame(minWidth: 300, idealWidth: 360, maxWidth: 460)
             NoteView(model: model).frame(minWidth: 380, idealWidth: 480, maxWidth: .infinity)
         }
-        .confirmationDialog(T("Approve \(drafts.count) drafts?", "\(drafts.count) taslak onaylansın mı?"), isPresented: $confirmAll) {
-            Button(T("Approve all", "Hepsini onayla")) { model.approveMany(drafts.map { str($0, "path") }) }
+        .confirmationDialog(T("Approve \(bulk.count) drafts?", "\(bulk.count) taslak onaylansın mı?"), isPresented: $confirmAll) {
+            Button(T("Approve all", "Hepsini onayla")) { model.approveMany(bulk.map { str($0, "path") }) }
         } message: {
             Text(T("Their draft mark is removed; the text does not change. Approve only what you trust without reading.",
                    "Taslak işaretleri kaldırılır; metin değişmez. Yalnızca okumadan güvendiğiniz taslakları onaylayın."))

@@ -15,6 +15,7 @@ from .errors import CarryError
 from .markdown import parse_frontmatter
 from .paths import resolve_within
 from .persistence import atomic_text
+from .vaultview import is_digest
 
 DECISIONS = ('accepted', 'fixed', 'skipped')
 MARK = re.compile(r'\s*<!-- carry: (accepted|fixed|skipped) (\d{4}-\d{2}-\d{2}) -->\s*$')
@@ -27,8 +28,6 @@ LOG_HEADING = dict(Turkish='Sohbetlerden', English='From chats')
 LOG_SUMMARY = dict(Turkish='{day}: sohbetlerden onaylanan maddeler.', English='{day}: items approved from chats.')
 
 
-def is_digest(front):
-    return isinstance(front.get('harvest'), dict) and 'extractor' in front['harvest']
 
 
 def item_id(statement):
@@ -155,6 +154,6 @@ def decide(ws, source_id, relative, item, action, text=None, today=None):
     waiting = sum(1 for it in parse('\n'.join(lines))['items'] if it['decision'] is None)
     done = False
     if waiting == 0 and front.get('draft') is True:
-        from .vaultview import approve_note
-        done = approve_note(ws, source_id, relative).get('changed', False)
+        from .vaultview import clear_draft
+        done = clear_draft(path, relative).get('changed', False)
     return dict(item=item, decision=decision, logged=logged, waiting=waiting, done=done)

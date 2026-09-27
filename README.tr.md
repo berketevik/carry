@@ -13,8 +13,8 @@ Notlarınız seçtiğiniz klasörde, düz Markdown (`.md`) dosyaları olarak Mac
 ## Nasıl çalışır?
 
 1. **Sorun.** Claude Code veya Codex'te not aldığınız herhangi bir şeyi sorun. Carry notlarınızda arar ve eşleşen bölümleri kaynağı ve tarihiyle verir; cevabı kontrol edebilirsiniz. “Geçen hafta” veya “eylülde” gibi ifadeler aramayı o döneme daraltır.
-2. **Çalışın.** Not klasörünüzde her zamanki gibi sohbet edin. Sohbet bitince (ve açarsanız her akşam) Carry kararları, bilgileri ve açık işleri Gelen kutunuzdaki bir taslağa çıkarır. Notlarınızda zaten yazanları dışarıda bırakır, yapılmış ya da vazgeçilmiş görünenleri katlar.
-3. **İnceleyin.** Uygulamanın **İncele** sayfasında taslağı madde madde geçin: **Kabul et**, **Düzelt** ya da **Atla**. Kabul edilen maddeler, söylendikleri günün log'una kaydedilir. Sohbetten hiçbir şey siz olmadan notlarınıza girmez.
+2. **Çalışın.** Not klasörünüzde her zamanki gibi sohbet edin. Sohbet bitince (ve açarsanız her akşam) Carry kararları, bilgileri ve açık işleri Gelen kutunuzdaki bir taslağa çıkarır. Denetçi olarak TypeSafe Jev seçiliyse bunları notlarınızla da karşılaştırır; notlarınızda zaten yazanları, yapılmış ya da vazgeçilmiş görünenleri katlar.
+3. **İnceleyin.** Uygulamanın **İncele** sayfasında taslağı madde madde geçin: **Kabul et**, **Düzelt** ya da **Atla**. Kabul edilen maddeler, söylendikleri günün log'una kaydedilir. Sohbetten hiçbir şey siz olmadan nota dönüşmez; sohbetin kendisi, gizli bilgileri maskelenmiş olarak, ham malzeme olarak `sources/carry/harvest/` altında saklanır.
 
 **Asistan klasörü zaten okuyamıyor mu?** Bildiği dosyaları açabilir. Carry bütün not klasörünüzün bir index'ini tutar; onu kelimeyle ve (Ollama varsa) anlamıyla arar, hangi bölümlerin soruyu gerçekten cevapladığını denetleyebilir ve sohbetlerinizi sizin yerinize takip eder.
 
@@ -33,7 +33,7 @@ Yeni bir not klasörü oluşturun veya mevcut `.md` klasörünüzü seçin. Sonr
 ## Verileriniz
 
 - Carry notlarınızı hiçbir yere yüklemez. Asistanınızın bulduğu bölümler o asistana gider; sohbet taslakları da onun üzerinden çıkarılır (mevcut hesabınızla Claude Code veya Codex).
-- İlgi denetçisi olarak **TypeSafe Jev**'i açarsanız sorular ve bölümler TypeSafe'e gider; sohbet taslakları notlarınızla karşılaştırılırken de. `sensitivity: secret` işaretli notlar hiç gönderilmez.
+- İlgi denetçisi olarak **TypeSafe Jev**'i açarsanız sorular ve bölümler TypeSafe'e gider; sohbet taslakları denetlenip notlarınızla karşılaştırılırken sohbetlerinizden gizli bilgileri maskelenmiş alıntılar da gider. `sensitivity: secret` işaretli notlar hiç gönderilmez.
 
 <details>
 <summary><b>Kurulum seçenekleri ve güncelleme</b></summary>

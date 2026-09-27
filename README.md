@@ -13,8 +13,8 @@ Your notes stay on your Mac as plain Markdown (`.md`) files in a folder you choo
 ## How it works
 
 1. **Ask.** In Claude Code or Codex, ask about anything you've written down. Carry searches your notes and hands back the matching passages with their source and date, so you can check the answer. “Last week” or “in September” narrows the search to that period.
-2. **Chat.** Work as usual in your notes folder. When the chat ends (and every evening, if you turn that on), Carry pulls out the decisions, facts and unfinished work into a draft in your Inbox. It leaves out what your notes already say, and folds what looks done or dropped.
-3. **Review.** On the app's **Review** page, go through the draft item by item: **Accept**, **Fix** or **Skip**. Accepted items are saved to the log of the day they were said. Nothing from a chat enters your notes without you.
+2. **Chat.** Work as usual in your notes folder. When the chat ends (and every evening, if you turn that on), Carry pulls out the decisions, facts and unfinished work into a draft in your Inbox. With TypeSafe Jev as the checker, it also compares them with your notes and folds what they already say or what looks done or dropped.
+3. **Review.** On the app's **Review** page, go through the draft item by item: **Accept**, **Fix** or **Skip**. Accepted items are saved to the log of the day they were said. Nothing from a chat becomes a note without you; the chat itself, secret-masked, is kept as raw material in `sources/carry/harvest/`.
 
 **Why not just let the assistant read the folder?** It can open files it already knows about. Carry keeps an index of your whole notes folder, searches it by words and (with Ollama) by meaning, can check which passages actually answer the question, and keeps track of your chats for you.
 
@@ -33,7 +33,7 @@ Pick a new notes folder or an existing folder of `.md` files. Then go to **Setti
 ## Your data
 
 - Carry doesn't upload your notes anywhere. Passages your assistant finds go to that assistant, and chat drafts are made through it too (Claude Code or Codex, with your existing account).
-- If you turn on **TypeSafe Jev** as the relevance checker, questions and passages go to TypeSafe, also while chat drafts are compared with your notes. Notes marked `sensitivity: secret` are never sent.
+- If you turn on **TypeSafe Jev** as the relevance checker, questions and passages go to TypeSafe, and so do secret-masked excerpts of your chats while chat drafts are checked and compared with your notes. Notes marked `sensitivity: secret` are never sent.
 
 <details>
 <summary><b>Setup options and updates</b></summary>
