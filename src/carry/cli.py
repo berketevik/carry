@@ -262,9 +262,53 @@ def cmd_vault(args):
     return status
 
 
+def cmd_connect(args):
+    from . import connections
+    from .desktop import executable_for
+    ws = open_workspace(args.workspace)
+    if args.connect_command == 'list':
+        rows = connections.history(ws)
+        _print(rows, args.json, [f"{r['id']}  {r['client']:6s} {r['state']:11s} {r['project']}" for r in rows] or ['no connections'])
+        return EXIT_OK
+    if args.connect_command == 'undo':
+        result = connections.rollback(ws, args.id)
+        _print(result, args.json, [f"{result['id']} {result['state']}; restart the client"])
+        return EXIT_OK
+    plan = connections.preview(ws, args.client, args.project, args.source, args.prompts, args.proposals,
+                               args.client_bin or executable_for(args.client))
+    lines = [("create" if c.get('before') is None else "update") + f"\t{c['path']}" for c in plan.get('changes', [])]
+    lines += [plan['summary']] if args.dry_run and plan.get('summary') else []
+    lines += [plan.get('trust', '')]
+    if args.dry_run:
+        _print({k: v for k, v in plan.items() if k != 'changes'}, args.json, lines)
+        return EXIT_OK
+    result = connections.apply(ws, plan)
+    _print(result, args.json, lines + [f"connected ({result['id']}); undo: carry connect undo {result['id']}"])
+    return EXIT_OK
+
+
+def cmd_context(args):
+    from . import context
+    root = Path(args.vault or os.getcwd()).expanduser().resolve()
+    state = args.workspace or context.workspace_for(root)
+    ws = None
+    if state:
+        try:
+            ws = open_workspace(state)
+        except CarryError:
+            ws = None
+    print(context.pack(root, workspace=ws, max_chars=args.max_chars))
+    return EXIT_OK
+
+
 def cmd_harvest(args):
     from . import harvest
     ws = open_workspace(args.workspace)
+    if (args.install_schedule or args.remove_schedule) and sys.platform != 'darwin':
+        import shutil
+        line = f"30 21 * * * {shutil.which('carry') or 'carry'} --workspace {ws.state_dir} harvest"
+        _print(dict(cron=line), args.json, ['launchd is macOS only; add this line with `crontab -e`:', line])
+        return EXIT_OK
     if args.install_schedule or args.remove_schedule:
         import shutil, subprocess
         plist = Path.home() / 'Library' / 'LaunchAgents' / (harvest.LAUNCH_LABEL + '.plist')
@@ -281,7 +325,7 @@ def cmd_harvest(args):
         _print(dict(schedule=str(plist)), args.json, [f'nightly harvest at 21:30: {plist}'])
         return EXIT_OK
     report = harvest.run(ws, root=args.vault, dry_run=args.dry_run, include_filed=args.include_filed,
-                         limit=args.limit, min_idle=args.min_idle, language=args.language,
+                         limit=args.limit, min_idle=args.min_idle, language=args.language, which=args.extractor,
                          progress=(lambda m: None) if args.json else print)
     _print(report, args.json, [f"threads {report['threads']}: harvested {report['harvested']}, "
                                f"already filed {report['skipped_filed']}, active {report['skipped_active']}, "
@@ -429,6 +473,26 @@ def build_parser():
     vrb.add_argument('--id', required=True)
     vlt.set_defaults(func=cmd_vault)
 
+    cn = sub.add_parser("connect", help="connect Claude Code or Codex in a project folder to this workspace")
+    cnsub = cn.add_subparsers(dest="connect_command", required=True)
+    for client in ("claude", "codex"):
+        c = cnsub.add_parser(client, help=f"write {client} project settings for Carry (previewed, journaled, undoable)")
+        c.add_argument("project")
+        c.add_argument("--source", help="writable personal source for prompts/proposals")
+        c.add_argument("--prompts", action="store_true", help="also capture whole user prompts")
+        c.add_argument("--proposals", action="store_true", help="allow carry_propose drafts")
+        c.add_argument("--client-bin", help="client executable (auto-detected by default)")
+        c.add_argument("--dry-run", action="store_true", help="show the exact changes only")
+        c.set_defaults(client=client)
+    cnsub.add_parser("list", help="applied and rolled-back connections")
+    cnsub.add_parser("undo", help="roll back one connection").add_argument("id")
+    cn.set_defaults(func=cmd_connect)
+
+    cx = sub.add_parser("context", help="state pack for a new thread: recent commits, open items, drafts to review")
+    cx.add_argument("--vault", help="vault folder (default: current directory)")
+    cx.add_argument("--max-chars", type=int, default=7000)
+    cx.set_defaults(func=cmd_context)
+
     hv = sub.add_parser("harvest", help="draft notes from finished Claude Code / Codex threads of the vault")
     hv.add_argument("--vault", help="vault folder (default: the workspace's vault source)")
     hv.add_argument("--dry-run", action="store_true")
@@ -436,6 +500,7 @@ def build_parser():
     hv.add_argument("--limit", type=int, help="at most this many threads per run")
     hv.add_argument("--min-idle", type=int, default=30, help="skip threads written to in the last N minutes")
     hv.add_argument("--language", choices=("Turkish", "English"), help="language of the drafts (default: the vault's)")
+    hv.add_argument("--extractor", help="claude:<model> or codex:<model> (default: claude:sonnet, else codex:gpt-reserve)")
     hv.add_argument("--install-schedule", action="store_true", help="run every evening at 21:30 (launchd)")
     hv.add_argument("--remove-schedule", action="store_true")
     hv.set_defaults(func=cmd_harvest)

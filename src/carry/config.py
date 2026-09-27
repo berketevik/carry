@@ -37,6 +37,9 @@ class SourceConfig:
     extensions: tuple = (".md",)
     github: dict = field(default_factory=dict)
     exclude: tuple = ()
+    # False keeps this source's passages away from an external judge (Jev); they are
+    # returned unjudged and marked so, never sent.
+    external_judge: bool = True
 
     def validate(self):
         if not SOURCE_ID_RE.match(self.source_id or ""):
@@ -55,7 +58,8 @@ class SourceConfig:
     def to_json(self):
         return dict(source_id=self.source_id, root=str(self.root), writable=self.writable,
                     scope=self.scope, records_dir=self.records_dir,
-                    extensions=list(self.extensions), github=self.github, exclude=list(self.exclude))
+                    extensions=list(self.extensions), github=self.github, exclude=list(self.exclude),
+                    external_judge=self.external_judge)
 
     @staticmethod
     def from_json(data):
@@ -64,7 +68,8 @@ class SourceConfig:
             writable=bool(data.get("writable", False)), scope=data.get("scope", "personal"),
             records_dir=data.get("records_dir", "carry"),
             extensions=tuple(data.get("extensions", (".md",))),
-            github=dict(data.get("github", {})), exclude=tuple(data.get("exclude", ())))
+            github=dict(data.get("github", {})), exclude=tuple(data.get("exclude", ())),
+            external_judge=bool(data.get("external_judge", True)))
 
 
 @dataclass(frozen=True)
@@ -102,6 +107,7 @@ class RetrievalConfig:
     reranker: str = "off"            # off | cross | jev (TypeSafe API, opt-in)
     reranker_model: str = "BAAI/bge-reranker-v2-m3"
     reranker_min_score: float = -4.0
+    judge_model: str = "jev-1.13.0"  # pinned: jev-latest may change behaviour without a code change
     vector_min_score: float = 0.45
     auto_refresh: bool = True
     refresh_seconds: int = 60

@@ -32,7 +32,7 @@ TYPES = ('decision', 'fact', 'preference', 'open_item')
 WRITE_TOOLS = ('Write', 'Edit', 'MultiEdit', 'NotebookEdit')
 
 SYSTEM = """You extract what deserves to become a note in the owner's personal knowledge vault from a chat between the owner and an AI assistant. Notes are in {language}.
-Return ONLY JSON: {{"items": [{{"type": "decision|fact|preference|open_item", "statement": "<one self-contained sentence in {language}>", "exchange": <i>, "quote": "<verbatim 5-30 words copied exactly from that exchange>"}}]}}
+Return ONLY JSON: {{"items": [{{"type": "decision|fact|preference|open_item", "statement": "<one self-contained sentence in {language}>", "exchange": <i>, "quote": "<verbatim 5-30 words copied exactly from that exchange>", "keywords": ["<3-6 short search terms, in {language} and in English>"]}}]}}
 Include: decisions the owner made or approved; durable facts about the owner, devices, projects, people, systems, or measured results and configurations that later work depends on; stated preferences or working rules; open items still pending at the end.
 Exclude: transient chatter, the assistant's intermediate reasoning, anything superseded later in the same chat (keep the final state), generic knowledge, duplicates. Never state anything that is not supported by the quote. If nothing is durable, return {{"items": []}}."""
 
@@ -44,10 +44,10 @@ VERIFY = {
 }
 
 LABELS = {
-    'Turkish': dict(new='Yeni', conflict='Çelişki adayları (incele)', review='İncelenecek', known='Zaten kayıtlı',
+    'Turkish': dict(new='Yeni', conflict='Çelişki adayları (incele)', review='İncelenecek', known='Zaten kayıtlı', resolved='Yapılmış görünüyor',
                     assistant='asistanın önerisi/sonucu; sahibi onaylamadı', decision='karar', fact='olgu',
                     preference='tercih', open_item='açık iş', unchecked='vault ile karşılaştırılmadı (Jev anahtarı yok)'),
-    'English': dict(new='New', conflict='Conflict candidates (review)', review='To review', known='Already recorded',
+    'English': dict(new='New', conflict='Conflict candidates (review)', review='To review', known='Already recorded', resolved='Apparently done',
                     assistant="assistant's suggestion or result; not confirmed by the owner", decision='decision',
                     fact='fact', preference='preference', open_item='open item',
                     unchecked='not compared with the vault (no Jev key)'),
@@ -229,8 +229,9 @@ def provenance(items, exchanges):
             dropped += 1
             continue
         seen.add(digest)
+        keywords = [k.strip() for k in (it.get('keywords') or []) if isinstance(k, str) and k.strip()][:6]
         kept.append(dict(type=it['type'], statement=it['statement'].strip(), quote=it['quote'].strip(),
-                         speaker=where[0], exchange=where[1], hash=digest))
+                         speaker=where[0], exchange=where[1], hash=digest, keywords=keywords))
     return kept, dropped
 
 
@@ -241,14 +242,19 @@ def verify(item, exchanges, key):
                            'quote': mask(item['quote'])[0], 'quote_speaker': item['speaker']},
              'cited_exchange': {'owner': e['user'][:4000], 'assistant': e['assistant'][:4000]},
              'later_owner_messages': later}
-    body = dict(state=state, model='jev-latest', questions={k: dict(type='noul', instructions=v) for k, v in VERIFY.items()})
+    body = dict(state=state, model=jev.DEFAULT_MODEL, questions={k: dict(type='noul', instructions=v) for k, v in VERIFY.items()})
     answers = jev.call(body, key)['answers']
     return {k: jev.probability(answers[k]['noul']) for k in VERIFY}
 
 
 def compare(item, workspace, key):
+    """Candidates come unjudged: recall's judge asks whether a passage answers a question, and a
+    statement is not one. The same/contradicts/done questions below decide instead."""
+    from dataclasses import replace
     from .recall import recall
-    found = recall(workspace, item['statement'], queries=[item['quote'][:200]])
+    unjudged = replace(workspace, retrieval=replace(workspace.retrieval, reranker='off', vector_min_score=-1.0))
+    extra = [item['quote'][:200]] + [k for k in (item.get('keywords') or []) if isinstance(k, str)][:3]
+    found = recall(unjudged, item['statement'], queries=extra)
     evidence = [x for x in found.get('evidence', []) if 'chat-raw' not in x['path'] and '/harvest/' not in x['path']][:6]
     if not evidence:
         return 'new', None
@@ -258,9 +264,15 @@ def compare(item, workspace, key):
     for i in range(len(evidence)):
         qs[f'p{i + 1}_same'] = dict(type='noul', instructions=f"Does passage p{i + 1} already state the candidate's fact or decision (possibly in other words)?")
         qs[f'p{i + 1}_contra'] = dict(type='noul', instructions=f'Does passage p{i + 1} state something that contradicts the candidate (a different value, date or decision for the same thing)?')
-    answers = jev.call(dict(state=state, model='jev-latest', questions=qs), key)['answers']
+        if item['type'] == 'open_item':
+            qs[f'p{i + 1}_done'] = dict(type='noul', instructions=f"Does passage p{i + 1} report that the candidate's open item has since been done, resolved or dropped?")
+    answers = jev.call(dict(state=state, model=jev.DEFAULT_MODEL, questions=qs), key)['answers']
     same = max((jev.probability(answers[f'p{i + 1}_same']['noul']), evidence[i]['path']) for i in range(len(evidence)))
     contra = max((jev.probability(answers[f'p{i + 1}_contra']['noul']), evidence[i]['path']) for i in range(len(evidence)))
+    if item['type'] == 'open_item':
+        done = max((jev.probability(answers[f'p{i + 1}_done']['noul']), evidence[i]['path']) for i in range(len(evidence)))
+        if done[0] >= 0.5:
+            return 'resolved', done[1]
     if same[0] >= 0.5:
         return 'known', same[1]
     if contra[0] >= 0.5:
@@ -310,8 +322,9 @@ def write_outputs(root, client, thread_id, exchanges, groups, meta, language, to
     for key in ('new', 'conflict', 'review'):
         if groups.get(key):
             lines += [f'## {L[key]}', ''] + [item_line(it) for it in groups[key]] + ['']
-    if groups.get('known'):
-        lines += [f'## {L["known"]}', ''] + [f'- {it["statement"]} → {_link(it["match"], root)}' for it in groups['known']] + ['']
+    for key in ('resolved', 'known'):
+        if groups.get(key):
+            lines += [f'## {L[key]}', ''] + [f'- {it["statement"]} → {_link(it["match"], root)}' for it in groups[key]] + ['']
     if meta.get('compared') is False:
         lines += [f'*{L["unchecked"]}*', '']
     digest_rel = f'+/{today} — harvest {client} {short}.md'
@@ -381,7 +394,7 @@ def run(workspace, root=None, dry_run=False, include_filed=False, limit=None, mi
             for window in _windows(context + fresh):
                 raw_items += extract_window(window, language, chosen)
             items, dropped = provenance(raw_items, exchanges)
-            groups = dict(new=[], conflict=[], review=[], known=[])
+            groups = dict(new=[], conflict=[], review=[], resolved=[], known=[])
             for it in items:
                 scores = verify(it, exchanges, key) if key else None
                 verdict = classify(it, scores)

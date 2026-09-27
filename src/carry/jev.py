@@ -24,6 +24,7 @@ KEYCHAIN = ('carry-typesafe', 'api')
 MIN_ANSWER = 0.5        # measured flat between 0.3 and 0.7 on the 45-case evaluation
 MAX_INJECTION = 0.7     # TypeSafe's RAG passage cookbook threshold
 TIMEOUT = 15
+DEFAULT_MODEL = 'jev-1.13.0'
 
 ANSWERS = ('Does passage {p} state information that answers the question? Being on the same topic '
            'is not enough; it must state the specific fact the question asks for.')
@@ -62,7 +63,7 @@ def store_key(key):
                     '-w', key.strip()], capture_output=True, check=True, timeout=10)
 
 
-def request(query, rows):
+def request(query, rows, model=DEFAULT_MODEL):
     ids = [f'p{i + 1}' for i in range(len(rows))]
     state = {'question': mask(query)[0], 'passages': {
         pid: {'source': mask(row.get('path', ''))[0], 'section': mask(row.get('heading', ''))[0], 'text': mask(row.get('text', ''))[0]}
@@ -74,7 +75,7 @@ def request(query, rows):
     questions['best'] = dict(type='choice', instructions=BEST, criteria=dict(
         {pid: f'Passage {pid} ({state["passages"][pid]["source"]})' for pid in ids},
         none='No passage answers the question.'))
-    return ids, dict(state=state, model='jev-latest', questions=questions)
+    return ids, dict(state=state, model=model, questions=questions)
 
 
 def call(body, key, timeout=TIMEOUT):
@@ -137,7 +138,7 @@ def rerank(query, rows, config, diagnostics):
         if not key:
             raise JevUnavailable('no_api_key')
         started = time.monotonic()
-        ids, body = request(query, rows)
+        ids, body = request(query, rows, getattr(config, 'judge_model', DEFAULT_MODEL) or DEFAULT_MODEL)
         response = call(body, key)
         answers = validated_answers(response, ids)
         best = answers['best'].get('probabilities', {})

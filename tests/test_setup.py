@@ -53,6 +53,24 @@ class SetupTest(unittest.TestCase):
             self.assertTrue(setup_wizard.icloud_synced(home / 'Documents' / 'CarryState'))
             self.assertFalse(setup_wizard.icloud_synced(home / 'CarryState'))
 
+    def test_connect_previews_applies_lists_and_undoes(self):
+        ws_dir, proj = self.base / 'ws', self.base / 'proj'
+        proj.mkdir()
+        with redirect_stdout(io.StringIO()):
+            cli.main(['--workspace', str(ws_dir), 'init', '--embedding', 'hashing'])
+            with patch('carry.capture.probe_client', return_value=dict(state='supported', version='9')):
+                self.assertEqual(cli.main(['--workspace', str(ws_dir), 'connect', 'claude', str(proj), '--dry-run']), 0)
+                self.assertFalse((proj / '.mcp.json').exists())
+                self.assertEqual(cli.main(['--workspace', str(ws_dir), 'connect', 'claude', str(proj)]), 0)
+        self.assertTrue((proj / '.mcp.json').exists())
+        out = io.StringIO()
+        with redirect_stdout(out):
+            cli.main(['--workspace', str(ws_dir), '--json', 'connect', 'list'])
+        ident = json.loads(out.getvalue())[0]['id']
+        with redirect_stdout(io.StringIO()):
+            cli.main(['--workspace', str(ws_dir), 'connect', 'undo', ident])
+        self.assertFalse((proj / '.mcp.json').exists())
+
     def test_banner_rows_align(self):
         rows = setup_wizard.render(setup_wizard.BANNER)
         self.assertEqual(len(rows), 5)

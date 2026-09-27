@@ -246,6 +246,7 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
     # 4. Search setting
     step(4, total, 'Arama ayarı')
     has_key = bool(jev.api_key())
+    keychain = sys.platform == 'darwin'
     options = [('keyword_assistant', 'Cihazda model yok · asistanın küçük modeli süzer (varsayılan)'),
                ('keyword_jev', 'Cihazda model yok · TypeSafe Jev süzer (en hızlı, anahtar gerekir'
                                + (', Keychain\'de var)' if has_key else ')')),
@@ -253,7 +254,9 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
     mode = 'keyword_assistant' if assume_yes else p.choose('Hangisi?', options, 2 if has_key else 1)
     if mode == 'keyword_jev' and not has_key:
         say(paint('  Soru ve en fazla 32 aday parça (gizli bilgiler maskelenerek) TypeSafe\'e (ABD) gider.', DIM))
-        key = p.secret('TypeSafe API anahtarı (görünmez; boş = vazgeç):')
+        key = p.secret('TypeSafe API anahtarı (görünmez; boş = vazgeç):') if keychain else ''
+        if not keychain:
+            warn('Keychain yok: anahtarı TYPESAFE_API_KEY ortam değişkeni olarak tanımlayıp setup\'ı yeniden çalıştırın.')
         if key:
             jev.store_key(key)
             ok('Anahtar Keychain\'e kaydedildi.')
@@ -300,7 +303,7 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
                 ok(f'Özel repo oluşturuldu ve ilk commit gönderildi: {name}')
             except (OSError, subprocess.CalledProcessError) as exc:
                 warn('Yedek repo oluşturulamadı: ' + (getattr(exc, 'stderr', '') or str(exc)).strip()[:160])
-    if project and kind == 'new' and not assume_yes and p.yes(
+    if project and kind == 'new' and not assume_yes and sys.platform == 'darwin' and p.yes(
             'Her akşam 21:30\'da Claude Code / Codex sohbetlerinden taslak not çıkarılsın mı (inbox: +/)?', default=False):
         from . import harvest
         import subprocess

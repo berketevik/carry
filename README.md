@@ -9,15 +9,16 @@ deleted and rebuilt at any time. Client models receive requested evidence.
 If you opt into TypeSafe Jev, the question and up to 32 candidate passages also
 go to TypeSafe for relevance judging; secret masking is best effort.
 
-**Status: internal pilot under verification.** Local folders and read-only GitHub
-repositories, background synchronization/indexing, multilingual search with an
-optional relevance model, and a native macOS interface. Existing capture/review
-features remain opt-in. See [pilot setup and limits](docs/PILOT.md).
+**Status: internal pilot under verification.** Install from the repository and run
+`carry setup` in the terminal: workspace, a new vault or an existing folder,
+optional read-only GitHub repositories, search, client wiring, index. By default
+nothing runs on the device except a SQLite keyword index; relevance is judged by
+the assistant's small model or, with a key, by TypeSafe Jev. `carry harvest` turns
+finished chats into draft notes, and `carry context` gives a new thread the current
+state. Second-machine acceptance is still a user pilot check.
 
-The full Apple silicon package includes Python, the official GitHub CLI, Ollama
-and Python search dependencies. Models download on explicit setup. This pilot
-is not Developer ID signed/notarized; second-machine acceptance is still a user
-pilot check, not a completed automated test.
+The native macOS app (`macos/`, `scripts/build_macos.py`, [app guide](docs/PILOT.md))
+is optional and no longer the primary path; it is not Developer ID signed.
 
 ## Install and set up (recommended)
 

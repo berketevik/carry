@@ -88,6 +88,28 @@ class HarvestTest(unittest.TestCase):
         self.assertIn('[[Agent]]', digest)
         self.assertIn('## Already recorded', digest)
 
+    def test_an_open_item_already_done_in_the_vault_is_separated(self):
+        self.thread('hhhh8888', [('Run the playground tests later.', 'Not run yet.')])
+        item = dict(type='open_item', statement='The playground tests still need to run.', exchange=1, quote='Run the playground tests later')
+        with self.items(item), patch.object(jev, 'api_key', return_value='k'), \
+                patch.object(harvest, 'verify', return_value=dict(supported=0.9, owner_stated=0.9, durable=0.9, withdrawn=0.0)), \
+                patch.object(harvest, 'compare', return_value=('resolved', str(self.root / 'log/Tests.md'))):
+            report = harvest.run(self.ws, which='claude:sonnet', progress=lambda m: None)
+        digest = (self.root / report['digests'][0]).read_text()
+        self.assertIn('## Apparently done', digest)
+        self.assertNotIn('## New', digest)
+
+    def test_compare_asks_whether_an_open_item_was_done(self):
+        sent = []
+        def fake(body, key, timeout=jev.TIMEOUT):
+            sent.append(body)
+            return dict(answers={k: dict(type='noul', noul=(0.9 if k.endswith('_done') else 0.05)) for k in body['questions']})
+        evidence = dict(evidence=[dict(path='log/Tests.md', text='The playground tests ran via the API.')])
+        with patch('carry.recall.recall', return_value=evidence), patch.object(jev, 'call', side_effect=fake):
+            verdict, match = harvest.compare(dict(type='open_item', statement='Tests pending.', quote='pending'), self.ws, 'k')
+        self.assertEqual((verdict, match), ('resolved', 'log/Tests.md'))
+        self.assertIn('p1_done', sent[0]['questions'])
+
     def test_filed_and_active_threads_are_skipped_and_reruns_are_idempotent(self):
         self.thread('dddd4444', [('Save this.', 'Saved to notes.')], writes='notes/Plan.md')
         self.thread('eeee5555', [('Still talking.', 'Yes.')], age=60)

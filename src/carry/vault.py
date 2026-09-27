@@ -80,7 +80,23 @@ def _wiring(workspace):
     claude = _json({'mcpServers': {'carry': dict(type='stdio', command=sys.executable, args=args('claude'))}})
     codex = ('[mcp_servers.carry]\ncommand = ' + json.dumps(sys.executable) +
              '\nargs = ' + json.dumps(args('codex')) + '\n')
-    return {'.mcp.json': claude, '.codex/config.toml': codex}
+    # Device-local pointer for `carry context` run inside the vault; gitignored like the wiring.
+    local = _json({'workspace': str(workspace)})
+    return {'.mcp.json': claude, '.codex/config.toml': codex, '.carry/local.json': local,
+            '.claude/settings.local.json': _claude_settings(workspace, capture=False)}
+
+
+def _session_start(workspace):
+    return [{'hooks': [dict(type='command', timeout=10, command=shlex.join(
+        [sys.executable, '-I', '-m', 'carry.cli', '--workspace', str(workspace), 'context']))]}]
+
+
+def _claude_settings(workspace, capture):
+    hooks = {'SessionStart': _session_start(workspace)}
+    if capture:
+        command = shlex.join([sys.executable, '-I', '-m', 'carry.hook', '--workspace', str(workspace), '--client', 'claude'])
+        hooks['UserPromptSubmit'] = [{'hooks': [dict(type='command', command=command, timeout=10)]}]
+    return _json({'hooks': hooks})
 
 
 def _hooks(workspace):
@@ -88,7 +104,7 @@ def _hooks(workspace):
         command = shlex.join([sys.executable, '-I', '-m', 'carry.hook', '--workspace', str(workspace),
                               '--client', client])
         return _json({'hooks': {'UserPromptSubmit': [{'hooks': [dict(type='command', command=command, timeout=10)]}]}})
-    return {'.claude/settings.local.json': handlers('claude'), '.codex/hooks.json': handlers('codex')}
+    return {'.claude/settings.local.json': _claude_settings(workspace, capture=True), '.codex/hooks.json': handlers('codex')}
 
 
 def _has_user_files(target):

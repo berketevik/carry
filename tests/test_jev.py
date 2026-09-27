@@ -71,6 +71,43 @@ class JevTest(WorkspaceCase):
         texts = ' '.join(p['text'] for p in sent[0]['state']['passages'].values())
         self.assertNotIn('ghp_abcdefghijklmnopqrstuvwxyz0123456789', texts)
 
+    def _send_capture(self):
+        sent = []
+        def fake(body, key, timeout=jev.TIMEOUT):
+            sent.append(body)
+            n = len(body['state']['passages'])
+            return answers([0.9] * n, dict({f'p{i + 1}': 1 / n for i in range(n)}, none=0.0))
+        return sent, fake
+
+    def test_secret_notes_never_leave_and_come_back_marked_unjudged(self):
+        path = self.corpus / 'notes' / 'Vault key.md'
+        path.write_text('---\ntype: fact\nsummary: "budget vault"\nsensitivity: secret\ncreated: 2026-09-01\n---\n# Q4 budget vault\nThe Q4 budget vault code is 7788.')
+        build(self.workspace)
+        sent, fake = self._send_capture()
+        with patch.object(jev, 'call', side_effect=fake):
+            result = recall(self.workspace, 'Q4 budget')
+        texts = ' '.join(p['text'] for b in sent for p in b['state']['passages'].values())
+        self.assertNotIn('7788', texts)
+        held = [e for e in result['evidence'] if e['path'].endswith('Vault key.md')]
+        self.assertTrue(held)
+        self.assertGreaterEqual(result['diagnostics']['local_only_unjudged'], 1)
+
+    def test_a_source_can_opt_out_of_the_external_judge(self):
+        ws = self.workspace.with_sources([replace(s, external_judge=False) if s.source_id == 'corpus' else s
+                                          for s in self.workspace.sources]).save()
+        sent, fake = self._send_capture()
+        with patch.object(jev, 'call', side_effect=fake):
+            result = recall(Workspace.load(ws.state_dir), 'Q4 budget')
+        self.assertEqual(sent, [])
+        self.assertTrue(result['evidence'])
+        self.assertEqual(Workspace.load(ws.state_dir).source('corpus').external_judge, False)
+
+    def test_model_is_pinned(self):
+        sent, fake = self._send_capture()
+        with patch.object(jev, 'call', side_effect=fake):
+            recall(self.workspace, 'Q4 budget')
+        self.assertEqual(sent[0]['model'], 'jev-1.13.0')
+
     def test_injected_passage_is_excluded(self):
         def fake(body, key, timeout=jev.TIMEOUT):
             n = len(body['state']['passages'])

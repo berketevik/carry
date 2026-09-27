@@ -161,7 +161,16 @@ POOL_MAX = 32
 MAX_EXTRA_QUERIES = 4
 
 
-def search(workspace, query, con, limit, source_ids=None, diagnostics=None, eligible=None, queries=()):
+def _local_only(workspace, files, row):
+    """Passages an external judge must never see: a source opted out, or a secret note."""
+    source = next((s for s in workspace.sources if s.source_id == row["source_id"]), None)
+    if source is not None and not source.external_judge:
+        return True
+    meta = (files or {}).get((row["source_id"], row["path"]), {}).get("metadata") or {}
+    return str(meta.get("sensitivity", "")).lower() == "secret"
+
+
+def search(workspace, query, con, limit, source_ids=None, diagnostics=None, eligible=None, queries=(), files=None):
     """Candidates for the query, pooled with those of the caller's keyword variants, then judged
     once against the original question."""
     candidates = _candidates(workspace, query, con, limit, source_ids, diagnostics, eligible)
@@ -178,6 +187,13 @@ def search(workspace, query, con, limit, source_ids=None, diagnostics=None, elig
     # Do not call a lexical overlap a verified answer; final grounding remains
     # the assistant's responsibility. A configured judge (cross encoder or Jev) adds a gate.
     from .rerank import rerank
+    if workspace.retrieval.reranker == "jev":
+        held = [r for r in candidates if _local_only(workspace, files, r)]
+        if held:
+            diagnostics["local_only_unjudged"] = len(held)
+            sent = [r for r in candidates if not _local_only(workspace, files, r)]
+            judged = rerank(query, sent, workspace.retrieval, diagnostics) if sent else []
+            return judged + [dict(r, judged=False) for r in held]
     return rerank(query, candidates, workspace.retrieval, diagnostics)
 
 
@@ -321,7 +337,7 @@ def recall(workspace, query, source_ids=None, budget=None, include_history=False
                 if not source_ids or f['source_id'] in source_ids)
             candidates = search(workspace, query, con, limits['top_k'] * 3,
                                 source_ids=source_ids, diagnostics=diagnostics, eligible=eligible,
-                                queries=queries or ())
+                                queries=queries or (), files=files)
     except (OSError, sqlite3.Error, ValueError) as exc:
         return dict(ok=False, status="unavailable", error="index_read_failed:" + type(exc).__name__,
                     evidence=[], sources=[], budget=limits,
