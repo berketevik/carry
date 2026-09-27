@@ -8,6 +8,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 from . import index as index_module
@@ -376,7 +377,8 @@ def cmd_harvest(args):
                          limit=args.limit, min_idle=args.min_idle, language=args.language, which=args.extractor,
                          thread=args.thread, min_exchanges=args.min_exchanges,
                          progress=(lambda m: None) if args.json else print)
-    _print(report, args.json, [f"threads {report['threads']}: harvested {report['harvested']}, "
+    stamp = time.strftime('%Y-%m-%d %H:%M ') if args.thread else ''  # hook runs share one log
+    _print(report, args.json, [f"{stamp}threads {report['threads']}: harvested {report['harvested']}, "
                                f"already filed {report['skipped_filed']}, active {report['skipped_active']}, "
                                f"pending {report['pending']}"] + [f'draft: {d}' for d in report['digests']])
     return EXIT_FAILED if report['pending'] else EXIT_OK

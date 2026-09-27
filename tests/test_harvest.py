@@ -47,6 +47,16 @@ class HarvestTest(unittest.TestCase):
     def items(self, *items):
         return patch.object(harvest, 'extract_window', return_value=list(items))
 
+    def test_thread_with_nothing_to_file_leaves_no_draft(self):
+        self.thread('eeee5555', [('Just say ok.', 'ok')])
+        with self.items(), patch.object(jev, 'api_key', return_value=None):
+            report = harvest.run(self.ws, which='claude:sonnet', progress=lambda m: None)
+        self.assertEqual((report['harvested'], report['digests']), (1, []))
+        self.assertEqual(list((self.root / '+').glob('*harvest*')), [])
+        with self.items() as extract, patch.object(jev, 'api_key', return_value=None):
+            harvest.run(self.ws, which='claude:sonnet', progress=lambda m: None)
+        extract.assert_not_called()
+
     def test_digest_and_raw_are_drafts_with_verbatim_quotes_only(self):
         self.thread('aaaa1111', [('We will ship the pilot on 15 October, decided.', 'Noted: the pilot ships on 15 October.')])
         good = dict(type='decision', statement='The pilot ships on 15 October.', exchange=1, quote='ship the pilot on 15 October')

@@ -104,7 +104,7 @@ def read_thread(client, path, root):
     turns, cur, filed = [], None, False
     notes = [str(Path(root) / d) for d in ('notes', 'log')]
     pending_writes, failed = set(), set()  # a denied or failed write did not file anything
-    for line in open(path, errors='ignore'):
+    for line in Path(path).read_text(errors='ignore').splitlines():
         try:
             d = json.loads(line)
         except ValueError:
@@ -430,6 +430,12 @@ def run(workspace, root=None, dry_run=False, include_filed=False, limit=None, mi
                 groups[verdict].append(it)
             meta = dict(extractor=chosen, judge='jev' if key else None, compared=bool(key),
                         dropped_without_quote=dropped, thread=entry_key, exchanges=[fresh[0]['i'], fresh[-1]['i']])
+            if not any(groups.values()):
+                # Nothing worth reviewing: no empty draft in the inbox.
+                state[entry_key] = dict(mtime=mtime, status='done', exchanges_done=len(exchanges), digest=None)
+                report['harvested'] += 1
+                progress(f'harvested {client} {thread_id[:8]}: nothing to file')
+                continue
             raw_rel, digest_rel = write_outputs(root, client, thread_id, exchanges, groups, meta, language)
         except (CarryError, jev.JevUnavailable, subprocess.SubprocessError, OSError) as exc:
             report['pending'] += 1
