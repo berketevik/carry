@@ -81,7 +81,7 @@ Carry extracts decisions, facts, preferences and unfinished work. It saves draft
 
 **What is sent outside your Mac?** Extraction uses Claude Code if available, otherwise Codex, and sends conversation text through that client. It uses your existing assistant account.
 
-If a TypeSafe key is available, chat-note processing also uses **Jev**, TypeSafe’s online checking service. It sends candidate statements, supporting conversation text and retrieved note passages for checks. This happens independently of the search checker selected in Settings.
+If you chose **TypeSafe Jev** as the checker in Settings → Search, chat-note processing also uses it: candidate statements, supporting conversation text and retrieved note passages are sent to TypeSafe for checks. Without Jev chosen, nothing goes to TypeSafe, even if a key is saved.
 
 ## Settings
 
@@ -130,7 +130,7 @@ Use **Save changes** (⌘S) for advanced edits.
 | **Leave out of search** | Excludes comma-separated paths or patterns, such as `+, x, *_index.md`. Use it for material your assistant should not retrieve through search. |
 | **List searchable files** | Shows what search includes. Use it to check exclusions. |
 
-Text goes to TypeSafe only when you choose **TypeSafe Jev** as the checker; then passages from every folder can be checked, except notes marked `sensitivity: secret`, which are never sent. Without Jev, search sends nothing to TypeSafe. Chat-note processing uses Jev whenever a TypeSafe key is saved (see Chat notes).
+Text goes to TypeSafe only when you choose **TypeSafe Jev** as the checker; then passages from every folder can be checked, except notes marked `sensitivity: secret`, which are never sent. Without Jev, search sends nothing to TypeSafe. The same rule applies to chat notes.
 
 Under **Advanced sources**, you can add a GitHub repository as a read-only knowledge source. Carry keeps a local copy and never pushes to that source. Custom folder settings let you choose a short identifier and permission to store Carry records.
 
@@ -333,7 +333,7 @@ Carry; kararları, bilgileri, tercihleri ve yarım kalan işleri ayıklar. Tasla
 
 **Mac’inizden hangi içerik çıkar?** Not çıkarma işlemi, varsa Claude Code’u, yoksa Codex’i kullanır. Konuşma metni bu araç üzerinden işlenir; mevcut asistan hesabınız kullanılır.
 
-TypeSafe anahtarı varsa sohbet notları ayrıca TypeSafe’in çevrimiçi kontrol hizmeti **Jev** ile denetlenir. Aday ifadeler, bunları destekleyen konuşma bölümleri ve aramada bulunan not parçaları gönderilir. Bu işlem, Ayarlar’da arama sonuçlarını kimin kontrol edeceğine dair seçiminizden bağımsızdır.
+Ayarlar → Arama’da kontrolcü olarak **TypeSafe Jev**’i seçtiyseniz sohbet notları da onu kullanır: aday ifadeler, bunları destekleyen konuşma bölümleri ve aramada bulunan not parçaları kontrol için TypeSafe’e gönderilir. Jev seçili değilse, anahtar kayıtlı olsa bile TypeSafe’e hiçbir şey gitmez.
 
 ## Ayarlar
 
@@ -382,7 +382,7 @@ Gelişmiş ayarları **Değişiklikleri kaydet** (⌘S) ile kaydedin.
 | **Aramaya dahil etme** | `+, x, *_index.md` gibi yolları veya desenleri virgülle ayırarak yazın. Asistanın arama üzerinden almaması gereken içerik için kullanın. |
 | **Aranabilir dosyaları listele** | Aramaya nelerin dahil olduğunu gösterir. Hariç tutma ayarlarınızı kontrol etmek için kullanın. |
 
-Metin TypeSafe’e yalnızca kontrolcü olarak **TypeSafe Jev**’i seçtiğinizde gider; o zaman bütün klasörlerdeki bölümler kontrol edilebilir, yalnızca `sensitivity: secret` işaretli notlar asla gönderilmez. Jev seçili değilse arama TypeSafe’e hiçbir şey göndermez. Sohbet notları ise kayıtlı bir TypeSafe anahtarı olduğunda Jev’i kullanır (Sohbet notları bölümüne bakın).
+Metin TypeSafe’e yalnızca kontrolcü olarak **TypeSafe Jev**’i seçtiğinizde gider; o zaman bütün klasörlerdeki bölümler kontrol edilebilir, yalnızca `sensitivity: secret` işaretli notlar asla gönderilmez. Jev seçili değilse arama TypeSafe’e hiçbir şey göndermez. Aynı kural sohbet notları için de geçerlidir.
 
 **Gelişmiş kaynaklar** altında bir GitHub deposunu salt okunur bilgi kaynağı olarak ekleyebilirsiniz. Carry yerel bir kopya tutar; bu kaynağa değişiklik göndermez. Özel klasör ayarlarında kısa bir kimlik ve Carry kayıtlarının yazılmasına izin verilip verilmeyeceğini seçebilirsiniz.
 

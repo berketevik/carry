@@ -31,6 +31,11 @@ class HarvestTest(unittest.TestCase):
         self.project = harvest.claude_project_dir(self.root); self.project.mkdir(parents=True)
         short = patch.object(harvest, 'MIN_EXCHANGES', 1); short.start(); self.addCleanup(short.stop)
 
+    def jev_on(self):
+        """Jev chosen as the checker in search: the only case harvest uses it."""
+        from dataclasses import replace
+        self.ws = replace(self.ws, retrieval=replace(self.ws.retrieval, reranker='jev')).save()
+
     def thread(self, name, exchanges, writes=None, age=3600):
         lines = []
         for user, assistant in exchanges:
@@ -79,6 +84,7 @@ class HarvestTest(unittest.TestCase):
         item = dict(type='decision', statement='Only selected ECC skills will be installed.', exchange=1,
                     quote='installing only selected skills')
         scores = dict(supported=0.9, owner_stated=0.06, durable=0.8, withdrawn=0.02)
+        self.jev_on()
         with self.items(item), patch.object(jev, 'api_key', return_value='k'), \
                 patch.object(harvest, 'verify', return_value=scores), patch.object(harvest, 'compare', return_value=('new', None)):
             report = harvest.run(self.ws, which='claude:sonnet', progress=lambda m: None)
@@ -90,6 +96,7 @@ class HarvestTest(unittest.TestCase):
         a = dict(type='fact', statement='The agent runs model-b.', exchange=1, quote='The agent now runs model-b')
         b = dict(type='fact', statement='The vault has 445 notes.', exchange=1, quote='the vault has 445 notes')
         verdicts = iter([('conflict', str(self.root / 'notes/Agent.md')), ('known', str(self.root / 'notes/Vault.md'))])
+        self.jev_on()
         with self.items(a, b), patch.object(jev, 'api_key', return_value='k'), \
                 patch.object(harvest, 'verify', return_value=dict(supported=0.9, owner_stated=0.9, durable=0.9, withdrawn=0.0)), \
                 patch.object(harvest, 'compare', side_effect=lambda *x: next(verdicts)):
@@ -102,6 +109,7 @@ class HarvestTest(unittest.TestCase):
     def test_an_open_item_already_done_in_the_vault_is_separated(self):
         self.thread('hhhh8888', [('Run the playground tests later.', 'Not run yet.')])
         item = dict(type='open_item', statement='The playground tests still need to run.', exchange=1, quote='Run the playground tests later')
+        self.jev_on()
         with self.items(item), patch.object(jev, 'api_key', return_value='k'), \
                 patch.object(harvest, 'verify', return_value=dict(supported=0.9, owner_stated=0.9, durable=0.9, withdrawn=0.0)), \
                 patch.object(harvest, 'compare', return_value=('resolved', str(self.root / 'log/Tests.md'))):
@@ -194,3 +202,16 @@ class HarvestTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class HarvestJevRuleTest(HarvestTest):
+    def test_a_saved_key_is_not_used_unless_jev_is_the_chosen_checker(self):
+        self.thread('kkkk1111', [('The agent now runs model-b.', 'Noted.')])
+        item = dict(type='fact', statement='The agent runs model-b.', exchange=1, quote='The agent now runs model-b')
+        self.assertNotEqual(self.ws.retrieval.reranker, 'jev')
+        with self.items(item), patch.object(jev, 'api_key', return_value='k'), \
+                patch.object(harvest, 'verify', side_effect=AssertionError('Jev must not be called')), \
+                patch.object(harvest, 'compare', side_effect=AssertionError('Jev must not be called')):
+            report = harvest.run(self.ws, which='claude:sonnet', progress=lambda m: None)
+        digest = (self.root / report['digests'][0]).read_text()
+        self.assertIn('"judge": null', digest)

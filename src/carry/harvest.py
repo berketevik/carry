@@ -46,11 +46,11 @@ VERIFY = {
 LABELS = {
     'Turkish': dict(new='Yeni', conflict='Çelişki adayları (incele)', review='İncelenecek', known='Zaten kayıtlı', resolved='Yapılmış görünüyor',
                     assistant='asistanın önerisi/sonucu; sahibi onaylamadı', decision='karar', fact='olgu',
-                    preference='tercih', open_item='açık iş', unchecked='vault ile karşılaştırılmadı (Jev anahtarı yok)'),
+                    preference='tercih', open_item='açık iş', unchecked='vault ile karşılaştırılmadı (Jev kontrolü kapalı)'),
     'English': dict(new='New', conflict='Conflict candidates (review)', review='To review', known='Already recorded', resolved='Apparently done',
                     assistant="assistant's suggestion or result; not confirmed by the owner", decision='decision',
                     fact='fact', preference='preference', open_item='open item',
-                    unchecked='not compared with the vault (no Jev key)'),
+                    unchecked='not compared with the vault (Jev check is off)'),
 }
 
 norm = lambda s: re.sub(r'\s+', ' ', s or '').strip().lower()
@@ -374,7 +374,8 @@ def run(workspace, root=None, dry_run=False, include_filed=False, limit=None, mi
     if language is None:
         language = draft_language(workspace, root)
     state = _state(workspace)
-    key = jev.api_key()
+    # One rule for every Jev use: only when the owner chose Jev as the checker in search.
+    key = jev.api_key() if workspace.retrieval.reranker == 'jev' else None
     report = dict(threads=0, harvested=0, skipped_filed=0, skipped_active=0, pending=0, items=0, digests=[])
     if thread is not None:
         one = thread_from_path(thread, root)
