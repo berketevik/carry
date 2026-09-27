@@ -14,8 +14,11 @@ from carry.config import Workspace
 from carry.errors import CarryError
 
 
-def claude_line(kind, content):
-    return json.dumps({'type': kind, 'message': {'role': kind, 'content': content}})
+def claude_line(kind, content, timestamp=None):
+    line = {'type': kind, 'message': {'role': kind, 'content': content}}
+    if timestamp:
+        line['timestamp'] = timestamp
+    return json.dumps(line)
 
 
 class HarvestTest(unittest.TestCase):
@@ -99,7 +102,7 @@ class HarvestTest(unittest.TestCase):
         self.jev_on()
         with self.items(a, b), patch.object(jev, 'api_key', return_value='k'), \
                 patch.object(harvest, 'verify', return_value=dict(supported=0.9, owner_stated=0.9, durable=0.9, withdrawn=0.0)), \
-                patch.object(harvest, 'compare', side_effect=lambda *x: next(verdicts)):
+                patch.object(harvest, 'compare', side_effect=lambda *x, **kw: next(verdicts)):
             report = harvest.run(self.ws, which='claude:sonnet', progress=lambda m: None)
         digest = (self.root / report['digests'][0]).read_text()
         self.assertIn('## Conflict candidates (review)', digest)
@@ -122,10 +125,11 @@ class HarvestTest(unittest.TestCase):
         sent = []
         def fake(body, key, timeout=jev.TIMEOUT):
             sent.append(body)
-            return dict(answers={k: dict(type='noul', noul=(0.9 if k.endswith('_done') else 0.05)) for k in body['questions']})
-        evidence = dict(evidence=[dict(path='log/Tests.md', text='The playground tests ran via the API.')])
+            return dict(answers={k: dict(type='noul', noul=(0.9 if k.endswith(('_done', '_about')) else 0.05)) for k in body['questions']})
+        evidence = dict(evidence=[dict(path='log/Tests.md', text='The playground tests ran via the API.', date='2026-09-29')])
         with patch('carry.recall.recall', return_value=evidence), patch.object(jev, 'call', side_effect=fake):
-            verdict, match = harvest.compare(dict(type='open_item', statement='Tests pending.', quote='pending'), self.ws, 'k')
+            verdict, match = harvest.compare(dict(type='open_item', statement='Tests pending.', quote='pending'), self.ws, 'k',
+                                             since='2026-09-28')
         self.assertEqual((verdict, match), ('resolved', 'log/Tests.md'))
         self.assertIn('p1_done', sent[0]['questions'])
 
@@ -161,6 +165,73 @@ class HarvestTest(unittest.TestCase):
         path.write_text(path.read_text().replace('draft: true\n', ''))
         build(self.ws)
         self.assertIn(digest, served())
+
+    def closing(self, passages, answers, since='2026-09-28'):
+        """compare() on an open item with fixed passages and fixed Jev answers {(passage, question): p}."""
+        def fake(body, key, timeout=jev.TIMEOUT):
+            return dict(answers={k: dict(type='noul', noul=answers.get(tuple(k.split('_', 1)), 0.05)) for k in body['questions']})
+        with patch('carry.recall.recall', return_value=dict(evidence=passages)), patch.object(jev, 'call', side_effect=fake):
+            return harvest.compare(dict(type='open_item', statement='Signing is not done.', quote='not signed'), self.ws, 'k', since=since)
+
+    def test_an_older_or_undated_passage_cannot_close_an_open_item(self):
+        shelved = dict(path='notes/Plan.md', text='The signed pilot was shelved.', date='2026-09-18')
+        self.assertEqual(self.closing([shelved], {('p1', 'dropped'): 0.9}), ('new', None))
+        undated = dict(path='notes/Plan.md', text='Signing done.')
+        self.assertEqual(self.closing([undated], {('p1', 'done'): 0.9}), ('new', None))
+        self.assertEqual(self.closing([dict(undated, date='2026-09-30')], {('p1', 'done'): 0.9}, since=None), ('new', None))
+
+    def test_dropped_is_not_done_and_a_newer_still_open_passage_keeps_it_open(self):
+        dropped = dict(path='log/Drop.md', text='We no longer sign the app.', date='2026-09-29')
+        self.assertEqual(self.closing([dropped], {('p1', 'dropped'): 0.9, ('p1', 'about'): 0.9}), ('dropped', 'log/Drop.md'))
+        self.assertEqual(self.closing([dropped], {('p1', 'dropped'): 0.9}), ('new', None))  # not about this task
+        self.assertEqual(self.closing([dropped], {('p1', 'dropped'): 0.6, ('p1', 'about'): 0.9}), ('new', None))  # unsure
+        done = dict(path='log/Done.md', text='Notarized.', date='2026-09-29')
+        still = dict(path='log/Later.md', text='Signing is still open.', date='2026-09-30')
+        self.assertEqual(self.closing([done, still], {('p1', 'done'): 0.9, ('p1', 'about'): 0.9, ('p2', 'open'): 0.9}), ('new', None))
+        older = dict(still, date='2026-09-28')
+        self.assertEqual(self.closing([done, older], {('p1', 'done'): 0.9, ('p1', 'about'): 0.9, ('p2', 'open'): 0.9}), ('resolved', 'log/Done.md'))
+
+    def test_withdrawn_sees_a_later_assistant_result_deep_in_a_long_reply(self):
+        filler = 'Other work happened here and it is unrelated. ' * 20
+        exchanges = [dict(i=1, user='Which build do we ship?', assistant='We have not chosen between the full and light build.', at='2026-09-28'),
+                     dict(i=2, user='Clean the repo.', assistant=filler + 'The old full and light build scripts are gone; packaging now uses carry app install.', at='2026-09-28')]
+        item = dict(type='open_item', statement='Choose between the full and light build.', exchange=1,
+                    quote='not chosen between the full and light build', speaker='assistant', keywords=['build', 'packaging'])
+        sent = []
+        def fake(body, key, timeout=jev.TIMEOUT):
+            sent.append(body)
+            return dict(answers={k: dict(type='noul', noul=0.9) for k in body['questions']})
+        with patch.object(jev, 'call', side_effect=fake):
+            harvest.verify(item, exchanges, 'k')
+        later = sent[0]['state']['later_exchanges']
+        self.assertEqual([x['exchange'] for x in later], [2])
+        self.assertIn('packaging now uses carry app install', later[0]['assistant'])
+        self.assertNotIn('unrelated', later[0]['assistant'])
+        suffixed = [exchanges[0], dict(exchanges[1], assistant=filler + 'Old packaging scripts were removed. Now carry app install is used.')]
+        self.assertIn('Now carry app install is used.', harvest.later_context(item, suffixed)[0]['assistant'])
+        self.assertEqual(harvest.classify(item, dict(supported=0.9, owner_stated=0.9, durable=0.9, withdrawn=0.9)), 'review')
+
+    def test_later_context_keeps_the_newest_exchanges_when_long(self):
+        exchanges = [dict(i=i, user=f'owner build note {i} ' + 'x' * 380, assistant='', at=None) for i in range(1, 40)]
+        item = dict(statement='build', quote='build', exchange=1)
+        later = harvest.later_context(item, exchanges, limit=2000)
+        self.assertEqual(later[-1]['exchange'], 39)
+        self.assertLess(len(later), 38)
+
+    def test_transcript_dates_reach_the_comparison(self):
+        path = self.project / 'cccc3333.jsonl'
+        path.write_text('\n'.join([claude_line('user', 'Signing is still open.', '2026-09-28T09:00:00Z'),
+                                    claude_line('assistant', [{'type': 'text', 'text': 'Yes, not signed yet.'}], '2026-09-28T09:00:05Z')]) + '\n')
+        exchanges, _ = harvest.read_thread('claude', path, self.root)
+        self.assertEqual(exchanges[0]['at'], harvest._day('2026-09-28T09:00:00Z'))
+        os.utime(path, (time.time() - 3600, time.time() - 3600))
+        item = dict(type='open_item', statement='Signing is not done.', exchange=1, quote='not signed yet')
+        with self.items(item), patch.object(jev, 'api_key', return_value='k'), \
+                patch.object(harvest, 'verify', return_value=dict(supported=0.9, owner_stated=0.9, durable=0.9, withdrawn=0.0)), \
+                patch.object(harvest, 'compare', return_value=('new', None)) as compare:
+            self.jev_on()
+            harvest.run(self.ws, which='claude:sonnet', progress=lambda m: None)
+        self.assertEqual(compare.call_args.kwargs['since'], exchanges[0]['at'])
 
     def test_filed_and_active_threads_are_skipped_and_reruns_are_idempotent(self):
         self.thread('dddd4444', [('Save this.', 'Saved to notes.')], writes='notes/Plan.md')

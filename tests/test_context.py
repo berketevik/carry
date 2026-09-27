@@ -24,7 +24,8 @@ class ContextTest(unittest.TestCase):
             '- **decision:** The pilot ships on 15 October.\n  > quote\n'
             "- **decision · assistant's suggestion or result; not confirmed by the owner:** Use a bigger model.\n  > q\n"
             '- **open item:** Invite two colleagues to the repository.\n  > q\n\n'
-            '## Apparently done\n\n- Write the release note → [[Release]]\n')
+            '## Apparently done\n\n- Write the release note → [[Release]]\n\n'
+            '## Apparently dropped\n\n- **open item:** Choose the full or light build.\n')
 
     def test_pack_lists_open_items_and_owner_decisions_only(self):
         text = context.pack(self.root)
@@ -32,6 +33,7 @@ class ContextTest(unittest.TestCase):
         self.assertIn('The pilot ships on 15 October.', text)
         self.assertNotIn('Use a bigger model.', text)
         self.assertNotIn('release note', text)
+        self.assertNotIn('light build', text)
         self.assertIn('1 draft digests (+/)', text)
         self.assertLessEqual(len(context.pack(self.root, max_chars=200)), 202)
 

@@ -40,20 +40,30 @@ VERIFY = {
     'supported': "Is the candidate's statement supported by what is written in the cited exchange (owner or assistant text)? Plausible but unwritten does not count.",
     'owner_stated': "Did the owner (not the assistant) state, decide or explicitly approve what the candidate says? An assistant suggestion or result the owner did not confirm does not count.",
     'durable': "Is the candidate durable knowledge about the owner, their devices, projects, people or systems that is worth remembering after this chat? Transient chatter, a question without an outcome, or generic knowledge is not.",
-    'withdrawn': "Do the later owner messages withdraw, reverse or replace what the candidate says?",
+    'withdrawn': "Do the later exchanges (owner or assistant) withdraw, reverse, replace, complete or make obsolete what the candidate says? An assistant result counts only when it plainly reports that outcome.",
 }
 
 LABELS = {
     'Turkish': dict(new='Yeni', conflict='Çelişki adayları (incele)', review='İncelenecek', known='Zaten kayıtlı', resolved='Yapılmış görünüyor',
+                    dropped='Vazgeçilmiş görünüyor',
                     assistant='asistanın önerisi/sonucu; sahibi onaylamadı', decision='karar', fact='olgu',
                     preference='tercih', open_item='açık iş', unchecked='vault ile karşılaştırılmadı (Jev kontrolü kapalı)'),
     'English': dict(new='New', conflict='Conflict candidates (review)', review='To review', known='Already recorded', resolved='Apparently done',
+                    dropped='Apparently dropped',
                     assistant="assistant's suggestion or result; not confirmed by the owner", decision='decision',
                     fact='fact', preference='preference', open_item='open item',
                     unchecked='not compared with the vault (Jev check is off)'),
 }
 
 norm = lambda s: re.sub(r'\s+', ' ', s or '').strip().lower()
+
+
+def _day(timestamp):
+    """Local date of a transcript timestamp; an item is only closed by evidence from that day on."""
+    try:
+        return datetime.datetime.fromisoformat(str(timestamp).replace('Z', '+00:00')).astimezone().date().isoformat()
+    except (TypeError, ValueError):
+        return None
 
 
 # -- transcripts -------------------------------------------------------------
@@ -124,7 +134,7 @@ def read_thread(client, path, root):
                 t = _strip(c)
                 if _harness(t):
                     continue
-                cur = dict(user=t, assistant='')
+                cur = dict(user=t, assistant='', at=_day(d.get('timestamp')))
                 turns.append(cur)
             elif d.get('type') == 'assistant' and cur is not None:
                 blocks = [x for x in m.get('content', []) if isinstance(x, dict)]
@@ -142,7 +152,7 @@ def read_thread(client, path, root):
                 t = _strip('\n'.join(x.get('text', '') for x in p.get('content', []) if isinstance(x, dict)))
                 if _harness(t):
                     continue
-                cur = dict(user=t, assistant='')
+                cur = dict(user=t, assistant='', at=_day(d.get('timestamp')))
                 turns.append(cur)
             elif d.get('type') == 'event_msg' and p.get('type') == 'task_complete' and cur is not None:
                 cur['assistant'] = (p.get('last_agent_message') or '').strip()
@@ -151,7 +161,7 @@ def read_thread(client, path, root):
                 filed = filed or any(k in body for k in ('Add File: notes/', 'Update File: notes/',
                                                          'Add File: log/', 'Update File: log/'))
     filed = filed or bool(pending_writes - failed)
-    exchanges = [dict(i=i + 1, user=mask(t['user'])[0][:MAX_TEXT], assistant=mask(t['assistant'])[0][:MAX_TEXT])
+    exchanges = [dict(i=i + 1, user=mask(t['user'])[0][:MAX_TEXT], assistant=mask(t['assistant'])[0][:MAX_TEXT], at=t.get('at'))
                  for i, t in enumerate(turns) if t['user']]
     return exchanges, filed
 
@@ -240,21 +250,54 @@ def provenance(items, exchanges):
     return kept, dropped
 
 
+CLOSE_MIN = 0.7  # closing an open item hides it from every later session: a coin toss is not enough
+LATER_MAX = 12000  # characters of later exchanges sent with one candidate
+
+
+def _terms(text):
+    """Word stems: the first five letters, so Turkish suffixes (paketleme, paketlemeye) still meet."""
+    return {w[:5] for w in re.findall(r'\w{4,}', norm(text))}
+
+
+def later_context(item, exchanges, limit=LATER_MAX):
+    """What was said after the item, by both speakers: a later assistant result settles an item
+    as often as an owner message does. Long replies keep only their sentences about the item, and
+    the newest exchanges come first when the budget runs out."""
+    terms = _terms(' '.join([item['statement'], item.get('quote', '')]))
+    keys = _terms(' '.join(k for k in item.get('keywords') or [] if isinstance(k, str)))
+    out, size = [], 0
+    for x in sorted((x for x in exchanges if x['i'] > item['exchange']), key=lambda x: -x['i']):
+        sentences = [s for s in re.split(r'(?<=[.!?])\s+|\n+', x['assistant']) if s.strip()]
+        hits = {i for i, s in enumerate(sentences) if (t := _terms(s)) & keys or len(t & terms) >= 2}
+        # The sentence after a hit often carries the outcome ("... old scripts. Now X is used.").
+        about = [sentences[i] for i in sorted(hits | {i + 1 for i in hits}) if i < len(sentences)]
+        entry = dict(exchange=x['i'], owner=x['user'][:400], assistant=' '.join(about)[:1500])
+        size += len(entry['owner']) + len(entry['assistant'])
+        if size > limit:
+            break
+        out.append(entry)
+    return out[::-1]
+
+
 def verify(item, exchanges, key):
     e = next(x for x in exchanges if x['i'] == item['exchange'])
-    later = [x['user'][:400] for x in exchanges if x['i'] > item['exchange']][:25]
+    later = later_context(item, exchanges)
     state = {'candidate': {'type': item['type'], 'statement': mask(item['statement'])[0],
                            'quote': mask(item['quote'])[0], 'quote_speaker': item['speaker']},
              'cited_exchange': {'owner': e['user'][:4000], 'assistant': e['assistant'][:4000]},
-             'later_owner_messages': later}
+             'later_exchanges': later}
     body = dict(state=state, model=jev.DEFAULT_MODEL, questions={k: dict(type='noul', instructions=v) for k, v in VERIFY.items()})
     answers = jev.call(body, key)['answers']
     return {k: jev.probability(answers[k]['noul']) for k in VERIFY}
 
 
-def compare(item, workspace, key):
+def compare(item, workspace, key, since=None):
     """Candidates come unjudged: recall's judge asks whether a passage answers a question, and a
-    statement is not one. The same/contradicts/done questions below decide instead."""
+    statement is not one. The same/contradicts/done questions below decide instead.
+
+    An open item is closed only by a passage dated on or after `since`, the day it was said: an
+    older note about an earlier plan cannot close it, and an undated one cannot either. A passage
+    at least as new that says it is still open keeps it open."""
     from dataclasses import replace
     from .recall import is_secret, recall
     unjudged = replace(workspace, retrieval=replace(workspace.retrieval, reranker='off', vector_min_score=-1.0))
@@ -271,14 +314,24 @@ def compare(item, workspace, key):
         qs[f'p{i + 1}_same'] = dict(type='noul', instructions=f"Does passage p{i + 1} already state the candidate's fact or decision (possibly in other words)?")
         qs[f'p{i + 1}_contra'] = dict(type='noul', instructions=f'Does passage p{i + 1} state something that contradicts the candidate (a different value, date or decision for the same thing)?')
         if item['type'] == 'open_item':
-            qs[f'p{i + 1}_done'] = dict(type='noul', instructions=f"Does passage p{i + 1} report that the candidate's open item has since been done, resolved or dropped?")
+            qs[f'p{i + 1}_done'] = dict(type='noul', instructions=f"Does passage p{i + 1} report that this same open item has since been completed?")
+            qs[f'p{i + 1}_dropped'] = dict(type='noul', instructions=f"Does passage p{i + 1} report that this same open item was dropped, cancelled or made unnecessary (not completed)?")
+            qs[f'p{i + 1}_open'] = dict(type='noul', instructions=f"Does passage p{i + 1} say that this open item is still not done?")
+            qs[f'p{i + 1}_about'] = dict(type='noul', instructions=f"Is passage p{i + 1} about the same task as the candidate's open item (not just the same project)?")
     answers = jev.call(dict(state=state, model=jev.DEFAULT_MODEL, questions=qs), key)['answers']
     same = max((jev.probability(answers[f'p{i + 1}_same']['noul']), evidence[i]['path']) for i in range(len(evidence)))
     contra = max((jev.probability(answers[f'p{i + 1}_contra']['noul']), evidence[i]['path']) for i in range(len(evidence)))
     if item['type'] == 'open_item':
-        done = max((jev.probability(answers[f'p{i + 1}_done']['noul']), evidence[i]['path']) for i in range(len(evidence)))
-        if done[0] >= 0.5:
-            return 'resolved', done[1]
+        p = lambda i, q: jev.probability(answers[f'p{i + 1}_{q}']['noul'])
+        dated = lambda i: evidence[i].get('date') or ''
+        closing = [(max(p(i, 'done'), p(i, 'dropped')), i) for i in range(len(evidence))
+                   if since and dated(i) >= since and p(i, 'about') >= 0.5
+                   and max(p(i, 'done'), p(i, 'dropped')) >= CLOSE_MIN]
+        if closing:
+            _, best = max(closing)
+            still_open = any(p(i, 'open') >= 0.5 and dated(i) >= dated(best) for i in range(len(evidence)) if i != best)
+            if not still_open:
+                return ('resolved' if p(best, 'done') >= p(best, 'dropped') else 'dropped'), evidence[best]['path']
     if same[0] >= 0.5:
         return 'known', same[1]
     if contra[0] >= 0.5:
@@ -328,7 +381,7 @@ def write_outputs(root, client, thread_id, exchanges, groups, meta, language, to
     for key in ('new', 'conflict', 'review'):
         if groups.get(key):
             lines += [f'## {L[key]}', ''] + [item_line(it) for it in groups[key]] + ['']
-    for key in ('resolved', 'known'):
+    for key in ('resolved', 'dropped', 'known'):
         if groups.get(key):
             lines += [f'## {L[key]}', ''] + [f'- {it["statement"]} → {_link(it["match"], root)}' for it in groups[key]] + ['']
     if meta.get('compared') is False:
@@ -418,14 +471,16 @@ def run(workspace, root=None, dry_run=False, include_filed=False, limit=None, mi
             for window in _windows(context + fresh):
                 raw_items += extract_window(window, language, chosen)
             items, dropped = provenance(raw_items, exchanges)
-            groups = dict(new=[], conflict=[], review=[], resolved=[], known=[])
+            groups = dict(new=[], conflict=[], review=[], resolved=[], dropped=[], known=[])
+            said = {e['i']: e.get('at') for e in exchanges}
+            started = next((e.get('at') for e in exchanges if e.get('at')), None)
             for it in items:
                 scores = verify(it, exchanges, key) if key else None
                 verdict = classify(it, scores)
                 if verdict == 'drop':
                     continue
                 if verdict == 'new' and key:
-                    verdict, it['match'] = compare(it, workspace, key)
+                    verdict, it['match'] = compare(it, workspace, key, since=said.get(it['exchange']) or started)
                 groups[verdict].append(it)
             meta = dict(extractor=chosen, judge='jev' if key else None, compared=bool(key),
                         dropped_without_quote=dropped, thread=entry_key, exchanges=[fresh[0]['i'], fresh[-1]['i']])

@@ -25,7 +25,8 @@ HEAD = {
 }
 OPEN_TAGS = ('açık iş', 'open item')
 DECISION_TAGS = ('karar', 'decision')
-SKIP_SECTIONS = ('Yapılmış görünüyor', 'Apparently done', 'Zaten kayıtlı', 'Already recorded')
+SKIP_SECTIONS = ('Yapılmış görünüyor', 'Apparently done', 'Vazgeçilmiş görünüyor', 'Apparently dropped',
+                 'Zaten kayıtlı', 'Already recorded')
 
 
 def workspace_for(root):
