@@ -1231,6 +1231,119 @@ struct ReviewView: View {
     }
 }
 
+/// A chat digest, item by item: accept, fix or skip. Items already recorded, done or dropped
+/// need no decision and stay folded. Accepted items go to the log of the day they were said.
+struct DigestItemsView: View {
+    @ObservedObject var model: Model
+    let path: String
+    @State private var items: [[String: Any]] = []
+    @State private var editing = ""
+    @State private var fixed = ""
+    @State private var showFolded = false
+    var open: [[String: Any]] { items.filter { str($0, "decision", "") == "" } }
+    var decided: [[String: Any]] { items.filter { ["accepted", "fixed", "skipped"].contains(str($0, "decision", "")) } }
+    var folded: [[String: Any]] { items.filter { str($0, "decision", "") == "folded" } }
+    func sectionName(_ key: String) -> String {
+        switch key {
+        case "conflict": return T("Conflicts with a note", "Bir notla çelişiyor")
+        case "review": return T("May have been withdrawn later", "Sonradan geri alınmış olabilir")
+        case "resolved": return T("Apparently done", "Yapılmış görünüyor")
+        case "dropped": return T("Apparently dropped", "Vazgeçilmiş görünüyor")
+        case "known": return T("Already recorded", "Zaten kayıtlı")
+        default: return T("New", "Yeni")
+        }
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label(open.isEmpty ? T("Every item is decided.", "Tüm maddeler karara bağlandı.")
+                               : T("\(open.count) item(s) from this chat wait for you. Accept what is right: it is saved to that day's log.",
+                                   "Bu sohbetten \(open.count) madde sizi bekliyor. Doğru olanı kabul edin: o günün log'una kaydedilir."),
+                  systemImage: "checklist").foregroundStyle(.orange).fontWeight(.medium)
+            ForEach(open.map { str($0, "id") }, id: \.self) { id in
+                card(open.first { str($0, "id") == id } ?? [:])
+            }
+            if !decided.isEmpty {
+                Text(T("\(decided.count) decided", "\(decided.count) madde karara bağlandı")).font(.caption).foregroundStyle(.secondary)
+            }
+            if !folded.isEmpty {
+                DisclosureGroup(isExpanded: $showFolded) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(folded.map { str($0, "id") }, id: \.self) { id in
+                            Text(foldedLine(folded.first { str($0, "id") == id } ?? [:])).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }.padding(.top, 4)
+                } label: {
+                    Text(T("\(folded.count) need no decision (already recorded, done or dropped)", "\(folded.count) madde karar gerektirmiyor (zaten kayıtlı, yapılmış ya da vazgeçilmiş)")).font(.callout)
+                }
+            }
+        }
+        .padding(12).background(Color.orange.opacity(0.05)).clipShape(RoundedRectangle(cornerRadius: 10))
+        .onAppear(perform: load)
+    }
+    @ViewBuilder func header(_ it: [String: Any]) -> some View {
+        HStack(spacing: 6) {
+            Badge(text: str(it, "tag"), color: str(it, "section") == "conflict" ? .red : .accentColor)
+            if str(it, "section") != "new" { Text(sectionName(str(it, "section"))).font(.caption).foregroundStyle(.secondary) }
+            if str(it, "match", "") != "" {
+                Text("↔ " + str(it, "match").trimmingCharacters(in: CharacterSet(charactersIn: "[]"))).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+    func quoteLine(_ it: [String: Any]) -> String {
+        let at: String = str(it, "exchange", "") != "" ? T("  · exchange ", "  · mesaj ") + str(it, "exchange") : ""
+        return "“" + str(it, "quote") + "”" + at
+    }
+    @ViewBuilder func buttons(_ it: [String: Any]) -> some View {
+        let id = str(it, "id")
+        FlowLayout(spacing: 8) {
+            if editing == id {
+                Button(T("Save and accept", "Kaydet ve kabul et")) { decide(id, "fix", fixed) }.buttonStyle(.borderedProminent)
+                    .disabled(fixed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button(T("Cancel", "Vazgeç")) { editing = "" }
+            } else {
+                Button(T("Accept", "Kabul et")) { decide(id, "accept") }.buttonStyle(.borderedProminent)
+                Button(T("Fix…", "Düzelt…")) { editing = id; fixed = str(it, "statement") }
+                Button(T("Skip", "Atla")) { decide(id, "skip") }
+            }
+        }
+    }
+    @ViewBuilder func card(_ it: [String: Any]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            header(it)
+            if editing == str(it, "id") {
+                TextField(T("Corrected text", "Düzeltilmiş metin"), text: $fixed, axis: .vertical).textFieldStyle(.roundedBorder)
+            } else {
+                Text(str(it, "statement")).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+            }
+            if str(it, "quote", "") != "" {
+                Text(quoteLine(it)).font(.caption).italic().foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            buttons(it)
+        }.padding(10).background(Color.orange.opacity(0.06)).clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+    func foldedLine(_ it: [String: Any]) -> String { "• " + sectionName(str(it, "section")) + ": " + str(it, "statement") }
+    func load() {
+        model.run("digest_items", ["path": path, "source_id": model.noteSource], quiet: true) { v in items = v["items"] as? [[String: Any]] ?? [] }
+    }
+    func decide(_ id: String, _ decision: String, _ text: String? = nil) {
+        var fields: [String: Any] = ["path": path, "source_id": model.noteSource, "item": id, "decision": decision]
+        if let text { fields["text"] = text }
+        let next = model.nextDraft(after: path)
+        model.run("digest_decide", fields) { v in
+            editing = ""
+            let logged = str(v, "logged", "")
+            if v["done"] as? Bool == true {
+                model.loadVault()
+                model.notice = T("Every item is decided; the digest left the review list.", "Tüm maddeler karara bağlandı; taslak inceleme listesinden çıktı.")
+                if let next { model.openNote(next) } else { model.reloadNote() }
+            } else {
+                load(); model.reloadNote()
+                if !logged.isEmpty { model.notice = T("Saved to \(logged).", "\(logged) dosyasına kaydedildi.") }
+            }
+        }
+    }
+}
+
 /// A large, clearly clickable card for the few things people come to Carry to do.
 struct ActionCard: View {
     let icon: String; let title: String; let detail: String
@@ -1611,8 +1724,11 @@ struct NoteView: View {
                         Text(L("modified ") + ago(num(note, "modified"))).font(.caption).foregroundStyle(.secondary)
                     }
                     if let summary = front["summary"] as? String { Text(summary).italic().foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).textSelection(.enabled) }
-                    let inQueue = model.files.first { str($0, "path") == str(note, "path") }?["review"] as? Bool == true
-                    if front["draft"] as? Bool == true && front["lock"] as? Bool != true {
+                    let listed = model.files.first { str($0, "path") == str(note, "path") } ?? [:]
+                    let inQueue = listed["review"] as? Bool == true
+                    if inQueue && listed["digest"] as? Bool == true {
+                        DigestItemsView(model: model, path: str(note, "path")).id(str(note, "path"))
+                    } else if front["draft"] as? Bool == true && front["lock"] as? Bool != true {
                         VStack(alignment: .leading, spacing: 10) {
                             Label(inQueue ? T("Draft: read it, and approve it if it is right.", "Taslak: okuyun, doğruysa onaylayın.")
                                           : T("Written by an assistant, not checked by you. It is already searchable; approve it once you have checked it.", "Bir asistan yazdı, siz kontrol etmediniz. Zaten aranabilir; kontrol ettiğinizde onaylayın."),

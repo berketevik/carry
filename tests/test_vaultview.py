@@ -263,14 +263,16 @@ class LinksAndWorkspaceTest(unittest.TestCase):
         (self.vault / '+' / 'Capture.md').write_text('inbox item\n')
         (self.vault / '+' / 'Digest.md').write_text('---\ntype: output\ndraft: true\n---\nitems\n')
         (self.vault / 'notes' / 'Agent.md').write_text('---\ntype: output\ndraft: true\n---\nagent note\n')
+        (self.vault / '+' / 'Routed.md').write_text('---\ntype: capture\nrouted_into: "[[Plan]]"\ndraft: true\n---\nx\n')
         files = {f['path']: f for f in vaultview.browse(self.ws, 'notes')['files']}
         self.assertTrue(files['+/Digest.md']['review'])
         self.assertTrue(files['notes/Agent.md']['approvable'])
         self.assertFalse(files['notes/Agent.md']['review'])
         self.assertFalse(files['+/Capture.md']['review'])  # not a draft
+        self.assertFalse(files['+/Routed.md']['review'])  # already routed
         with mock.patch.object(harvest, 'schedule_status', return_value=dict(installed=False)):
             o = vaultview.overview(self.ws, 'notes')
-        self.assertEqual((o['drafts'], o['awaiting_review']), (2, 1))
+        self.assertEqual((o['drafts'], o['awaiting_review']), (3, 1))
 
     def test_guides_and_templates_are_not_counted_as_notes(self):
         (self.vault / 'CLAUDE.md').write_text('guide')

@@ -260,8 +260,9 @@ def cannot_approve(front):
 
 def awaits_review(rel, front):
     """What waits for the owner: approvable drafts in the inbox (chat digests, captures). Agent notes
-    elsewhere keep `draft: true` as an unchecked mark and stay searchable; they are not a queue."""
-    return rel.startswith(INBOX + '/') and cannot_approve(front) is None
+    elsewhere keep `draft: true` as an unchecked mark and stay searchable; they are not a queue.
+    A capture already routed (`routed_into:` set) is done even if its draft flag stayed."""
+    return rel.startswith(INBOX + '/') and cannot_approve(front) is None and not front.get('routed_into')
 
 
 def approve_note(ws, source_id, relative):
