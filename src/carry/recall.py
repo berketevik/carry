@@ -365,8 +365,7 @@ def _topic_rows(rows, residual):
     """Rows about the question's topic words (matched by stem, for Turkish endings): a word in
     the title or heading counts most, then how often the text repeats it. Weakly related rows
     (less than half the best score) are left out."""
-    import re
-    from .timeframe import GENERIC, _lower
+    from .timeframe import _lower
     words = {w[:5] for w in topic_words(residual)}
     if not words:
         return []

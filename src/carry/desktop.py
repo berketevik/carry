@@ -12,7 +12,7 @@ import sys
 import time
 from dataclasses import replace
 
-from . import capture, connections, index, lifecycle, github, maintenance
+from . import capture, connections, lifecycle, github, maintenance
 from .config import EmbeddingConfig, RetrievalConfig, SourceConfig, Workspace
 from .errors import CarryError
 from .paths import resolve_within

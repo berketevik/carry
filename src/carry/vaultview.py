@@ -278,7 +278,6 @@ def awaits_review(rel, front):
 
 def approve_note(ws, source_id, relative):
     """The owner checked a draft: drop its `draft: true` line. Locked notes and raw material are refused."""
-    from .persistence import atomic_text
     src, root = _local(ws, source_id)
     path = resolve_within(root, relative)
     if not path.is_file():
@@ -385,7 +384,7 @@ def schedule_for(ws):
 
 
 def overview(ws, source_id):
-    from . import context, harvest
+    from . import harvest
     listing = browse(ws, source_id)
     files = [f for f in listing['files'] if not f['system']]
     system_files = len(listing['files']) - len(files)

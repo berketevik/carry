@@ -305,7 +305,7 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
     for client, path in found.items():
         (ok if path else warn)(f'{client}: ' + ('bulundu' if path else 'bulunamadı'))
     if project and kind == 'new':
-        ok(f'Vault içinde .mcp.json ve .codex/config.toml yazıldı; asistanı bu klasörde açınca Carry hazır.')
+        ok('Vault içinde .mcp.json ve .codex/config.toml yazıldı; asistanı bu klasörde açınca Carry hazır.')
     elif project:
         from . import connections
         for client, path in found.items():

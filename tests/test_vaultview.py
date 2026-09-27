@@ -1,5 +1,4 @@
 """App vault browsing and settings: real files in temporary folders."""
-import json
 import os
 from pathlib import Path
 import tempfile

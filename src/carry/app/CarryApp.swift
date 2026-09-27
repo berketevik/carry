@@ -203,7 +203,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     let code = value["exit_code"] as? Int
                     let drafts = (value["drafts"] as? [String] ?? []).count
                     if let code, code != 0 { self.notice = L("Harvest stopped with an error. See the log on the Harvest tab.") }
-                    else if drafts > 0 { self.notice = T("\(drafts) new draft(s) from your chats. Find them in the Inbox.", "Sohbetlerinizden \(drafts) yeni taslak çıktı. Gelen kutusunda bulabilirsiniz.") }
+                    else if drafts > 0 { self.notice = T("\(drafts) new draft(s) from your chats. Go through them on the Review page.", "Sohbetlerinizden \(drafts) yeni taslak çıktı. İncele sayfasında gözden geçirebilirsiniz.") }
                     else { self.notice = T("No new drafts: there were no new chats with something worth keeping.", "Yeni taslak çıkmadı: saklanmaya değer bir şey içeren yeni sohbet yoktu.") }
                     self.loadVault()
                 }
@@ -695,8 +695,8 @@ let glossary: [(String, String, String, String)] = [
      "When a chat with your assistant ends, Carry picks out decisions, facts and unfinished work and saves them as drafts for you.",
      "Asistanınızla bir sohbet bittiğinde Carry kararları, bilgileri ve yarım kalan işleri seçip sizin için taslak olarak kaydeder."),
     ("Inbox", "Gelen kutusu",
-     "Where new chat drafts collect. Open it on the Notes page with the Inbox filter.",
-     "Yeni sohbet taslaklarının toplandığı yer. Notlar sayfasında Gelen kutusu filtresiyle açabilirsiniz."),
+     "The + folder, where new chat drafts and captures collect. What waits for you there is on the Review page.",
+     "Yeni sohbet taslaklarının ve kayıtların toplandığı + klasörü. Orada sizi bekleyenler İncele sayfasındadır."),
     ("Draft", "Taslak",
      "A note you have not checked yet. Chat drafts in your Inbox wait for you on the Review page. Notes your assistants write elsewhere are marked as drafts too, but they are searchable and never wait for you; approve one when you have checked it.",
      "Henüz kontrol etmediğiniz not. Gelen kutusundaki sohbet taslakları İncele sayfasında sizi bekler. Asistanlarınızın başka yerlere yazdığı notlar da taslak işaretlidir ama aranabilir ve sizi beklemez; kontrol ettiğinizde onaylayabilirsiniz."),
@@ -1548,7 +1548,7 @@ struct HarvestSummary: View {
                     let drafts = (model.harvest["drafts"] as? [String] ?? []).count
                     FlowLayout {
                         Text(drafts > 0 ? T("Last run: \(drafts) new draft(s).", "Son çalıştırma: \(drafts) yeni taslak.") : T("Last run: no new drafts.", "Son çalıştırma: yeni taslak yok.")).font(.callout).foregroundStyle(.secondary)
-                        if drafts > 0 { Button(T("Review", "İncele")) { model.showVault("inbox") }.buttonStyle(.link) }
+                        if drafts > 0 { Button(T("Review", "İncele")) { model.page = "Review" }.buttonStyle(.link) }
                     }
                 }
                 FlowLayout {
@@ -1977,13 +1977,13 @@ struct SearchSettings: View {
                         Text(T("The check keeps only passages that really answer the question, so your assistant is not misled.", "Kontrol, yalnızca soruyu gerçekten yanıtlayan parçaları tutar; böylece asistanınız yanılmaz.")).font(.caption).foregroundStyle(.secondary)
                         option(isOn: checker == "jev", title: "TypeSafe Jev", uses: [T("online service", "çevrimiçi hizmet"), T("access key", "erişim anahtarı")],
                                short: T("Most accurate and fastest (about half a second). Needs a TypeSafe key.", "En isabetli ve en hızlı (yaklaşık yarım saniye). TypeSafe anahtarı gerekir."),
-                               long: T("A specialised service checks which passages answer the question and drops passages that try to instruct an AI. The question and up to 32 found passages go to TypeSafe in the US (secrets masked, best effort; TypeSafe says it does not train on them). In Carry's 36-question test, meaning + Jev put the right note first 34 times, the best result.",
-                                       "Bu işe özel bir hizmet, hangi parçaların soruyu yanıtladığını kontrol eder ve yapay zekâya talimat vermeye çalışan parçaları eler. Soru ve en fazla 32 bulunan parça ABD'deki TypeSafe'e gider (gizli bilgiler elden geldiğince maskelenir; TypeSafe bunlarla model eğitmediğini belirtiyor). Carry'nin 36 soruluk testinde anlam + Jev doğru notu 34 kez ilk sıraya koydu; en iyi sonuç buydu."),
+                               long: T("A specialised service checks which passages answer the question and drops passages that try to instruct an AI. The question and up to 32 found passages go to TypeSafe in the US (secrets masked, best effort; TypeSafe says it does not train on them). In Carry's 36-question test, meaning + Jev put the right note first 34 times, the best result. Chat drafts are checked there too: masked chat excerpts and note passages go to TypeSafe while they are compared with your notes.",
+                                       "Bu işe özel bir hizmet, hangi parçaların soruyu yanıtladığını kontrol eder ve yapay zekâya talimat vermeye çalışan parçaları eler. Soru ve en fazla 32 bulunan parça ABD'deki TypeSafe'e gider (gizli bilgiler elden geldiğince maskelenir; TypeSafe bunlarla model eğitmediğini belirtiyor). Carry'nin 36 soruluk testinde anlam + Jev doğru notu 34 kez ilk sıraya koydu; en iyi sonuç buydu. Sohbet taslakları da orada denetlenir: notlarınızla karşılaştırılırken maskelenmiş sohbet alıntıları ve not parçaları TypeSafe'e gider."),
                                badge: T("recommended", "önerilen")) { checker = "jev" }
                         option(isOn: checker == "assistant", title: T("My own assistant (Claude or GPT)", "Kendi asistanım (Claude ya da GPT)"), uses: ["Claude Code: Claude Haiku", "Codex: GPT"],
                                short: T("No extra service or key: the assistant you already use sorts the results.", "Ek hizmet ya da anahtar yok: zaten kullandığınız asistan sonuçları ayıklar."),
-                               long: T("Carry hands the assistant a few more passages and it decides which ones matter. In Claude Code a small Claude model (Haiku) does this in a helper step; in Codex, Codex's own GPT model does it. It runs on your existing subscription, with nothing extra leaving your Mac beyond what already goes to that assistant. A little slower and it uses a few more tokens per question.",
-                                       "Carry asistana biraz daha fazla parça verir; hangilerinin önemli olduğuna asistan karar verir. Claude Code'da bunu yardımcı bir adımda küçük bir Claude modeli (Haiku) yapar; Codex'te Codex'in kendi GPT modeli yapar. Mevcut aboneliğinizle çalışır; o asistana zaten gidenin ötesinde Mac'inizden ek bir şey çıkmaz. Biraz daha yavaştır ve soru başına biraz daha fazla token harcar."),
+                               long: T("Carry hands the assistant a few more passages and it decides which ones matter. In Claude Code a small Claude model (Haiku) does this in a helper step; in Codex, Codex's own GPT model does it. It runs on your existing subscription, with nothing extra leaving your Mac beyond what already goes to that assistant. A little slower and it uses a few more tokens per question. After a chat, the same assistant compares its drafts with your notes (already recorded or a real conflict).",
+                                       "Carry asistana biraz daha fazla parça verir; hangilerinin önemli olduğuna asistan karar verir. Claude Code'da bunu yardımcı bir adımda küçük bir Claude modeli (Haiku) yapar; Codex'te Codex'in kendi GPT modeli yapar. Mevcut aboneliğinizle çalışır; o asistana zaten gidenin ötesinde Mac'inizden ek bir şey çıkmaz. Biraz daha yavaştır ve soru başına biraz daha fazla token harcar. Sohbetten sonra taslakları notlarınızla da aynı asistan karşılaştırır (zaten kayıtlı mı, gerçek bir çelişki mi)."),
                                badge: nil) { checker = "assistant" }
                         option(isOn: checker == "local", title: T("A large model on this Mac", "Bu Mac'te büyük bir model"), uses: [T("2 GB local model", "2 GB yerel model")],
                                short: T("Nothing goes online for the check. Heavy: for Macs with 16 GB memory or more; needs “By meaning”.", "Kontrol için hiçbir şey çevrimiçine gitmez. Ağır: 16 GB ve üzeri belleği olan Mac'ler için; “Anlamına göre” ile çalışır."),
@@ -2708,8 +2708,8 @@ struct Activity: View {
             VStack(alignment: .leading, spacing: 14) {
                 Button { model.page = "Review" } label: { Label(pageName("Review"), systemImage: "chevron.left") }.buttonStyle(.link)
                 Text(pageName("Proposals")).font(.title.bold())
-                Text(T("Changes your assistant proposes to your existing notes. Accept or reject each one here. (New chat drafts are on the Notes page, in the Inbox.)",
-                       "Asistanınızın mevcut notlarınız için önerdiği değişiklikler. Her birini burada kabul edin ya da reddedin. (Yeni sohbet taslakları Notlar sayfasında, Gelen kutusundadır.)")).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(T("Changes your assistant proposes to your existing notes. Accept or reject each one here. (New chat drafts are on the Review page.)",
+                       "Asistanınızın mevcut notlarınız için önerdiği değişiklikler. Her birini burada kabul edin ya da reddedin. (Yeni sohbet taslakları İncele sayfasındadır.)")).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 Toggle(T("Only those waiting for approval", "Yalnız onay bekleyenler"), isOn: $pendingOnly)
                 ForEach(model.adapters.indices, id: \.self) { i in
                     let adapter = model.adapters[i]
@@ -2727,8 +2727,8 @@ struct Activity: View {
                         Text(model.activity.isEmpty ? T("No proposals have arrived yet.", "Henüz hiç öneri gelmedi.") : T("Nothing waits for your approval.", "Onayınızı bekleyen öneri yok.")).fontWeight(.medium)
                         Text(T("This page fills only when an assistant asks to correct one of your notes: instead of editing the note itself, it sends a proposal here for your yes or no. That happens rarely, so an empty page is normal.",
                                "Bu sayfa yalnızca bir asistan notlarınızdan birini düzeltmek istediğinde dolar: notu kendisi değiştirmek yerine öneriyi evet ya da hayır demeniz için buraya gönderir. Bu seyrek olur; sayfanın boş olması normaldir.")).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                        Text(T("New chat drafts are reviewed on the Notes page, in the Inbox.", "Yeni sohbet taslaklarını Notlar sayfasında, Gelen kutusunda inceleyebilirsiniz.")).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                        Button(T("Open the Inbox", "Gelen kutusunu aç")) { model.showVault("inbox") }.buttonStyle(.link)
+                        Text(T("New chat drafts are reviewed on the Review page.", "Yeni sohbet taslaklarını İncele sayfasında inceleyebilirsiniz.")).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        Button(T("Open Review", "İncele'yi aç")) { model.page = "Review" }.buttonStyle(.link)
                         Button(T("Open drafts", "Taslakları aç")) { model.showVault("drafts") }.buttonStyle(.link)
                         if !model.anyAssistantConnected { Button(L("Connect a client")) { model.page = "Settings"; model.settingsTab = "Clients" }.buttonStyle(.link) }
                     }.padding(.top, 16)

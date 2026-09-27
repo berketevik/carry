@@ -20,7 +20,7 @@ class ContextTest(unittest.TestCase):
         vault.apply(vault.plan(self.root, language='English', workspace=self.base / 'ws'), git=False)
         today = datetime.date.today().isoformat()
         (self.root / '+' / f'{today} — harvest claude abcd1234.md').write_text(
-            '---\ntype: output\n---\n\n# Harvest\n\n## New\n\n'
+            '---\ntype: output\ndraft: true\n---\n\n# Harvest\n\n## New\n\n'
             '- **decision:** The pilot ships on 15 October.\n  > quote\n'
             "- **decision · assistant's suggestion or result; not confirmed by the owner:** Use a bigger model.\n  > q\n"
             '- **open item:** Invite two colleagues to the repository.\n  > q\n\n'
@@ -36,6 +36,11 @@ class ContextTest(unittest.TestCase):
         self.assertNotIn('light build', text)
         self.assertIn('1 draft digests (+/)', text)
         self.assertLessEqual(len(context.pack(self.root, max_chars=200)), 202)
+
+    def test_a_fully_decided_digest_no_longer_waits_for_review(self):
+        today = datetime.date.today().isoformat()
+        (self.root / '+' / f'{today} — harvest codex ffff0000.md').write_text('---\ntype: output\n---\n\n## New\n\n- **fact:** Done.\n')
+        self.assertIn('1 draft digests (+/)', context.pack(self.root))
 
     def test_vault_wires_session_start_and_a_gitignored_workspace_pointer(self):
         settings = json.loads((self.root / '.claude' / 'settings.local.json').read_text())

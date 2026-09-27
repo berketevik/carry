@@ -1,5 +1,4 @@
 """carry harvest: thread discovery, provenance, attribution, vault comparison, idempotence, pending."""
-import io
 import json
 import os
 from pathlib import Path
@@ -305,7 +304,7 @@ class HarvestTest(unittest.TestCase):
 
     def test_a_second_harvest_the_same_day_keeps_the_first_digest(self):
         exchanges = [('The pilot ships on 15 October, decided.', 'Noted.')]
-        path = self.thread('acac1313', exchanges)
+        self.thread('acac1313', exchanges)
         first_item = dict(type='decision', statement='The pilot ships on 15 October.', exchange=1, quote='pilot ships on 15 October')
         with self.items(first_item), patch.object(jev, 'api_key', return_value=None):
             first = harvest.run(self.ws, which='claude:sonnet', progress=lambda m: None)['digests'][0]

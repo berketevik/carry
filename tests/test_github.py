@@ -1,7 +1,5 @@
 """GitHub snapshots: hostile archives, exact revisions, errors and source isolation."""
 import io
-import json
-from pathlib import Path
 import tarfile
 from unittest.mock import patch
 from dataclasses import replace

@@ -52,6 +52,14 @@ def _digests(root, days=DAYS, today=None):
     return found
 
 
+def _still_draft(path):
+    try:
+        head = path.read_text(errors='ignore').split('\n---', 1)[0]
+    except OSError:
+        return False
+    return bool(re.search(r'(?m)^draft:\s*true\s*$', head))
+
+
 def _items(path):
     """(kind, statement) per item line, skipping sections for done or already recorded items."""
     section, out = '', []
@@ -101,7 +109,8 @@ def pack(root, workspace=None, language=None, max_chars=MAX_CHARS, today=None):
     lines += [f'## {H["open"]}', ''] + (opens[:12] or [f'- {H["none"]}']) + ['']
     if decisions:
         lines += [f'## {H["decisions"]}', ''] + decisions[:8] + ['']
-    review = [f'{len(digests)} {H["drafts"]} (+/)'] if digests else []
+    waiting = [p for _, p in digests if _still_draft(p)]  # a fully decided digest waits for nobody
+    review = [f'{len(waiting)} {H["drafts"]} (+/)'] if waiting else []
     if workspace is not None:
         try:
             from .lifecycle import list_proposals

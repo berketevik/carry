@@ -1,12 +1,15 @@
 """`carry harvest`: durable items from finished Claude Code / Codex threads of a vault.
 
 Measured design (2026-09-27, 7 real threads against a 142-item reference): Sonnet
-extracts items with a verbatim quote; code checks type, quote and speaker; Jev, when
-a key is configured, checks support, owner attribution, durability and later
-withdrawal, then compares each item with the vault through recall. Output is one
-immutable raw per thread under sources/carry/harvest/ and one draft digest in the +/ inbox.
-Nothing edits, merges or deletes an existing note; nothing is accepted automatically.
-An extraction or judge failure leaves the thread pending for the next run.
+extracts items with a verbatim quote; code checks type, quote and speaker. When Jev is
+the chosen checker it also checks support, owner attribution, durability and later
+withdrawal (both speakers), then compares each item with the vault through recall:
+already recorded, a real conflict, or an open item done or dropped since. Without Jev
+the owner's assistant compares (known or real conflict only; it never closes an item).
+Output is one immutable raw per thread under sources/carry/harvest/ and one draft digest
+in the +/ inbox, which the owner decides item by item (carry.digest). Nothing edits,
+merges or deletes an existing note; nothing is accepted automatically. An extraction or
+judge failure leaves the thread pending for the next run.
 """
 import datetime
 import hashlib
@@ -400,7 +403,6 @@ def compare(item, workspace, key, since=None):
             qs[f'p{i + 1}_about'] = dict(type='noul', instructions=f"Is passage p{i + 1} about the same task as the candidate's open item (not just the same project)?")
     answers = jev.call(dict(state=state, model=jev.DEFAULT_MODEL, questions=qs), key)['answers']
     same = max((jev.probability(answers[f'p{i + 1}_same']['noul']), evidence[i]['path']) for i in range(len(evidence)))
-    contra = max((jev.probability(answers[f'p{i + 1}_contra']['noul']), evidence[i]['path']) for i in range(len(evidence)))
     if item['type'] == 'open_item':
         p = lambda i, q: jev.probability(answers[f'p{i + 1}_{q}']['noul'])
         dated = lambda i: evidence[i].get('date') or ''

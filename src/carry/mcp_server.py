@@ -15,7 +15,6 @@ import sys
 from . import __version__, lifecycle
 from .config import open_workspace
 from .errors import CarryError
-from .index import maybe_refresh
 from .recall import recall
 from .status import status
 

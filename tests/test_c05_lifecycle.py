@@ -6,11 +6,10 @@ import os
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import replace
 from unittest import mock
 
 from _support import SRC, WorkspaceCase, tree_digest
-from carry import capture, index, lifecycle, store
+from carry import capture, lifecycle, store
 from carry.errors import CarryError, RevisionConflict, SourceError
 from carry.markdown import parse_frontmatter
 from carry.mcp_server import available_tools, call_tool

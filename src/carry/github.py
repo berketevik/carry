@@ -19,7 +19,7 @@ from urllib.parse import quote, urlsplit
 
 from .config import SOURCE_ID_RE, SourceConfig, Workspace
 from .errors import CarryError
-from .persistence import atomic_text, writer_lock
+from .persistence import writer_lock
 
 MAX_ARCHIVE = 200_000_000
 MAX_CONTENT = 100_000_000

@@ -6,7 +6,6 @@ installed version and `uv tool upgrade carry` updates both. Built locally, it is
 not quarantined; it is ad-hoc signed. Needs the Xcode Command Line Tools (swiftc).
 """
 from importlib import resources
-import os
 from pathlib import Path
 import platform
 import plistlib

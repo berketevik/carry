@@ -1,6 +1,5 @@
 """Shared test scaffolding: real filesystem and SQLite, deterministic embeddings."""
 import hashlib
-import os
 import sys
 import tempfile
 import unittest

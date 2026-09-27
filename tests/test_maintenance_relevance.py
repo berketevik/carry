@@ -1,5 +1,4 @@
 """Background lifecycle and retrieval quality regressions with no network."""
-import json
 import os
 import time
 from dataclasses import replace
