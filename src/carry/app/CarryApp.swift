@@ -166,7 +166,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @Published var githubAccount = ""
     @Published var job: [String: Any] = [:]
     // Navigation, settings and the vault browser.
-    @Published var page = "Overview"
+    @Published var page = ProcessInfo.processInfo.environment["CARRY_START_PAGE"] ?? "Overview"
     @Published var language = Lang.code {
         didSet { Lang.code = language; UserDefaults.standard.set(language, forKey: "language") }
     }
@@ -548,7 +548,8 @@ struct MarkdownText: View {
         case .code:
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(b.text).font(.system(.callout, design: .monospaced)).padding(10)
-            }.background(Color.secondary.opacity(0.08)).clipShape(RoundedRectangle(cornerRadius: 6))
+            }.frame(minWidth: 0, idealWidth: 0, maxWidth: .infinity, alignment: .leading)
+            .background(Color.secondary.opacity(0.08)).clipShape(RoundedRectangle(cornerRadius: 6))
         case .rule:
             Divider()
         }
@@ -567,7 +568,9 @@ struct FlowLayout: Layout {
         return ideal.width <= maxWidth ? ideal : view.sizeThatFits(ProposedViewSize(width: maxWidth, height: nil))
     }
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let maxWidth = proposal.width ?? .infinity
+        // Asked for an ideal size (no width offered), report the widest single child: a whole
+        // row laid out in one line would make split views open wider than the window.
+        let maxWidth = proposal.width ?? subviews.map { $0.sizeThatFits(.unspecified).width }.max() ?? 0
         var x: CGFloat = 0, y: CGFloat = 0, line: CGFloat = 0, widest: CGFloat = 0
         for view in subviews {
             let s = size(view, maxWidth)
@@ -1210,7 +1213,7 @@ struct ReviewView: View {
                     }
                 }
             }.padding(18).frame(minWidth: 300, idealWidth: 360, maxWidth: 460)
-            NoteView(model: model).frame(minWidth: 420)
+            NoteView(model: model).frame(minWidth: 380, idealWidth: 480, maxWidth: .infinity)
         }
         .confirmationDialog(T("Approve \(drafts.count) drafts?", "\(drafts.count) taslak onaylansın mı?"), isPresented: $confirmAll) {
             Button(T("Approve all", "Hepsini onayla")) { model.approveMany(drafts.map { str($0, "path") }) }
@@ -1218,10 +1221,12 @@ struct ReviewView: View {
             Text(T("Their draft mark is removed; the text does not change. Approve only what you trust without reading.",
                    "Taslak işaretleri kaldırılır; metin değişmez. Yalnızca okumadan güvendiğiniz taslakları onaylayın."))
         }
-        .onAppear {
-            let paths = Set(all.map { str($0, "path") })
-            if !paths.contains(str(model.note, "path", "")), let first = all.first { model.openNote(str(first, "path")) }
-        }
+        .onAppear(perform: openFirst)
+        .onChange(of: all.count) { openFirst() }  // the list may arrive after the page opens
+    }
+    func openFirst() {
+        let paths = Set(all.map { str($0, "path") })
+        if !paths.contains(str(model.note, "path", "")), let first = all.first { model.openNote(str(first, "path")) }
     }
 }
 
@@ -1561,7 +1566,7 @@ struct VaultView: View {
                     .onChange(of: str(model.note, "path", "")) { if !str(model.note, "path", "").isEmpty { withAnimation { proxy.scrollTo(str(model.note, "path", "")) } } }
                 }
             }.padding(16).frame(minWidth: 270, idealWidth: 320, maxWidth: 440)
-            NoteView(model: model).frame(minWidth: 420)
+            NoteView(model: model).frame(minWidth: 380, idealWidth: 480, maxWidth: .infinity)
         }
     }
 }
@@ -2667,7 +2672,10 @@ struct ContentView: View {
                     case "Settings": SettingsView(model: model).disabled(model.busy)
                     default: Overview(model: model)
                     }
-                }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                // An explicit ideal width: pages must shrink to the window, not ask for their
+                // one-line text width (which pushed the sidebar off-screen).
+                .frame(minWidth: 560, idealWidth: 780, maxWidth: .infinity, maxHeight: .infinity)
                 Divider()
                 HStack {
                     if model.busy { ProgressView().controlSize(.small); Text(L("Working locally…")) }
