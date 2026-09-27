@@ -23,7 +23,7 @@ pilot check, not a completed automated test.
 
 ```sh
 gh auth login && gh auth setup-git        # the repository is private for now
-uv tool install "git+https://github.com/berketevik/carry"
+uv tool install "git+https://github.com/<owner>/carry"   # the repository you were given
 carry setup
 ```
 
