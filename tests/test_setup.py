@@ -128,6 +128,15 @@ class AppInstallTest(unittest.TestCase):
                     app_install.install(target=other.parent)
             self.assertTrue((other / 'Info.plist').exists())
 
+    def test_build_failure_shows_the_first_errors_and_a_known_fix(self):
+        from carry import app_install
+        output = ("<unknown>:0: error: redefinition of module 'SwiftBridging'\n"
+                  "note: previously defined here\n" + "context line\n" * 40)
+        detail = app_install.build_error(output)
+        self.assertTrue(detail.startswith("<unknown>:0: error: redefinition of module 'SwiftBridging'"))
+        self.assertIn('module.modulemap.bak', detail)
+        self.assertEqual(app_install.build_error('plain failure'), 'plain failure')
+
     def test_app_source_ships_with_the_package(self):
         from importlib import resources
         source = (resources.files('carry') / 'app' / 'CarryApp.swift').read_text(encoding='utf-8')

@@ -42,6 +42,18 @@ def _ours(app):
         return False
 
 
+def build_error(output):
+    """The compiler's first errors, not its tail: the tail is notes and context."""
+    lines = [line.strip() for line in output.splitlines()]
+    errors = [line for line in lines if 'error:' in line][:3]
+    detail = ' | '.join(errors) if errors else output.strip()[-300:]
+    if "redefinition of module 'SwiftBridging'" in output:
+        # An old Command Line Tools file left next to its newer replacement.
+        detail += (' | fix: sudo mv /Library/Developer/CommandLineTools/usr/include/swift/module.modulemap'
+                   ' /Library/Developer/CommandLineTools/usr/include/swift/module.modulemap.bak')
+    return detail
+
+
 def install(target=DEFAULT_PATH, workspace=None, python=None):
     if sys.platform != 'darwin':
         raise CarryError('app_requires_macos')
@@ -64,7 +76,7 @@ def install(target=DEFAULT_PATH, workspace=None, python=None):
                                 str(swift), '-o', str(app / 'Contents' / 'MacOS' / 'Carry')],
                                capture_output=True, text=True)
         if build.returncode != 0:
-            raise CarryError('app_build_failed: ' + (build.stderr or build.stdout).strip()[-300:])
+            raise CarryError('app_build_failed: ' + build_error(build.stderr or build.stdout))
         with open(app / 'Contents' / 'Info.plist', 'wb') as f:
             plistlib.dump(dict(CFBundleExecutable='Carry', CFBundleIdentifier=BUNDLE_ID, CFBundleName='Carry',
                                CFBundleDisplayName='Carry', CFBundlePackageType='APPL', CFBundleShortVersionString=_version(),
