@@ -11,6 +11,7 @@ A failed call returns the candidates unjudged with a warning; recall never block
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 import time
@@ -63,16 +64,38 @@ def store_key(key):
                     '-w', key.strip()], capture_output=True, check=True, timeout=10)
 
 
+TOPIC = ('Is passage {p} about the topic the search terms name, so that it would be a useful result for this search? '
+         'A passage that only shares a word with the search does not count.')
+TOPIC_CRITERIA = {'true': 'The passage is substantially about what the search terms name.',
+                  'false': 'The passage is about something else, or mentions the terms only in passing.'}
+TOPIC_BEST = ('Which passage is the most useful result for these search terms? Prefer a curated note on the topic '
+              'over a log or raw chat that merely mentions it.')
+QUESTION_WORDS = {'ne', 'neden', 'niye', 'nasıl', 'kim', 'kime', 'hangi', 'kaç', 'nerede', 'nereye', 'ne zaman',
+                  'mı', 'mi', 'mu', 'mü', 'mısın', 'misin', 'what', 'why', 'how', 'who', 'which', 'when', 'where',
+                  'does', 'do', 'did', 'is', 'are', 'can', 'should'}
+
+
+def is_question(query):
+    """A search box often holds a topic, not a question; Jev must be asked the matching question."""
+    text = (query or '').strip().lower()
+    if text.endswith('?'):
+        return True
+    words = re.findall(r'\w+', text, flags=re.UNICODE)
+    return len(words) > 6 or any(w in QUESTION_WORDS for w in words)
+
+
 def request(query, rows, model=DEFAULT_MODEL):
     ids = [f'p{i + 1}' for i in range(len(rows))]
     state = {'question': mask(query)[0], 'passages': {
         pid: {'source': mask(row.get('path', ''))[0], 'section': mask(row.get('heading', ''))[0], 'text': mask(row.get('text', ''))[0]}
         for pid, row in zip(ids, rows)}}
     questions = {}
+    question = is_question(query)
     for pid in ids:
-        questions[pid + '_answers'] = dict(type='noul', instructions=ANSWERS.format(p=pid), criteria=ANSWER_CRITERIA)
+        questions[pid + '_answers'] = dict(type='noul', instructions=(ANSWERS if question else TOPIC).format(p=pid),
+                                           criteria=ANSWER_CRITERIA if question else TOPIC_CRITERIA)
         questions[pid + '_injection'] = dict(type='noul', instructions=INJECTION.format(p=pid))
-    questions['best'] = dict(type='choice', instructions=BEST, criteria=dict(
+    questions['best'] = dict(type='choice', instructions=BEST if question else TOPIC_BEST, criteria=dict(
         {pid: f'Passage {pid} ({state["passages"][pid]["source"]})' for pid in ids},
         none='No passage answers the question.'))
     return ids, dict(state=state, model=model, questions=questions)

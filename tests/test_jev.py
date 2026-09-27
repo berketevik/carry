@@ -108,6 +108,17 @@ class JevTest(WorkspaceCase):
             recall(self.workspace, 'Q4 budget')
         self.assertEqual(sent[0]['model'], 'jev-1.13.0')
 
+    def test_topic_searches_ask_for_relevance_and_questions_ask_for_answers(self):
+        self.assertFalse(jev.is_question('varlık sensörü'))
+        self.assertFalse(jev.is_question('Home Assistant'))
+        self.assertTrue(jev.is_question('Evdeki varlık sensörü nasıl çalışıyor?'))
+        self.assertTrue(jev.is_question('Hermes hangi modeli kullanıyor'))
+        self.assertTrue(jev.is_question('Which ad network was caught spoofing events'))
+        _, topic = jev.request('Home Assistant', [dict(path='a.md', heading='h', text='t')])
+        _, question = jev.request('Which runtime hosts Home Assistant?', [dict(path='a.md', heading='h', text='t')])
+        self.assertIn('about the topic', topic['questions']['p1_answers']['instructions'])
+        self.assertIn('answers the question', question['questions']['p1_answers']['instructions'])
+
     def test_injected_passage_is_excluded(self):
         def fake(body, key, timeout=jev.TIMEOUT):
             n = len(body['state']['passages'])
