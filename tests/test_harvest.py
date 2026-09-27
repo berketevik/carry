@@ -144,6 +144,24 @@ class HarvestTest(unittest.TestCase):
             self.assertEqual(harvest.compare(dict(type='fact', statement='Key moved.', quote='key'), self.ws, 'k'), ('new', None))
         self.assertEqual(len(sent), 1)
 
+    def test_digest_is_not_served_as_a_note_where_the_inbox_is_indexed(self):
+        from dataclasses import replace
+        from carry.index import build
+        from carry.recall import recall
+        self.ws = self.ws.with_sources([replace(s, exclude=()) for s in self.ws.sources]).save()
+        self.thread('abab1212', [('The pilot ships on 15 October, decided.', 'Noted.')])
+        item = dict(type='decision', statement='The pilot ships on 15 October.', exchange=1, quote='pilot ships on 15 October')
+        with self.items(item), patch.object(jev, 'api_key', return_value=None):
+            digest = harvest.run(self.ws, which='claude:sonnet', progress=lambda m: None)['digests'][0]
+        build(self.ws)
+        served = lambda **kw: [e['path'] for e in recall(self.ws, 'pilot ships 15 October', **kw).get('evidence', [])]
+        self.assertNotIn(digest, served())
+        self.assertIn(digest, served(include_drafts=True))
+        path = self.root / digest
+        path.write_text(path.read_text().replace('draft: true\n', ''))
+        build(self.ws)
+        self.assertIn(digest, served())
+
     def test_filed_and_active_threads_are_skipped_and_reruns_are_idempotent(self):
         self.thread('dddd4444', [('Save this.', 'Saved to notes.')], writes='notes/Plan.md')
         self.thread('eeee5555', [('Still talking.', 'Yes.')], age=60)

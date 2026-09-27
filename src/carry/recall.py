@@ -175,6 +175,14 @@ def is_secret(metadata):
     return str((metadata or {}).get("sensitivity", "")).lower() == "secret"
 
 
+def is_pending_digest(metadata):
+    """A chat digest waits for review like a proposal until approval clears its draft flag,
+    wherever it lands: a folder that does not exclude +/ must not serve it as an accepted note."""
+    metadata = metadata or {}
+    return (isinstance(metadata.get("harvest"), dict) and "extractor" in metadata["harvest"]
+            and metadata.get("draft") in (True, "true"))
+
+
 def _local_only(workspace, files, row):
     """Passages an external judge must never see: notes marked secret. With Jev chosen,
     every other passage may be sent; without it nothing is sent at all."""
@@ -244,6 +252,7 @@ def _file_records(con, source_ids=None):
             metadata = {}
         result[(row[0], row[1])] = dict(
             metadata={k: metadata[k] for k in METADATA_KEYS if k in metadata},
+            pending_digest=is_pending_digest(metadata),
             record_id=row[3], revision=row[4], state=row[5],
             current=bool(row[6]), superseded_by=row[7] or "", digest=row[8])
     return result
@@ -278,7 +287,7 @@ def _eligible(workspace, files, include_drafts=False, include_history=False, dia
                 diagnostics['warnings'].append('correction_target_conflict')
         if current['state'] == 'rejected':
             continue
-        if current['state'] == 'draft' and not include_drafts:
+        if (current['state'] == 'draft' or record.get('pending_digest')) and not include_drafts:
             continue
         if not current['current'] and not include_history:
             continue
