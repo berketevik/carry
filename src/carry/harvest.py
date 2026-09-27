@@ -372,10 +372,7 @@ def run(workspace, root=None, dry_run=False, include_filed=False, limit=None, mi
     root = vault_root(workspace, root)
     min_exchanges = MIN_EXCHANGES if min_exchanges is None else min_exchanges
     if language is None:
-        try:
-            language = json.loads((root / '.carry' / 'vault.json').read_text()).get('language', 'English')
-        except (OSError, ValueError):
-            language = 'English'
+        language = draft_language(workspace, root)
     state = _state(workspace)
     key = jev.api_key()
     report = dict(threads=0, harvested=0, skipped_filed=0, skipped_active=0, pending=0, items=0, digests=[])
@@ -476,6 +473,11 @@ def spawn_from_hook(state_dir, payload, root, language=None, python=None):
     transcript = payload.get('transcript_path')
     if not transcript or not in_vault(payload.get('cwd') or '', root):
         return False
+    try:
+        # The app's draft language wins over the --language baked into older hook commands.
+        language = json.loads((Path(state_dir) / LANGUAGE_NAME).read_text()).get('language') or language
+    except (OSError, ValueError):
+        pass
     args = [python or sys.executable, '-I', '-m', 'carry.cli', '--workspace', str(state_dir), 'harvest',
             '--thread', str(transcript), '--vault', str(root)] + (['--language', language] if language else [])
     log = open(Path(state_dir) / 'harvest.log', 'a')
@@ -487,6 +489,8 @@ LAUNCH_LABEL = 'local.carry.harvest'
 
 
 def schedule_plist(carry_bin, state_dir, hour=21, minute=30, extra=()):
+    from xml.sax.saxutils import escape
+    carry_bin, state_dir, extra = escape(str(carry_bin)), escape(str(state_dir)), [escape(str(a)) for a in extra]
     return f'''<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -497,3 +501,94 @@ def schedule_plist(carry_bin, state_dir, hour=21, minute=30, extra=()):
   <key>StandardErrorPath</key><string>{state_dir}/harvest.log</string>
 </dict></plist>
 '''
+
+
+def schedule_path():
+    return Path.home() / 'Library' / 'LaunchAgents' / (LAUNCH_LABEL + '.plist')
+
+
+LANGUAGE_NAME = 'harvest.json'
+
+
+def draft_language(workspace, root=None):
+    """Language of harvest drafts: the app's setting, else the vault's, else the nightly job's, else English."""
+    try:
+        chosen = json.loads((Path(workspace.state_dir) / LANGUAGE_NAME).read_text()).get('language')
+        if chosen:
+            return chosen
+    except (OSError, ValueError):
+        pass
+    if root is not None:
+        try:
+            chosen = json.loads((Path(root) / '.carry' / 'vault.json').read_text()).get('language')
+            if chosen:
+                return chosen
+        except (OSError, ValueError):
+            pass
+    # Before the app stored a choice, the nightly job's --language was the only record of it.
+    status = schedule_status()
+    owner = status.get('workspace')
+    if status.get('language') and owner and Path(owner).expanduser().resolve() == Path(workspace.state_dir).resolve():
+        return status['language']
+    return 'English'
+
+
+def set_draft_language(workspace, language):
+    if language not in ('Turkish', 'English'):
+        raise CarryError('invalid_harvest_language')
+    atomic_text(Path(workspace.state_dir) / LANGUAGE_NAME, json.dumps(dict(language=language)) + '\n')
+    return language
+
+
+def _loaded():
+    try:
+        return subprocess.run(['launchctl', 'print', f'gui/{os.getuid()}/{LAUNCH_LABEL}'],
+                              capture_output=True, timeout=10).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def schedule_status():
+    """What the nightly launchd job runs, read back from its plist, and whether launchd has it."""
+    import plistlib
+    path = schedule_path()
+    try:
+        with open(path, 'rb') as f:
+            data = plistlib.load(f)
+    except (OSError, ValueError):
+        return dict(installed=False, loaded=_loaded())
+    args = list(data.get('ProgramArguments', []))
+    when = data.get('StartCalendarInterval', {})
+    opt = lambda flag: args[args.index(flag) + 1] if flag in args[:-1] else None
+    return dict(installed=True, loaded=_loaded(), path=str(path), hour=when.get('Hour'), minute=when.get('Minute'),
+                vault=opt('--vault'), language=opt('--language'), workspace=opt('--workspace'))
+
+
+def install_schedule(carry_bin, state_dir, vault=None, language=None, hour=21, minute=30):
+    if not (0 <= int(hour) <= 23 and 0 <= int(minute) <= 59):
+        raise CarryError('invalid_schedule_time')
+    path, target = schedule_path(), f'gui/{os.getuid()}'
+    previous = path.read_text() if path.is_file() else None
+    subprocess.run(['launchctl', 'bootout', target, str(path)], capture_output=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    extra = (['--vault', str(vault)] if vault else []) + (['--language', language] if language else [])
+    path.write_text(schedule_plist(carry_bin, state_dir, hour=int(hour), minute=int(minute), extra=extra))
+    if subprocess.run(['launchctl', 'bootstrap', target, str(path)], capture_output=True).returncode != 0:
+        # Put the job that was there back rather than leave a plist launchd does not run.
+        if previous is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_text(previous)
+            if subprocess.run(['launchctl', 'bootstrap', target, str(path)], capture_output=True).returncode != 0:
+                raise CarryError('schedule_restore_failed')
+        raise CarryError('schedule_load_failed')
+    return schedule_status()
+
+
+def remove_schedule():
+    path = schedule_path()
+    subprocess.run(['launchctl', 'bootout', f'gui/{os.getuid()}', str(path)], capture_output=True)
+    if _loaded():
+        raise CarryError('schedule_remove_failed')
+    path.unlink(missing_ok=True)
+    return dict(installed=False, loaded=False)

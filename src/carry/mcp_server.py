@@ -48,7 +48,11 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "Natural-language question."},
+                "query": {"type": "string", "description": (
+                    "Natural-language question. Keep time words in it (last week, yesterday, "
+                    "geçen hafta, son 7 gün, in September): results are then limited to notes "
+                    "dated in that period, and a 'what happened then' question returns that "
+                    "period's notes newest first. Each passage carries its date.")},
                 "queries": {"type": "array", "items": {"type": "string"}, "maxItems": 4,
                             "description": ("Optional 2-4 short keyword variants of the question (the key terms "
                                             "as the notes would write them, an English or Turkish variant, "

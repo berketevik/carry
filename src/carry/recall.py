@@ -19,7 +19,7 @@ from .index import db_is_usable, fingerprint, health, open_readonly, read_manife
 MAX_QUERY_CHARS = 2000
 BUDGET_LIMITS = {"top_k": (1, 20), "max_chars": (200, 20000), "max_per_document": (1, 10)}
 
-METADATA_KEYS = ("type", "summary", "created", "updated", "sources", "provenance",
+METADATA_KEYS = ("type", "summary", "created", "date", "updated", "sources", "provenance",
                  "confidence", "sensitivity", "draft", "valid_until", "review_by")
 
 try:  # optional acceleration
@@ -247,6 +247,12 @@ def _file_records(con, source_ids=None):
     return result
 
 
+def _evidence_date(row, record):
+    from .timeframe import row_date
+    day = row.get("date") or row_date(row.get("heading"), row["path"], record.get("metadata"))
+    return day.isoformat() if day else None
+
+
 def citation(source_id, path, title):
     return f"{title} ({source_id}:{path})"
 
@@ -310,7 +316,77 @@ def catalog_entries(workspace, source_ids=None, folder=None, max_chars=CATALOG_M
     return dict(ok=True, entries=entries, total=len(first), truncated=truncated)
 
 
-def recall(workspace, query, source_ids=None, budget=None, include_history=False, include_drafts=False, queries=()):
+LISTING_TEXT = 600  # per passage when a time range is listed, so more of the range fits the budget
+
+
+def _dated_rows(con, eligible, files, frame):
+    """Passages of eligible files that belong to the frame, with the date they belong to."""
+    from .timeframe import row_date
+    out = []
+    for cid, sid, path, title, heading, text in con.execute(
+            "SELECT id,source_id,path,title,heading,text FROM chunks ORDER BY id"):
+        key = (sid, path)
+        if key not in eligible:
+            continue
+        metadata = files.get(key, {}).get("metadata")
+        day = row_date(heading, path, metadata, frame)
+        if frame.contains(day):
+            out.append(dict(id=cid, source_id=sid, path=path, title=title, heading=heading, text=text, date=day, metadata=metadata))
+    return out
+
+
+RAW_TYPES = ("chat-raw", "source", "clip")
+
+
+def _written(row):
+    """On the same day, a written-up note says what happened better than a raw chat log or a clip."""
+    kind = str((row.get("metadata") or {}).get("type", "")).lower()
+    return 0 if kind in RAW_TYPES or "chat-raw" in row["path"] else 1
+
+
+def topic_words(residual):
+    import re
+    from .timeframe import GENERIC, _lower
+    return [w for w in re.findall(r"\w+", _lower(residual)) if len(w) >= 3 and w not in GENERIC and not w.isdigit()]
+
+
+def _topic_rows(rows, residual):
+    """Rows about the question's topic words (matched by stem, for Turkish endings): a word in
+    the title or heading counts most, then how often the text repeats it. Weakly related rows
+    (less than half the best score) are left out."""
+    import re
+    from .timeframe import GENERIC, _lower
+    words = {w[:5] for w in topic_words(residual)}
+    if not words:
+        return []
+    scored = []
+    for row in rows:
+        head = _lower((row["title"] or "") + " " + (row["heading"] or "") + " " + row["path"])
+        text = _lower(row["text"])
+        score = sum(6 * (w in head) + min(text.count(w), 4) for w in words)
+        scored.append((score, row))
+    top = max((n for n, _ in scored), default=0)
+    return [row for n, row in sorted(scored, key=lambda x: -x[0]) if top and n >= max(2, top / 2)]
+
+
+def _listing(rows):
+    """One passage per note for "what happened then": the note's own dated section inside
+    the range, else its summary, else its first passage; newest first."""
+    # A raw chat log or clip only speaks for a day that has no written-up note.
+    written_days = {r["date"] for r in rows if _written(r)}
+    rows = [r for r in rows if _written(r) or r["date"] not in written_days]
+    best = {}
+    rank = lambda r: (r["date"], r["heading"] and r["heading"][:4].isdigit(), r["heading"] == "summary")
+    for row in rows:
+        key = (row["source_id"], row["path"])
+        if key not in best or rank(row) > rank(best[key]):
+            best[key] = row
+    ordered = sorted(best.values(), key=lambda r: (r["date"], _written(r), r["path"]), reverse=True)
+    return [dict(r, text=r["text"] if len(r["text"]) <= LISTING_TEXT else r["text"][:LISTING_TEXT].rsplit(" ", 1)[0] + " …",
+                 truncated=len(r["text"]) > LISTING_TEXT) for r in ordered], len(best)
+
+
+def recall(workspace, query, source_ids=None, budget=None, include_history=False, include_drafts=False, queries=(), today=None):
     """Return cited evidence, or an explicit no-evidence / unavailable state."""
     started = time.monotonic()
     workspace.validate()
@@ -344,9 +420,52 @@ def recall(workspace, query, source_ids=None, budget=None, include_history=False
             eligible, live = _eligible(workspace, files, include_drafts, include_history, diagnostics)
             diagnostics['pending_proposals'] = sum(f['state'] == 'draft' for f in live.values()
                 if not source_ids or f['source_id'] in source_ids)
-            candidates = search(workspace, query, con, limits['top_k'] * 3,
-                                source_ids=source_ids, diagnostics=diagnostics, eligible=eligible,
-                                queries=queries or (), files=files)
+            from .timeframe import parse as parse_time
+            frame = parse_time(query, today)
+            if frame is None:
+                candidates = search(workspace, query, con, limits['top_k'] * 3,
+                                    source_ids=source_ids, diagnostics=diagnostics, eligible=eligible,
+                                    queries=queries or (), files=files)
+            else:
+                # A named time: only passages dated inside it may answer.
+                dated = _dated_rows(con, eligible, files, frame)
+                in_range = {(r["source_id"], r["path"]) for r in dated}
+                dated_ids = {r["id"]: r["date"] for r in dated}
+                diagnostics["timeframe"] = dict(frame.to_json(), documents=len(in_range))
+                candidates = []
+                if not frame.activity:
+                    # A topic with a time: the time may be when it happened rather than when the
+                    # note was written ("why did the bill double in July?"). Passages dated inside
+                    # come first; the rest of the vault still answers after them.
+                    inside = []
+                    if in_range:
+                        found = search(workspace, frame.residual, con, limits['top_k'] * 3,
+                                       source_ids=source_ids, diagnostics=diagnostics, eligible=in_range,
+                                       queries=queries or (), files=files)
+                        inside = [dict(r, date=dated_ids[r["id"]], in_range=True) for r in found if r["id"] in dated_ids]
+                    outside_diag = {"warnings": []}
+                    outside = search(workspace, query, con, limits['top_k'] * 3, source_ids=source_ids,
+                                     diagnostics=outside_diag if inside else diagnostics, eligible=eligible,
+                                     queries=queries or (), files=files)
+                    seen = {r["id"] for r in inside}
+                    candidates = inside + [dict(r, in_range=False) for r in outside if r["id"] not in seen]
+                    diagnostics["timeframe"]["inside"] = len(inside)
+                if not candidates and not frame.activity:
+                    # Nothing judged relevant: list only the range's passages that share the
+                    # question's words, never the whole range as if it answered a topic.
+                    dated = _topic_rows(dated, frame.residual)
+                    diagnostics["timeframe"]["topic_filtered"] = True
+                    diagnostics["timeframe"]["topic"] = " ".join(topic_words(frame.residual))
+                if not candidates and dated:
+                    candidates, listed = _listing(dated)
+                    diagnostics["timeframe"]["listing"] = True
+                    # Count what the list can show: raw logs of days with a written note are left out.
+                    diagnostics["timeframe"]["documents"] = listed
+                    diagnostics["answerability"] = "date_range_listing"
+                    diagnostics["relevance_gate"] = "date_range"
+                    diagnostics.setdefault("mode", "date_range")
+                    # Shorter passages, twice as many: a range is read as a list.
+                    limits = dict(limits, top_k=limits['top_k'] * 2)
     except (OSError, sqlite3.Error, ValueError) as exc:
         return dict(ok=False, status="unavailable", error="index_read_failed:" + type(exc).__name__,
                     evidence=[], sources=[], budget=limits,
@@ -367,6 +486,7 @@ def recall(workspace, query, source_ids=None, budget=None, include_history=False
             citation=citation(row["source_id"], row["path"], row["title"]),
             url=citation_url(workspace.source(row["source_id"]), row["path"]),
             relevance_score=row.get("relevance_score"), vector_score=row.get("vector_score"),
+            date=_evidence_date(row, record), in_range=row.get("in_range"),
             record_id=record.get("record_id", ""), revision=record.get("revision", 1),
             state=record.get("state", "imported"), current=record.get("current", True),
             superseded_by=record.get("superseded_by", ""),

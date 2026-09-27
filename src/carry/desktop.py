@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import replace
 
 from . import capture, connections, index, lifecycle, github, maintenance
@@ -29,6 +30,68 @@ def executable_for(client):
         candidates += [Path('/Applications/Codex.app/Contents/Resources/codex'),
                        Path('/Applications/ChatGPT.app/Contents/Resources/codex')]
     return found or next((str(p) for p in candidates if p.is_file()), client)
+
+
+HARVEST_JOB = 'harvest-now.json'
+
+
+def harvest_vault(ws, requested):
+    """The vault a harvest from this workspace writes to: one of its own local sources."""
+    from . import vaultview
+    roots = {str(Path(s.root).expanduser().resolve()) for s in ws.sources if not s.github}
+    if requested:
+        chosen = str(Path(requested).expanduser().resolve())
+        if chosen not in roots:
+            raise CarryError('harvest_vault_not_a_source')
+        return chosen
+    sid = vaultview.default_vault(ws)
+    if not sid:
+        raise CarryError('no_sources')
+    return str(Path(ws.source(sid).root).expanduser().resolve())
+
+
+def harvest_job(ws, proc=None):
+    """State of the last harvest started from the app: running while its process lives."""
+    try:
+        job = json.loads((ws.state_dir / HARVEST_JOB).read_text())
+    except (OSError, ValueError):
+        return dict(running=False)
+    if proc is not None and proc.pid == job.get('pid'):
+        code = proc.poll()
+        state = dict(job, running=code is None, exit_code=code)
+    else:
+        state = dict(job, running=_is_harvest(job.get('pid'), ws.state_dir))
+    if not state['running']:
+        state.update(_harvest_result(ws, job.get('log_offset')))
+    return state
+
+
+def _harvest_result(ws, offset):
+    """What the finished run wrote to the log: how many chats it read and which drafts it made."""
+    import re
+    try:
+        with open(ws.state_dir / 'harvest.log', 'rb') as f:
+            f.seek(int(offset or 0))
+            text = f.read(200_000).decode('utf-8', errors='ignore')
+    except (OSError, ValueError, TypeError):
+        return {}
+    drafts = re.findall(r'(?m)draft: (.+\.md)\s*$', text)
+    threads = sum(int(n) for n in re.findall(r'threads (\d+):', text))
+    return dict(drafts=drafts, threads=threads)
+
+
+def _is_harvest(pid, state_dir):
+    """True while `pid` is still a harvest of this workspace (a reused pid is some other command)."""
+    try:
+        command = subprocess.run(['ps', '-p', str(int(pid)), '-o', 'command='], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, ValueError, TypeError, subprocess.SubprocessError):
+        return False
+    return ' harvest' in command and str(state_dir) in command
+
+
+def carry_executable():
+    beside = Path(sys.executable).with_name('carry')
+    return str(beside) if beside.is_file() else (shutil.which('carry') or 'carry')
 
 
 class Bridge:
@@ -180,6 +243,86 @@ class Bridge:
             self.vault_plans.clear()
             maintenance.start(Workspace.load(state))
             return result
+        if action in ('vault_browse', 'vault_note', 'vault_resolve', 'vault_backlinks', 'vault_overview', 'note_create', 'note_approve', 'note_approve_many'):
+            from . import vaultview
+            sid = request.get('source_id') or vaultview.default_vault(ws)
+            if not sid:
+                raise CarryError('no_sources')
+            if action == 'vault_browse':
+                return vaultview.browse(ws, sid)
+            if action == 'vault_note':
+                return vaultview.note(ws, sid, request['path'])
+            if action == 'vault_backlinks':
+                return vaultview.backlinks(ws, sid, request['path'])
+            if action == 'note_create':
+                created = vaultview.create_note(ws, sid, request.get('title', ''), request.get('body', ''))
+                maintenance.start(ws)
+                return created
+            if action == 'note_approve':
+                return vaultview.approve_note(ws, sid, request['path'])
+            if action == 'note_approve_many':
+                return vaultview.approve_many(ws, sid, request.get('paths'))
+            if action == 'vault_resolve':
+                return vaultview.resolve_link(ws, sid, request['target'], request.get('from'))
+            return vaultview.overview(ws, sid)
+        if action == 'settings':
+            from . import vaultview
+            return vaultview.settings(ws)
+        if action == 'assistants':
+            from . import vaultview
+            return vaultview.assistants(ws)
+        if action == 'settings_update':
+            from . import vaultview
+            updated = vaultview.update(ws, retrieval=request.get('retrieval'), sources=request.get('sources'))
+            if request.get('sources'):
+                maintenance.start(updated)
+            return vaultview.settings(updated)
+        if action == 'source_remove':
+            from . import vaultview
+            updated = vaultview.remove_source(ws, request['source_id'])
+            maintenance.start(updated)
+            return vaultview.settings(updated)
+        if action == 'harvest_schedule':
+            from . import harvest, vaultview
+            current = vaultview.schedule_for(ws)
+            if current.get('installed') and not current.get('this_workspace') and request.get('replace') is not True:
+                # One user-wide launchd job: never change another workspace's schedule silently.
+                raise CarryError('schedule_other_workspace')
+            if request.get('enabled') is False:
+                harvest.remove_schedule()
+                return vaultview.schedule_for(ws)
+            vault = harvest_vault(ws, request.get('vault'))
+            harvest.set_draft_language(ws, harvest.draft_language(ws, vault))  # pin the language the job used so far
+            harvest.install_schedule(carry_executable(), ws.state_dir, vault=vault, language=None,
+                                     hour=request.get('hour', 21), minute=request.get('minute', 30))
+            return vaultview.schedule_for(ws)
+        if action == 'harvest_language':
+            from . import harvest, vaultview
+            if request.get('language') not in ('Turkish', 'English'):
+                raise CarryError('invalid_harvest_language')
+            current = vaultview.schedule_for(ws)
+            if current.get('this_workspace') and current.get('language'):
+                # An older nightly job carries --language, which would override the setting:
+                # re-create it without the argument before the setting changes.
+                harvest.install_schedule(carry_executable(), ws.state_dir, vault=current.get('vault'), language=None,
+                                         hour=current.get('hour', 21), minute=current.get('minute', 30))
+            harvest.set_draft_language(ws, request['language'])
+            return vaultview.settings(ws)
+        if action == 'harvest_now':
+            from . import harvest
+            if harvest_job(ws).get('running'):
+                return dict(started=False, **harvest_job(ws))
+            vault = harvest_vault(ws, None)
+            args = [carry_executable(), '--workspace', str(ws.state_dir), 'harvest', '--vault', vault]
+            log_path = ws.state_dir / 'harvest.log'
+            offset = log_path.stat().st_size if log_path.exists() else 0
+            with open(log_path, 'a') as log:
+                proc = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
+            self.harvest_proc = proc
+            atomic_text(ws.state_dir / HARVEST_JOB, json.dumps(dict(pid=proc.pid, started_at=time.time(), vault=vault, log_offset=offset)) + '\n')
+            return dict(started=True, **harvest_job(ws, proc))
+        if action == 'harvest_status':
+            return harvest_job(ws, getattr(self, 'harvest_proc', None))
         if action == 'connection_rollback':
             return connections.rollback(ws, request['id'])
         if action == 'connection_test':

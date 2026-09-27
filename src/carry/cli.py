@@ -358,19 +358,14 @@ def cmd_harvest(args):
         _print(dict(cron=line), args.json, ['launchd is macOS only; add this line with `crontab -e`:', line])
         return EXIT_OK
     if args.install_schedule or args.remove_schedule:
-        import shutil, subprocess
-        plist = Path.home() / 'Library' / 'LaunchAgents' / (harvest.LAUNCH_LABEL + '.plist')
-        target = f'gui/{os.getuid()}'
-        subprocess.run(['launchctl', 'bootout', target, str(plist)], capture_output=True)
+        import shutil
         if args.remove_schedule:
-            plist.unlink(missing_ok=True)
+            harvest.remove_schedule()
             _print(dict(schedule='removed'), args.json, ['nightly harvest removed'])
             return EXIT_OK
         carry_bin = shutil.which('carry') or os.path.abspath(sys.argv[0])
-        plist.parent.mkdir(parents=True, exist_ok=True)
-        extra = (['--vault', args.vault] if args.vault else []) + (['--language', args.language] if args.language else [])
-        plist.write_text(harvest.schedule_plist(carry_bin, ws.state_dir, extra=extra))
-        subprocess.run(['launchctl', 'bootstrap', target, str(plist)], capture_output=True)
+        harvest.install_schedule(carry_bin, ws.state_dir, vault=args.vault, language=args.language)
+        plist = harvest.schedule_path()
         _print(dict(schedule=str(plist)), args.json, [f'nightly harvest at 21:30: {plist}'])
         return EXIT_OK
     report = harvest.run(ws, root=args.vault, dry_run=args.dry_run, include_filed=args.include_filed,
