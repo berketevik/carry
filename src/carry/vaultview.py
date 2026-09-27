@@ -152,7 +152,8 @@ def browse(ws, source_id):
             status=_text(front.get('status')), draft=front.get('draft') is True,
             locked=front.get('lock') is True, system=is_system(rel, managed),
             approvable=not is_system(rel, managed) and cannot_approve(front) is None,
-            review=not is_system(rel, managed) and awaits_review(rel, front)))
+            review=not is_system(rel, managed) and awaits_review(rel, front),
+            digest=isinstance(front.get('harvest'), dict) and 'extractor' in front['harvest']))
     return dict(source_id=src.source_id, root=str(root), files=files, truncated=truncated)
 
 

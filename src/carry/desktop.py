@@ -243,7 +243,8 @@ class Bridge:
             self.vault_plans.clear()
             maintenance.start(Workspace.load(state))
             return result
-        if action in ('vault_browse', 'vault_note', 'vault_resolve', 'vault_backlinks', 'vault_overview', 'note_create', 'note_approve', 'note_approve_many'):
+        if action in ('vault_browse', 'vault_note', 'vault_resolve', 'vault_backlinks', 'vault_overview', 'note_create', 'note_approve', 'note_approve_many',
+                      'digest_items', 'digest_decide'):
             from . import vaultview
             sid = request.get('source_id') or vaultview.default_vault(ws)
             if not sid:
@@ -260,6 +261,14 @@ class Bridge:
                 return created
             if action == 'note_approve':
                 return vaultview.approve_note(ws, sid, request['path'])
+            if action == 'digest_items':
+                from . import digest
+                return digest.items(ws, sid, request['path'])
+            if action == 'digest_decide':
+                from . import digest
+                result = digest.decide(ws, sid, request['path'], request.get('item', ''), request.get('decision', ''), request.get('text'))
+                maintenance.start(ws)
+                return result
             if action == 'note_approve_many':
                 return vaultview.approve_many(ws, sid, request.get('paths'))
             if action == 'vault_resolve':

@@ -377,7 +377,8 @@ def write_outputs(root, client, thread_id, exchanges, groups, meta, language, to
     def item_line(it):
         tag = L[it['type']] + (f' · {L["assistant"]}' if it.get('attribution') == 'assistant' else '')
         where = f' ↔ {_link(it["match"], root)}' if it.get('match') else ''
-        return f'- **{tag}:** {it["statement"]}{where}\n  > {it["quote"]} *(exchange {it["exchange"]}, {it["speaker"]})*'
+        said = f', {it["at"]}' if it.get('at') else ''
+        return f'- **{tag}:** {it["statement"]}{where}\n  > {it["quote"]} *(exchange {it["exchange"]}, {it["speaker"]}{said})*'
     for key in ('new', 'conflict', 'review'):
         if groups.get(key):
             lines += [f'## {L[key]}', ''] + [item_line(it) for it in groups[key]] + ['']
@@ -386,7 +387,11 @@ def write_outputs(root, client, thread_id, exchanges, groups, meta, language, to
             lines += [f'## {L[key]}', ''] + [f'- {it["statement"]} → {_link(it["match"], root)}' for it in groups[key]] + ['']
     if meta.get('compared') is False:
         lines += [f'*{L["unchecked"]}*', '']
-    digest_rel = f'+/{today} — harvest {client} {short}.md'
+    # A thread that grows is harvested again the same day: its new items get their own digest, so
+    # the owner's decisions in the first one are never overwritten.
+    digest_rel, n = f'+/{today} — harvest {client} {short}.md', 2
+    while (Path(root) / digest_rel).exists():
+        digest_rel, n = f'+/{today} — harvest {client} {short} ({n}).md', n + 1
     atomic_text(Path(root) / digest_rel, '\n'.join(lines))
     return raw_rel, digest_rel
 
@@ -475,12 +480,13 @@ def run(workspace, root=None, dry_run=False, include_filed=False, limit=None, mi
             said = {e['i']: e.get('at') for e in exchanges}
             started = next((e.get('at') for e in exchanges if e.get('at')), None)
             for it in items:
+                it['at'] = said.get(it['exchange']) or started
                 scores = verify(it, exchanges, key) if key else None
                 verdict = classify(it, scores)
                 if verdict == 'drop':
                     continue
                 if verdict == 'new' and key:
-                    verdict, it['match'] = compare(it, workspace, key, since=said.get(it['exchange']) or started)
+                    verdict, it['match'] = compare(it, workspace, key, since=it['at'])
                 groups[verdict].append(it)
             meta = dict(extractor=chosen, judge='jev' if key else None, compared=bool(key),
                         dropped_without_quote=dropped, thread=entry_key, exchanges=[fresh[0]['i'], fresh[-1]['i']])

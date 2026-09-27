@@ -233,6 +233,23 @@ class HarvestTest(unittest.TestCase):
             harvest.run(self.ws, which='claude:sonnet', progress=lambda m: None)
         self.assertEqual(compare.call_args.kwargs['since'], exchanges[0]['at'])
 
+    def test_a_second_harvest_the_same_day_keeps_the_first_digest(self):
+        exchanges = [('The pilot ships on 15 October, decided.', 'Noted.')]
+        path = self.thread('acac1313', exchanges)
+        first_item = dict(type='decision', statement='The pilot ships on 15 October.', exchange=1, quote='pilot ships on 15 October')
+        with self.items(first_item), patch.object(jev, 'api_key', return_value=None):
+            first = harvest.run(self.ws, which='claude:sonnet', progress=lambda m: None)['digests'][0]
+        decided = (self.root / first).read_text().replace('15 October.\n', '15 October. <!-- carry: accepted 2026-09-28 -->\n', 1)
+        (self.root / first).write_text(decided)
+        self.thread('acac1313', exchanges + [('Budget is 2k, decided.', 'Noted.')])
+        second_item = dict(type='decision', statement='The budget is 2k.', exchange=2, quote='Budget is 2k')
+        with self.items(second_item), patch.object(jev, 'api_key', return_value=None):
+            second = harvest.run(self.ws, which='claude:sonnet', progress=lambda m: None)['digests'][0]
+        self.assertNotEqual(first, second)
+        self.assertTrue(second.endswith(' (2).md'))
+        self.assertEqual((self.root / first).read_text(), decided)
+        self.assertIn('The budget is 2k.', (self.root / second).read_text())
+
     def test_filed_and_active_threads_are_skipped_and_reruns_are_idempotent(self):
         self.thread('dddd4444', [('Save this.', 'Saved to notes.')], writes='notes/Plan.md')
         self.thread('eeee5555', [('Still talking.', 'Yes.')], age=60)

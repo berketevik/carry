@@ -11,6 +11,8 @@ from pathlib import Path
 import re
 import subprocess
 
+from .digest import decision_of
+
 MAX_CHARS = 7000
 LOCAL = '.carry/local.json'
 DAYS = 14
@@ -58,6 +60,9 @@ def _items(path):
             section = line[3:].strip()
             continue
         if section in SKIP_SECTIONS:
+            continue
+        decision, line = decision_of(line)
+        if decision == 'skipped':
             continue
         m = re.match(r'- \*\*([^*:]+?)(?: · [^*]*)?:\*\* (.+)', line)
         if m:
