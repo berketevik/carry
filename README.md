@@ -14,11 +14,10 @@ Your notes stay on your Mac as Markdown (`.md`) text files in a folder you choos
    xcode-select --install
    ```
 
-2. **Install Carry.** Replace `<owner>` with the repository owner you were given:
+2. **Install Carry.**
    ```sh
-   uv tool install "git+https://github.com/<owner>/carry"
+   uv tool install "git+https://github.com/berketevik/carry"
    ```
-   For a private repository, you need access. If you use GitHub CLI, authenticate first with `gh auth login` and `gh auth setup-git`.
 
 3. **Set up your notes and assistant.**
    ```sh
@@ -268,11 +267,10 @@ Notlarınız, seçtiğiniz klasörde Markdown (`.md`) metin dosyaları olarak **
    xcode-select --install
    ```
 
-2. **Carry’yi kurun.** `<owner>` yerine size verilen deponun sahibini yazın:
+2. **Carry’yi kurun.**
    ```sh
-   uv tool install "git+https://github.com/<owner>/carry"
+   uv tool install "git+https://github.com/berketevik/carry"
    ```
-   Depo özelse erişim izniniz olmalı. GitHub CLI kullanıyorsanız önce `gh auth login` ve `gh auth setup-git` komutlarıyla giriş yapın.
 
 3. **Not klasörünüzü ve asistanınızı bağlayın.**
    ```sh
