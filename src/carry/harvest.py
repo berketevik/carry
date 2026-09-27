@@ -170,11 +170,11 @@ def _render(exchanges):
 
 
 def extractor():
-    """The owner's own client runs the extraction on their plan: Claude (measured) before Codex (unmeasured)."""
+    """The owner's own client runs the extraction on their plan: Claude Sonnet, else Codex gpt-6-astra (both measured)."""
     if shutil.which('claude'):
         return 'claude:sonnet'
     if shutil.which('codex'):
-        return 'codex:gpt-reserve'
+        return 'codex:gpt-6-astra'  # measured 64% recall, every quote verbatim; gpt-reserve reached 38%
     raise CarryError('no_extraction_client')
 
 

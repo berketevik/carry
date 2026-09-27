@@ -500,7 +500,7 @@ def build_parser():
     hv.add_argument("--limit", type=int, help="at most this many threads per run")
     hv.add_argument("--min-idle", type=int, default=30, help="skip threads written to in the last N minutes")
     hv.add_argument("--language", choices=("Turkish", "English"), help="language of the drafts (default: the vault's)")
-    hv.add_argument("--extractor", help="claude:<model> or codex:<model> (default: claude:sonnet, else codex:gpt-reserve)")
+    hv.add_argument("--extractor", help="claude:<model> or codex:<model> (default: claude:sonnet, else codex:gpt-6-astra)")
     hv.add_argument("--install-schedule", action="store_true", help="run every evening at 21:30 (launchd)")
     hv.add_argument("--remove-schedule", action="store_true")
     hv.set_defaults(func=cmd_harvest)
