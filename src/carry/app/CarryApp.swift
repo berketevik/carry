@@ -557,6 +557,36 @@ struct MarkdownText: View {
 
 // MARK: - Shared pieces
 
+/// Lays its children out left to right and moves to a new line when the width runs out,
+/// so buttons, chips and badges are never cut off with “…” in a narrow window.
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 8
+    var lineSpacing: CGFloat = 8
+    private func size(_ view: LayoutSubview, _ maxWidth: CGFloat) -> CGSize {
+        let ideal = view.sizeThatFits(.unspecified)
+        return ideal.width <= maxWidth ? ideal : view.sizeThatFits(ProposedViewSize(width: maxWidth, height: nil))
+    }
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var x: CGFloat = 0, y: CGFloat = 0, line: CGFloat = 0, widest: CGFloat = 0
+        for view in subviews {
+            let s = size(view, maxWidth)
+            if x > 0 && x + s.width > maxWidth { y += line + lineSpacing; x = 0; line = 0 }
+            x += s.width + spacing; line = max(line, s.height); widest = max(widest, x - spacing)
+        }
+        return CGSize(width: min(widest, maxWidth), height: y + line)
+    }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX, y = bounds.minY, line: CGFloat = 0
+        for view in subviews {
+            let s = size(view, bounds.width)
+            if x > bounds.minX && x + s.width > bounds.maxX { y += line + lineSpacing; x = bounds.minX; line = 0 }
+            view.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(s))
+            x += s.width + spacing; line = max(line, s.height)
+        }
+    }
+}
+
 struct Heading: View {
     let title: String; let subtitle: String
     var body: some View {
@@ -682,7 +712,7 @@ struct GuideSheet: View {
                     Text(T("Carry gives your AI assistant a memory: your own notes. When you ask Claude Code or Codex something, it first looks in your notes; when a chat ends, Carry saves what was decided as a draft note. Your notes stay on this Mac, in a folder you choose.",
                            "Carry, yapay zekâ asistanınıza bir hafıza verir: kendi notlarınız. Claude Code veya Codex'e bir şey sorduğunuzda önce notlarınıza bakar; sohbet bitince Carry alınan kararları taslak not olarak kaydeder. Notlarınız bu Mac'te, sizin seçtiğiniz bir klasörde kalır."))
                         .fixedSize(horizontal: false, vertical: true)
-                    HStack {
+                    FlowLayout {
                         Button(T("Write my first note", "İlk notumu yaz")) { dismiss(); model.showNewNote = true }
                         Button(T("Use it with my assistant", "Asistanımla kullan")) { dismiss(); model.page = "Settings"; model.settingsTab = "Clients" }
                         Button(T("Review chat drafts", "Sohbet taslaklarını incele")) { dismiss(); model.showVault("inbox") }
@@ -843,7 +873,7 @@ struct Onboarding: View {
                             .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         Picker(T("Language of chat notes", "Sohbet notlarının dili"), selection: $notesLanguage) { Text("Türkçe").tag("Turkish"); Text("English").tag("English") }.pickerStyle(.segmented)
                         Text(T("Location: ", "Konum: ") + suggestedFolder).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-                        HStack {
+                        FlowLayout {
                             Button(T("Create my notes folder", "Not klasörümü oluştur")) { createNotes(at: suggestedFolder) }.buttonStyle(.borderedProminent)
                             Button(T("Create somewhere else…", "Başka konumda oluştur…")) { if let f = folder(T("Choose or create an empty folder for your notes", "Notlarınız için boş bir klasör seçin ya da oluşturun")) { createNotes(at: f) } }
                         }
@@ -913,10 +943,9 @@ struct Onboarding: View {
                    "Asistan, konuştuğunuz bir yapay zekâ aracıdır; Claude Code veya Codex gibi. Birini bağlamanız yeterli.")).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             AssistantCard(model: model, client: "claude")
             AssistantCard(model: model, client: "codex")
-            HStack {
+            FlowLayout {
                 Button(T("Continue", "Devam")) { model.onboardingStep = 3 }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
                 if !model.anyAssistantConnected { Button(T("Skip for now", "Şimdilik atla")) { model.onboardingStep = 3 } }
-                Spacer()
                 Button(T("Back", "Geri")) { model.onboardingStep = 1 }.buttonStyle(.link)
             }
         }.onAppear { model.loadAssistants() }
@@ -945,7 +974,7 @@ struct Onboarding: View {
                 point("play.circle.fill", T("Start your assistant with your notes", "Asistanınızı notlarınızla başlatın"),
                       T("Carry opens Terminal in your notes folder and starts it. The first time, it may ask permission to use Carry: allow it.",
                         "Carry, Terminal'i not klasörünüzde açıp asistanı başlatır. İlk seferde Carry'yi kullanmak için izin isteyebilir: izin verin."))
-                HStack {
+                FlowLayout {
                     ForEach(connected, id: \.self) { client in
                         let name = client == "claude" ? "Claude Code" : "Codex"
                         Button(T("Start \(name)", "\(name)'u başlat")) { if let e = launchAssistant(client, in: root) { model.error = e } }.buttonStyle(.borderedProminent)
@@ -961,7 +990,7 @@ struct Onboarding: View {
                       T("After chats, Carry puts what is worth keeping into your Inbox. Open a draft on the Notes page and press “Approve note” if it is right.",
                         "Sohbetlerden sonra Carry saklanmaya değer olanları Gelen kutunuza koyar. Notlar sayfasında taslağı açın; doğruysa “Notu onayla”ya basın."))
             }
-            HStack {
+            FlowLayout {
                 Button(T("Open the home page", "Ana sayfayı aç")) { model.finishOnboarding() }.controlSize(.large).keyboardShortcut(.defaultAction)
                 if !root.isEmpty { Button(T("Show notes folder in Finder", "Not klasörünü Finder'da göster")) { NSWorkspace.shared.open(URL(fileURLWithPath: root)) } }
             }.padding(.top, 6)
@@ -994,7 +1023,7 @@ struct AssistantCard: View {
                     Button(T("Start \(name) with my notes", "\(name)'u notlarımla başlat")) { if let e = launchAssistant(client, in: model.notesRoot) { model.error = e } }.disabled(model.notesRoot.isEmpty)
                 } else if info["installed"] as? Bool == false {
                     Text(T("\(name) was not found on this Mac.", "\(name) bu Mac'te bulunamadı.")).foregroundStyle(.secondary)
-                    HStack {
+                    FlowLayout {
                         Link(T("Open install steps", "Kurulum adımlarını aç"), destination: installURL)
                         Button(T("Check again", "Yeniden kontrol et")) { model.loadAssistants() }.buttonStyle(.link)
                     }
@@ -1009,7 +1038,7 @@ struct AssistantCard: View {
                     DisclosureGroup(T("Technical details", "Teknik ayrıntılar")) {
                         Text(str(preview, "summary", "")).font(.system(.caption, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    HStack {
+                    FlowLayout {
                         Button(T("Connect", "Bağla")) {
                             model.run("connection_apply", ["id": str(preview, "id")]) { _ in
                                 preview = [:]; model.loadAssistants(); model.refresh()
@@ -1149,9 +1178,8 @@ struct ReviewView: View {
                             ForEach(folders, id: \.0) { Text("\(folderLabel($0.0.isEmpty ? "(root)" : $0.0)) (\($0.1))").tag($0.0) }
                         }.onChange(of: folder) { picked = [] }
                     }
-                    HStack {
-                        Button(T("Approve all \(drafts.count)…", "\(drafts.count) taslağın hepsini onayla…")) { confirmAll = true }.buttonStyle(.borderedProminent)
-                        Spacer()
+                    FlowLayout {
+                        Button(T("Approve all (\(drafts.count))…", "Hepsini onayla (\(drafts.count))…")) { confirmAll = true }.buttonStyle(.borderedProminent)
                         Button(picked.count == drafts.count ? T("Clear selection", "Seçimi temizle") : T("Select all", "Tümünü seç")) {
                             picked = picked.count == drafts.count ? [] : Set(drafts.map { str($0, "path") })
                         }.buttonStyle(.link)
@@ -1359,12 +1387,12 @@ struct HarvestSummary: View {
                 else { Text(T("Off. Turn on the nightly run in settings so your chats become notes.", "Kapalı. Sohbetlerinizin nota dönüşmesi için ayarlardan gecelik çalışmayı açın.")) }
                 if !running, model.harvest["drafts"] != nil {
                     let drafts = (model.harvest["drafts"] as? [String] ?? []).count
-                    HStack {
+                    FlowLayout {
                         Text(drafts > 0 ? T("Last run: \(drafts) new draft(s).", "Son çalıştırma: \(drafts) yeni taslak.") : T("Last run: no new drafts.", "Son çalıştırma: yeni taslak yok.")).font(.callout).foregroundStyle(.secondary)
                         if drafts > 0 { Button(T("Review", "İncele")) { model.showVault("inbox") }.buttonStyle(.link) }
                     }
                 }
-                HStack {
+                FlowLayout {
                     if running { ProgressView().controlSize(.small); Text(L("Harvest running…")).font(.callout) }
                     else { Button(L("Run harvest now")) { model.startHarvest() } }
                     Button(T("Settings", "Ayarlar")) { model.page = "Settings"; model.settingsTab = "Harvest" }
@@ -1463,7 +1491,7 @@ struct VaultView: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 5) {
                     if f["draft"] as? Bool == true { Circle().fill(Color.orange).frame(width: 6, height: 6).help(L("Draft")) }
-                    Text(str(f, "title", str(f, "name"))).fontWeight(.medium).lineLimit(1)
+                    Text(str(f, "title", str(f, "name"))).fontWeight(.medium).lineLimit(2).fixedSize(horizontal: false, vertical: true)
                     if str(f, "index_state") == "excluded" { Image(systemName: "eye.slash").font(.caption2).foregroundStyle(.secondary).help(L("Not indexed: excluded from search")) }
                     if str(f, "index_state") == "pending" { Image(systemName: "clock.arrow.circlepath").font(.caption2).foregroundStyle(.orange).help(L("Waiting to be indexed")) }
                     if f["locked"] as? Bool == true { Image(systemName: "lock").font(.caption2).foregroundStyle(.secondary) }
@@ -1494,7 +1522,7 @@ struct VaultView: View {
                     TextField(T("Find by name, folder or summary", "Ada, klasöre ya da özete göre bul"), text: $query).textFieldStyle(.roundedBorder)
                     Button { model.showNewNote = true } label: { Label(T("New note", "Yeni not"), systemImage: "square.and.pencil") }
                 }
-                HStack {
+                VStack(alignment: .leading, spacing: 8) {
                     Picker(L("Show"), selection: $model.vaultFilter) {
                         Text(T("My notes", "Kendi notlarım")).tag("mine"); Text(T("Changed this week", "Bu hafta değişenler")).tag("recent"); Text(T("Inbox", "Gelen kutusu")).tag("inbox")
                         Text(T("Drafts", "Taslaklar")).tag("drafts"); Text(T("Left out of search", "Aramaya dahil olmayanlar")).tag("excluded")
@@ -1502,7 +1530,7 @@ struct VaultView: View {
                         Divider()
                         Text(T("Main folder", "Ana klasör")).tag("root")
                         ForEach(folders, id: \.self) { Text(T("Folder: ", "Klasör: ") + folderLabel($0)).tag("folder:" + $0) }
-                    }.labelsHidden()
+                    }.labelsHidden().fixedSize().frame(maxWidth: .infinity, alignment: .leading)
                     Picker(L("Sort"), selection: $sort) { Text(T("Newest", "Son değişen")).tag("modified"); Text("A–Z").tag("name") }.pickerStyle(.segmented).labelsHidden().frame(width: 150)
                 }
                 if model.vaultFilter == "drafts" || model.vaultFilter == "inbox" {
@@ -1563,7 +1591,7 @@ struct NoteView: View {
                     }.buttonStyle(.borderless)
                     Text(str(note, "title")).font(.title.bold()).textSelection(.enabled)
                     Text(str(note, "path")).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
-                    HStack(spacing: 6) {
+                    FlowLayout(spacing: 6) {
                         if let t = front["type"] as? String { Badge(text: metaValue(t), color: .accentColor) }
                         if let s = front["status"] as? String { Badge(text: metaValue(s)) }
                         if front["draft"] as? Bool == true { Badge(text: L("draft"), color: .orange) }
@@ -1580,7 +1608,7 @@ struct NoteView: View {
                     if front["draft"] as? Bool == true && front["lock"] as? Bool != true {
                         VStack(alignment: .leading, spacing: 10) {
                             Label(T("Draft: read it, and approve it if it is right.", "Taslak: okuyun, doğruysa onaylayın."), systemImage: "checkmark.seal").foregroundStyle(.orange).fontWeight(.medium)
-                            HStack(spacing: 8) {
+                            FlowLayout(spacing: 8) {
                                 Button(T("Approve and next", "Onayla, sonrakine geç")) {
                                     let current = str(note, "path"), next = model.nextDraft(after: current)
                                     model.run("note_approve", ["path": current, "source_id": model.noteSource]) { _ in
@@ -1595,12 +1623,11 @@ struct NoteView: View {
                                     }
                                 }
                                 Button(T("Skip", "Atla")) { if let next = model.nextDraft(after: str(note, "path")) { model.openNote(next) } }
-                                Spacer()
                                 Button(T("Move to Trash…", "Çöp kutusuna taşı…"), role: .destructive) { confirmTrash = true }
                             }
                         }.padding(12).background(Color.orange.opacity(0.08)).clipShape(RoundedRectangle(cornerRadius: 10))
                     }
-                    HStack {
+                    FlowLayout {
                         if obsidianInstalled { Button(L("Open in Obsidian"), systemImage: "arrow.up.forward.app") { if let u = obsidianURL(absolute) { NSWorkspace.shared.open(u) } } }
                         Button(T("Open in default app", "Varsayılan uygulamada aç"), systemImage: "square.and.pencil") { NSWorkspace.shared.open(URL(fileURLWithPath: absolute)) }
                         Button(L("Show in Finder"), systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: absolute)]) }
@@ -1753,7 +1780,7 @@ struct SearchSettings: View {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) { Text(title).font(.headline); if let badge { Badge(text: badge, color: .accentColor) } }
                         Text(short).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                        HStack(spacing: 4) { Text(T("Uses:", "Kullanır:")).font(.caption).foregroundStyle(.secondary); ForEach(uses, id: \.self) { Badge(text: $0) } }
+                        FlowLayout(spacing: 4) { Text(T("Uses:", "Kullanır:")).font(.caption).foregroundStyle(.secondary); ForEach(uses, id: \.self) { Badge(text: $0) } }
                     }
                     Spacer(minLength: 0)
                 }.contentShape(Rectangle())
@@ -1799,13 +1826,13 @@ struct SearchSettings: View {
                                        "2 GB'lık bir alaka modeli (BGE reranker) bu Mac'te çalışır. Arama sırasında yaklaşık 3 GB boş bellek ister; bir aradan sonraki ilk arama yavaştır. 8 GB'lık Mac'lerde bilgisayarı dondurabildiği için önerilmez."),
                                badge: nil) { checker = "local"; finder = "semantic" }
                         Divider()
-                        HStack(spacing: 8) {
+                        FlowLayout(spacing: 8) {
                             Text(T("Your choice:", "Seçiminiz:")).fontWeight(.medium)
                             Text(presetLabel(preset))
                             if preset == str(model.settings, "preset", "") { Badge(text: T("in use", "kullanılıyor"), color: .green) }
                         }
                         if preset != str(model.settings, "preset", "") {
-                            HStack {
+                            FlowLayout {
                                 Button(T("Use this", "Bunu kullan")) {
                                     model.run("model_setup", ["model": preset]) { model.job = $0; model.notice = $0["started"] as? Bool == false ? busyNotice : L("Switching search mode. Semantic modes download a model and rebuild the index; you can keep using Carry.") }
                                 }.buttonStyle(.borderedProminent)
@@ -1931,7 +1958,7 @@ struct HarvestSettings: View {
                                 Text(log.joined(separator: "\n")).font(.caption.monospaced()).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(.top, 6)
                             }
                         }
-                        HStack {
+                        FlowLayout {
                             if model.harvest["running"] as? Bool == true { ProgressView().controlSize(.small); Text(L("Harvest running…")) }
                             else { Button(L("Run harvest now")) { model.startHarvest() } }
                             Button(L("Open full log")) { NSWorkspace.shared.open(URL(fileURLWithPath: str(model.settings, "state_dir", model.workspace)).appendingPathComponent("harvest.log")) }
@@ -1960,7 +1987,7 @@ struct AdvancedSettings: View {
                     VStack(alignment: .leading, spacing: 10) {
                         Text(T("New here, or setting up another Mac? The setup guide walks you through notes and assistants again. Nothing you already have is removed.",
                                "Yeni misiniz ya da başka bir Mac mi kuruyorsunuz? Kurulum rehberi notlar ve asistanlar adımlarından yeniden geçirir. Mevcut hiçbir şey silinmez.")).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                        HStack {
+                        FlowLayout {
                             Button(T("Open the setup guide", "Kurulum rehberini aç")) { model.startOnboarding() }
                             Button(T("How Carry works", "Carry nasıl çalışır?")) { model.showGuide = true }
                             Button(T("Show the usage tips on Home again", "Ana sayfadaki kullanım ipuçlarını yeniden göster")) { UserDefaults.standard.set(false, forKey: "hideHowTo"); model.page = "Overview" }
@@ -1974,7 +2001,7 @@ struct AdvancedSettings: View {
                                 Text(model.workspace).font(.callout.monospaced()).textSelection(.enabled)
                                 Text(T("Holds Carry's settings and search data. Your notes are never stored here. Search data can always be rebuilt; do not delete this folder.",
                                        "Carry'nin ayarlarını ve arama verilerini tutar. Notlarınız asla burada saklanmaz. Arama verileri her zaman yeniden oluşturulabilir; bu klasörü silmeyin.")).font(.caption).foregroundStyle(.secondary)
-                                HStack {
+                                FlowLayout {
                                     Button(L("Show in Finder")) { NSWorkspace.shared.open(URL(fileURLWithPath: model.workspace)) }
                                     Button(T("Open another settings folder", "Başka bir ayar klasörü aç")) { model.chooseWorkspace(create: false) }
                                 }
@@ -1984,7 +2011,7 @@ struct AdvancedSettings: View {
                             VStack(alignment: .leading, spacing: 12) {
                                 LabeledContent(L("Retrieval provider"), value: str(model.snapshot["embedding"] as? [String: Any] ?? [:], "name") + " · " + str(model.snapshot["embedding"] as? [String: Any] ?? [:], "model"))
                                 LabeledContent(L("Local MCP test"), value: L(model.localTest))
-                                HStack {
+                                FlowLayout {
                                     Button(T("Rebuild note search", "Not aramasını yeniden hazırla")) { model.run("index") { model.job = $0; model.notice = L("Rebuilding the index in the background.") } }
                                     Button(T("Check Carry's search service", "Carry arama hizmetini kontrol et")) { model.run("connection_test") { model.localTest = str($0,"mcp_local_test"); model.refresh() } }
                                     Button(L("Probe provider")) { model.run("snapshot", ["probe": true]) { model.snapshot = $0 } }
@@ -2013,7 +2040,7 @@ struct Sources: View {
                     let source = model.sources[i]
                     SourceCard(model: model, source: source).id(str(source, "source_id") + pretty(source))
                 }
-                HStack {
+                FlowLayout {
                 Button(T("Create a new notes folder…", "Yeni not klasörü oluştur…")) { model.onboardingStep = 1; model.onboarding = true }
                 Button(T("Add a notes folder…", "Not klasörü ekle…")) {
                     if let root = folder(T("Choose a folder that holds notes (.md files)", "Not (.md dosyaları) içeren bir klasör seçin")) {
@@ -2077,7 +2104,7 @@ struct GitHubSourceForm: View {
                 GroupBox(L("Connect a GitHub knowledge base")) {
                     VStack(alignment: .leading, spacing: 12) {
                         Text(L("Choose a repository you can access. Carry keeps a read-only copy and checks for updates every five minutes while it is running."))
-                        HStack {
+                        FlowLayout {
                             Button(L("Sign in to GitHub")) { model.run("github_login") { model.githubLogin = $0 } }
                             Button(L("Load my repositories")) { model.loadRepositories() }
                             Text(L(model.githubAccount)).foregroundStyle(.secondary)
@@ -2141,7 +2168,7 @@ struct VaultForm: View {
                             Text(str(plan, "target")).font(.callout).textSelection(.enabled)
                             Text(L("%d files will be created. Nothing is written until you confirm.", files.count))
                             ScrollView { LazyVStack(alignment: .leading) { ForEach(files.indices, id: \.self) { i in Text(str(files[i], "status") + "  " + str(files[i], "rel")).font(.caption.monospaced()) } } }.frame(maxHeight: 140)
-                            HStack {
+                            FlowLayout {
                                 Button(L("Create vault")) {
                                     model.run("vault_apply", ["id": str(plan, "id")]) { value in
                                         plan = [:]
@@ -2174,12 +2201,11 @@ struct SourceCard: View {
     var body: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 10) {
-                HStack {
+                FlowLayout {
                     Image(systemName: isGitHub ? "network" : "folder.fill").foregroundStyle(Color.accentColor)
                     Text(isGitHub ? sid : URL(fileURLWithPath: str(source, "root")).lastPathComponent).font(.headline)
                     Badge(text: isGitHub ? "GitHub" : (source["writable"] as? Bool == true ? T("Carry may add records", "Carry kayıt ekleyebilir") : T("your notes are not changed", "notlarınız değiştirilmez")))
                     if source["root_available"] as? Bool == false { Badge(text: T("folder not found", "klasör bulunamadı"), color: .red) }
-                    Spacer()
                     if !isGitHub { Button(T("Show notes", "Notları göster")) { model.switchVault(sid); model.page = "Vault" } }
                     Button(T("Remove from Carry…", "Carry'den çıkar…"), role: .destructive) { confirmRemove = true }
                 }
@@ -2214,7 +2240,7 @@ struct SourceCard: View {
                                                "Burada yazan klasör ya da dosyalar Notlar sayfasında görünür ama asistanınıza asla verilmez. Virgülle ayırın. Örnek: +, x, taslaklar/eski"))
                         }
                         TextField(L("Excluded paths or patterns, separated by commas"), text: $exclusions, axis: .vertical).lineLimit(1...4)
-                        HStack {
+                        FlowLayout {
                             Button(L("Save")) {
                                 model.run("settings_update", ["sources": [sid: ["writable": writable, "external_judge": judge, "exclude": patterns]]]) { value in
                                     model.settings = value; model.notice = L("Source saved. Re-indexing in the background."); model.refresh()
@@ -2265,12 +2291,12 @@ struct Search: View {
                         "İpucu: “geçen hafta”, “dün”, “son 7 gün”, “Eylül'de” gibi zaman ifadeleri aramayı o tarihlerdeki notlarla sınırlar."), systemImage: "calendar")
                     .font(.callout).foregroundStyle(.secondary)
                 if model.ownNotes == 0 {
-                    HStack {
+                    FlowLayout {
                         Text(T("Add a note first; then there is something to search.", "Önce bir not ekleyin; sonra aranacak bir şey olur.")).foregroundStyle(.secondary)
                         Button(T("Write my first note", "İlk notumu yaz")) { model.showNewNote = true }
                     }
                 } else if result.isEmpty {
-                    HStack(spacing: 8) {
+                    FlowLayout(spacing: 8) {
                         Text(T("Try:", "Deneyin:")).foregroundStyle(.secondary)
                         ForEach([T("What did we do last week?", "Geçen hafta ne yaptık?"), T("What happened in the last 7 days?", "Son 7 günde neler oldu?"), T("Which tasks are not finished?", "Hangi işler tamamlanmadı?"), T("What are my preferences?", "Tercihlerim neler?")], id: \.self) { q in
                             Button(q) { query = q; search() }.buttonStyle(.bordered).controlSize(.small)
@@ -2316,7 +2342,7 @@ struct Search: View {
                              : T("Nothing from this period answers the question directly; related notes from other dates are shown.",
                                  "Bu dönemden soruyu doğrudan yanıtlayan bir şey yok; diğer tarihlerden ilgili notlar gösteriliyor.")).fixedSize(horizontal: false, vertical: true)
                     }
-                    HStack(spacing: 6) {
+                    FlowLayout(spacing: 6) {
                         Text(T("Other periods:", "Başka dönem:")).font(.caption).foregroundStyle(.secondary)
                         ForEach(periods, id: \.0) { p in
                             Button(p.0) { query = asked.replacingOccurrences(of: str(f, "phrase"), with: p.1); search() }.buttonStyle(.bordered).controlSize(.small)
@@ -2585,10 +2611,9 @@ struct Activity: View {
                 }.padding(28).frame(maxWidth: .infinity, alignment: .leading)
             }.safeAreaInset(edge: .bottom) {
                 if str(model.review,"state") == "draft" {
-                    HStack {
+                    FlowLayout {
                         Button(L("Accept this revision")) { model.finish("accept") }.buttonStyle(.borderedProminent).disabled(model.review["conflict"] is String)
                         Button(L("Reject draft")) { model.finish("reject") }
-                        Spacer()
                         Text(L("Revision ") + str(model.review,"revision")).font(.caption).foregroundStyle(.secondary)
                     }.padding(16).background(Color(nsColor: .windowBackgroundColor))
                 }
