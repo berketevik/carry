@@ -171,6 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         didSet { Lang.code = language; UserDefaults.standard.set(language, forKey: "language") }
     }
     @Published var settingsTab = "Search"
+    @Published var connectionFormOpen = false
     @Published var settings: [String: Any] = [:]
     @Published var vault: [String: Any] = [:]
     @Published var files: [[String: Any]] = []
@@ -648,7 +649,8 @@ func tabName(_ key: String) -> String {
     switch key {
     case "Search": return T("Search", "Arama")
     case "Sources": return T("Note folders", "Not klasörleri")
-    case "Harvest": return T("Chat notes", "Sohbet notları")
+    case "Index": return T("Index", "İndeks")
+    case "Harvest": return T("Capture", "Yakalama")
     case "Clients": return T("Assistants", "Asistanlar")
     default: return T("General", "Genel")
     }
@@ -1864,15 +1866,16 @@ struct NoteView: View {
 
 struct SettingsView: View {
     @ObservedObject var model: Model
-    let tabs = ["Search", "Sources", "Harvest", "Clients", "General"]
+    let tabs = ["Search", "Index", "Harvest", "Sources", "Clients", "General"]
     var body: some View {
         VStack(spacing: 0) {
             Picker(L("Settings"), selection: $model.settingsTab) { ForEach(tabs, id: \.self) { Text(tabName($0)).tag($0) } }
-                .pickerStyle(.segmented).labelsHidden().frame(maxWidth: 560).padding(.top, 18).padding(.bottom, 4)
+                .pickerStyle(.segmented).labelsHidden().frame(maxWidth: 680).padding(.top, 18).padding(.bottom, 4)
             ZStack {
                 // Search stays alive while hidden so unsaved edits survive a tab switch.
                 SearchSettings(model: model).opacity(model.settingsTab == "Search" ? 1 : 0).allowsHitTesting(model.settingsTab == "Search")
                 switch model.settingsTab {
+                case "Index": IndexSettings(model: model)
                 case "Sources": Sources(model: model)
                 case "Harvest": HarvestSettings(model: model)
                 case "Clients": Connections(model: model)
@@ -1891,9 +1894,6 @@ struct SearchSettings: View {
     @State private var maxChars = 10000
     @State private var perDocument = 2
     @State private var minScore = 0.5
-    @State private var autoRefresh = true
-    @State private var refreshSeconds = 60
-    @State private var githubSeconds = 300
     var retrieval: [String: Any] { model.settings["retrieval"] as? [String: Any] ?? [:] }
     /// Only the fields the user changed: a hidden field (the Jev threshold under another
     /// ranker) keeps whatever value it has.
@@ -1903,21 +1903,16 @@ struct SearchSettings: View {
         if Int(num(retrieval, "max_chars")) != maxChars { out["max_chars"] = maxChars }
         if Int(num(retrieval, "max_per_document")) != perDocument { out["max_per_document"] = perDocument }
         if abs(num(retrieval, "reranker_min_score") - minScore) > 0.001 { out["reranker_min_score"] = minScore }
-        if (retrieval["auto_refresh"] as? Bool ?? true) != autoRefresh { out["auto_refresh"] = autoRefresh }
-        if Int(num(retrieval, "refresh_seconds")) != refreshSeconds { out["refresh_seconds"] = refreshSeconds }
-        if Int(num(retrieval, "github_sync_seconds")) != githubSeconds { out["github_sync_seconds"] = githubSeconds }
         return out
     }
     var dirty: Bool {
         Int(num(retrieval, "top_k")) != topK || Int(num(retrieval, "max_chars")) != maxChars || Int(num(retrieval, "max_per_document")) != perDocument ||
-        abs(num(retrieval, "reranker_min_score") - minScore) > 0.001 || (retrieval["auto_refresh"] as? Bool ?? true) != autoRefresh ||
-        Int(num(retrieval, "refresh_seconds")) != refreshSeconds || Int(num(retrieval, "github_sync_seconds")) != githubSeconds
+        abs(num(retrieval, "reranker_min_score") - minScore) > 0.001
     }
     func load() {
         preset = str(model.settings, "preset", "keyword_assistant")
         topK = Int(num(retrieval, "top_k", 8)); maxChars = Int(num(retrieval, "max_chars", 10000)); perDocument = Int(num(retrieval, "max_per_document", 2))
-        minScore = num(retrieval, "reranker_min_score", 0.5); autoRefresh = retrieval["auto_refresh"] as? Bool ?? true
-        refreshSeconds = Int(num(retrieval, "refresh_seconds", 60)); githubSeconds = Int(num(retrieval, "github_sync_seconds", 300))
+        minScore = num(retrieval, "reranker_min_score", 0.5)
     }
     /// The two answers (how to find, who checks) make up the preset.
     var finder: String {
@@ -2025,13 +2020,6 @@ struct SearchSettings: View {
                                 }
                             }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        GroupBox(L("Keeping the index fresh")) {
-                            VStack(alignment: .leading, spacing: 10) {
-                                Toggle(L("Re-index automatically when notes change"), isOn: $autoRefresh)
-                                Stepper(L("Check for changes every %d s", refreshSeconds), value: $refreshSeconds, in: 10...3600, step: 10).disabled(!autoRefresh)
-                                Stepper(L("Sync GitHub sources every %d min", githubSeconds / 60), value: $githubSeconds, in: 60...86400, step: 60)
-                            }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
-                        }
                     }.padding(.top, 8)
                 }
             }.padding(30).frame(maxWidth: .infinity, alignment: .leading)
@@ -2046,6 +2034,137 @@ struct SearchSettings: View {
                 }.padding(14).background(.bar)
             }
         }.onAppear(perform: load).onChange(of: pretty(model.settings["retrieval"] ?? [:]) + str(model.settings, "preset")) { load() }
+    }
+}
+
+/// Prompt capture, per assistant: whether it records, the last recorded event, pause or resume.
+/// Turning it on needs a project folder and a writable source, so that stays with the assistant's
+/// connection form; this view links there.
+struct PromptCapture: View {
+    @ObservedObject var model: Model
+    var body: some View {
+        Text(T("Prompt capture", "Mesaj kaydı")).font(.title3.bold()).padding(.top, 8)
+        Text(T("Optional. Records your own messages in a project word for word (replies and tool output are left out, secrets masked as best as possible); each one becomes an unaccepted draft under the writable source.",
+               "İsteğe bağlı. Bir projedeki kendi mesajlarınızı kelimesi kelimesine kaydeder (yanıtlar ve araç çıktıları alınmaz, gizli bilgiler elden geldiğince maskelenir); her biri yazılabilir kaynakta onaylanmamış bir taslak olur."))
+            .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        if model.adapters.isEmpty {
+            GroupBox { Text(T("Not set up for any assistant.", "Hiçbir asistan için kurulmadı.")).foregroundStyle(.secondary).padding(12).frame(maxWidth: .infinity, alignment: .leading) }
+        }
+        ForEach(model.adapters.indices, id: \.self) { i in
+            let adapter = model.adapters[i]
+            GroupBox(str(adapter,"client").capitalized) {
+                VStack(alignment: .leading, spacing: 10) {
+                    LabeledContent(L("Capture capability"), value: str(adapter["capability"] as? [String: Any] ?? [:],"state"))
+                    LabeledContent(L("Persisted capture"), value: str(adapter,"state"))
+                    if let receipt = adapter["receipt"] as? [String: Any] {
+                        Text(L("Last successful event: ") + str(receipt,"last_success_at")).font(.caption)
+                        if let sid = receipt["source_id"] as? String, let path = receipt["event_path"] as? String { Button(L("Open raw event")) { model.openSource(sid, path) } }
+                    }
+                    if let action = adapter["action"] as? String { Text(action).font(.caption).foregroundStyle(.secondary) }
+                    Button(str(adapter,"state") == "paused" ? L("Resume capture") : L("Pause capture")) {
+                        model.run("pause", ["client": str(adapter,"client"), "paused": str(adapter,"state") != "paused"]) { _ in model.refresh() }
+                    }
+                }.padding(12)
+            }
+        }
+        Text(L("Native test: restart the selected client, complete its project and hook approvals, then submit ‘Carry connection test — synthetic Cedar note.’ Refresh here. Only a persisted receipt counts as capture success.")).font(.callout).foregroundStyle(.secondary)
+        Button(T("Set up prompt capture for a project…", "Bir proje için mesaj kaydını kur…")) {
+            model.settingsTab = "Clients"; model.connectionFormOpen = true
+        }
+    }
+}
+
+/// The search index: how fresh it is, how it keeps up, and the checks and rebuild.
+struct IndexSettings: View {
+    @ObservedObject var model: Model
+    @State private var autoRefresh = true
+    @State private var refreshSeconds = 60
+    @State private var githubSeconds = 300
+    var retrieval: [String: Any] { model.settings["retrieval"] as? [String: Any] ?? [:] }
+    var index: [String: Any] { model.snapshot["index"] as? [String: Any] ?? [:] }
+    var build: [String: Any] { index["last_build"] as? [String: Any] ?? [:] }
+    var embedding: [String: Any] { model.snapshot["embedding"] as? [String: Any] ?? [:] }
+    var changes: [String: Any] {
+        var out: [String: Any] = [:]
+        if (retrieval["auto_refresh"] as? Bool ?? true) != autoRefresh { out["auto_refresh"] = autoRefresh }
+        if Int(num(retrieval, "refresh_seconds")) != refreshSeconds { out["refresh_seconds"] = refreshSeconds }
+        if Int(num(retrieval, "github_sync_seconds")) != githubSeconds { out["github_sync_seconds"] = githubSeconds }
+        return out
+    }
+    func load() {
+        autoRefresh = retrieval["auto_refresh"] as? Bool ?? true
+        refreshSeconds = Int(num(retrieval, "refresh_seconds", 60)); githubSeconds = Int(num(retrieval, "github_sync_seconds", 300))
+    }
+    func stateText(_ state: String) -> String {
+        switch state {
+        case "fresh": return T("Up to date", "Güncel")
+        case "stale": return T("Catching up with recent changes", "Son değişiklikleri işliyor")
+        case "missing": return T("Not built yet", "Henüz hazırlanmadı")
+        default: return state
+        }
+    }
+    func count(_ value: [String: Any], _ key: String) -> String { String(Int(num(value, key))) }
+    @ViewBuilder var status: some View {
+        GroupBox(T("Status", "Durum")) {
+            VStack(alignment: .leading, spacing: 8) {
+                LabeledContent(T("State", "Durum"), value: stateText(str(index, "state", "")))
+                LabeledContent(T("Notes indexed", "İndekslenen not"), value: count(index, "indexed_files") + " / " + count(index, "corpus_files"))
+                if num(build, "chunks") > 0 { LabeledContent(T("Passages", "Parça"), value: count(build, "chunks")) }
+                if num(index, "changed_files") > 0 { LabeledContent(T("Waiting to be indexed", "İndekslenmeyi bekleyen"), value: count(index, "changed_files")) }
+                if num(build, "at") > 0 { LabeledContent(T("Last updated", "Son güncelleme"), value: ago(num(build, "at"))) }
+                LabeledContent(T("Search by meaning", "Anlama göre arama"), value: str(embedding, "name") + " · " + str(embedding, "model"))
+                FlowLayout {
+                    Button(T("Rebuild the index", "İndeksi yeniden oluştur")) { model.run("index") { model.job = $0; model.notice = L("Rebuilding the index in the background.") } }
+                    Button(T("Refresh status", "Durumu yenile")) { model.refresh() }
+                }
+            }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+    @ViewBuilder var freshness: some View {
+        GroupBox(L("Keeping the index fresh")) {
+            VStack(alignment: .leading, spacing: 10) {
+                Toggle(L("Re-index automatically when notes change"), isOn: $autoRefresh)
+                Stepper(L("Check for changes every %d s", refreshSeconds), value: $refreshSeconds, in: 10...3600, step: 10).disabled(!autoRefresh)
+                Stepper(L("Sync GitHub sources every %d min", githubSeconds / 60), value: $githubSeconds, in: 60...86400, step: 60)
+                if !changes.isEmpty {
+                    HStack {
+                        Button(L("Discard")) { load() }
+                        Button(L("Save changes")) { model.run("settings_update", ["retrieval": changes]) { model.settings = $0; model.notice = T("Index settings saved.", "İndeks ayarları kaydedildi.") } }.buttonStyle(.borderedProminent)
+                    }
+                }
+            }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+    @ViewBuilder var checks: some View {
+        GroupBox(T("What is left out", "Dışarıda bırakılanlar")) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(T("Each note folder decides which of its folders and files stay out of search.", "Her not klasörü, kendi içindeki hangi klasör ve dosyaların aramaya girmeyeceğine kendisi karar verir."))
+                    .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Button(T("Change it on the Note folders tab", "Not klasörleri sekmesinde değiştir")) { model.settingsTab = "Sources" }.buttonStyle(.link)
+            }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+        }
+        GroupBox(T("Checks", "Kontroller")) {
+            VStack(alignment: .leading, spacing: 10) {
+                LabeledContent(L("Local MCP test"), value: L(model.localTest))
+                FlowLayout {
+                    Button(T("Check Carry's search service", "Carry arama hizmetini kontrol et")) { model.run("connection_test") { model.localTest = str($0,"mcp_local_test"); model.refresh() } }
+                    Button(L("Probe provider")) { model.run("snapshot", ["probe": true]) { model.snapshot = $0 } }
+                }
+                Text(L("The local test checks Carry’s MCP server only. Client trust and capture are verified by the clients themselves.")).font(.caption).foregroundStyle(.secondary)
+            }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                PageIntro(icon: "square.stack.3d.up", title: T("Index", "İndeks"),
+                          text: T("What Carry prepares from your notes so it can search them quickly. It follows your changes by itself and can always be rebuilt; your notes are never changed.",
+                                  "Carry'nin notlarınızda hızlı arama yapabilmek için hazırladığı bilgiler. Değişikliklerinizi kendisi izler ve her zaman yeniden oluşturulabilir; notlarınız hiç değişmez."))
+                status
+                freshness
+                checks
+            }.padding(30).frame(maxWidth: .infinity, alignment: .leading)
+        }.onAppear(perform: load).onChange(of: pretty(retrieval)) { load() }
     }
 }
 
@@ -2075,9 +2194,10 @@ struct HarvestSettings: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                PageIntro(icon: "text.bubble", title: T("Chat notes", "Sohbet notları"),
-                          text: T("After you chat with your assistant in your notes folder, Carry picks out what is worth keeping (decisions, facts, preferences, unfinished work) and saves it in your Inbox, marked as a draft. You check them and approve the right ones.",
-                                  "Not klasörünüzde asistanınızla sohbet ettikten sonra Carry saklanmaya değer olanları (kararlar, bilgiler, tercihler, yarım kalan işler) seçip Gelen kutunuza taslak işaretiyle kaydeder. Doğruluklarını siz kontrol edip doğru olanları onaylarsınız."))
+                PageIntro(icon: "tray.and.arrow.down", title: T("Capture", "Yakalama"),
+                          text: T("What Carry takes from your chats. After you chat with your assistant in your notes folder, Carry picks out what is worth keeping (decisions, facts, preferences, unfinished work) into a draft; you go through it item by item on the Review page. Recording your prompts word for word is a separate, optional step below.",
+                                  "Carry'nin sohbetlerinizden aldıkları. Not klasörünüzde asistanınızla sohbet ettikten sonra Carry saklanmaya değer olanları (kararlar, bilgiler, tercihler, yarım kalan işler) bir taslağa çıkarır; siz İncele sayfasında madde madde geçersiniz. Mesajlarınızı kelimesi kelimesine kaydetmek ayrı ve isteğe bağlı bir adımdır, aşağıda."))
+                Text(T("Chat drafts", "Sohbet taslakları")).font(.title3.bold())
                 GroupBox(L("Drafts")) {
                     VStack(alignment: .leading, spacing: 10) {
                         Picker(L("Language of drafts"), selection: language) { Text("Türkçe").tag("Turkish"); Text("English").tag("English") }.pickerStyle(.segmented).frame(maxWidth: 320)
@@ -2127,10 +2247,11 @@ struct HarvestSettings: View {
                             if model.harvest["running"] as? Bool == true { ProgressView().controlSize(.small); Text(L("Harvest running…")) }
                             else { Button(L("Run harvest now")) { model.startHarvest() } }
                             Button(L("Open full log")) { NSWorkspace.shared.open(URL(fileURLWithPath: str(model.settings, "state_dir", model.workspace)).appendingPathComponent("harvest.log")) }
-                            Button(L("Show inbox")) { model.showVault("inbox") }
+                            Button(T("Open Review", "İncele'yi aç")) { model.page = "Review" }
                         }
                     }.padding(12)
                 }
+                PromptCapture(model: model)
             }.padding(30).frame(maxWidth: .infinity, alignment: .leading)
         }.onAppear(perform: load).onChange(of: pretty(schedule)) { load() }
     }
@@ -2145,7 +2266,7 @@ struct AdvancedSettings: View {
                 GroupBox(L("Language")) {
                     VStack(alignment: .leading, spacing: 10) {
                         Picker(L("App language"), selection: $model.language) { Text("Türkçe").tag("tr"); Text("English").tag("en") }.pickerStyle(.segmented).frame(maxWidth: 320)
-                        Text(T("Changes Carry's own screens. The language of chat notes is set on the Chat notes tab.", "Carry'nin ekranlarını değiştirir. Sohbet notlarının dili Sohbet notları sekmesinden ayarlanır.")).font(.caption).foregroundStyle(.secondary)
+                        Text(T("Changes Carry's own screens. The language of chat drafts is set on the Capture tab.", "Carry'nin ekranlarını değiştirir. Sohbet taslaklarının dili Yakalama sekmesinden ayarlanır.")).font(.caption).foregroundStyle(.secondary)
                     }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
                 }
                 GroupBox(T("Help", "Yardım")) {
@@ -2172,18 +2293,7 @@ struct AdvancedSettings: View {
                                 }
                             }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        GroupBox(L("Index and connection health")) {
-                            VStack(alignment: .leading, spacing: 12) {
-                                LabeledContent(L("Retrieval provider"), value: str(model.snapshot["embedding"] as? [String: Any] ?? [:], "name") + " · " + str(model.snapshot["embedding"] as? [String: Any] ?? [:], "model"))
-                                LabeledContent(L("Local MCP test"), value: L(model.localTest))
-                                FlowLayout {
-                                    Button(T("Rebuild note search", "Not aramasını yeniden hazırla")) { model.run("index") { model.job = $0; model.notice = L("Rebuilding the index in the background.") } }
-                                    Button(T("Check Carry's search service", "Carry arama hizmetini kontrol et")) { model.run("connection_test") { model.localTest = str($0,"mcp_local_test"); model.refresh() } }
-                                    Button(L("Probe provider")) { model.run("snapshot", ["probe": true]) { model.snapshot = $0 } }
-                                }
-                                Text(L("The local test checks Carry’s MCP server only. Client trust and capture are verified by the clients themselves.")).font(.caption).foregroundStyle(.secondary)
-                            }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
-                        }
+                        Button(T("Index and search service checks are on the Index tab", "İndeks ve arama hizmeti kontrolleri İndeks sekmesinde")) { model.settingsTab = "Index" }.buttonStyle(.link)
                         DisclosureGroup(L("Diagnostics")) { Text(pretty(model.snapshot.filter { $0.key != "activity" })).font(.system(.caption, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
                     }.padding(.top, 8)
                 }
@@ -2631,7 +2741,7 @@ struct Connections: View {
                                   "Notlarınızı kullanan yapay zekâ araçları. Kullandıklarınızı bağlayın; not klasörünüzde açtığınızda notlarınızda arama yapabilirler."))
                 AssistantCard(model: model, client: "claude")
                 AssistantCard(model: model, client: "codex")
-                DisclosureGroup(T("Advanced: connect another project folder, record prompts, undo a connection", "Gelişmiş: başka bir proje klasörünü bağla, istemleri kaydet, bağlantıyı geri al")) {
+                DisclosureGroup(isExpanded: $model.connectionFormOpen) {
                 VStack(alignment: .leading, spacing: 18) {
                 GroupBox(L("Project connection")) {
                     VStack(alignment: .leading, spacing: 12) {
@@ -2664,24 +2774,6 @@ struct Connections: View {
                         }.padding(12)
                     }
                 }
-                ForEach(model.adapters.indices, id: \.self) { i in
-                    let adapter = model.adapters[i]
-                    GroupBox(str(adapter,"client").capitalized) {
-                        VStack(alignment: .leading, spacing: 10) {
-                            LabeledContent(L("Capture capability"), value: str(adapter["capability"] as? [String: Any] ?? [:],"state"))
-                            LabeledContent(L("Persisted capture"), value: str(adapter,"state"))
-                            if let receipt = adapter["receipt"] as? [String: Any] {
-                                Text(L("Last successful event: ") + str(receipt,"last_success_at")).font(.caption)
-                                if let sid = receipt["source_id"] as? String, let path = receipt["event_path"] as? String { Button(L("Open raw event")) { model.openSource(sid, path) } }
-                            }
-                            if let action = adapter["action"] as? String { Text(action).font(.caption).foregroundStyle(.secondary) }
-                            Button(str(adapter,"state") == "paused" ? L("Resume capture") : L("Pause capture")) {
-                                model.run("pause", ["client": str(adapter,"client"), "paused": str(adapter,"state") != "paused"]) { _ in model.refresh() }
-                            }
-                        }.padding(12)
-                    }
-                }
-                Text(L("Native test: restart the selected client, complete its project and hook approvals, then submit ‘Carry connection test — synthetic Cedar note.’ Refresh here. Only a persisted receipt counts as capture success.")).font(.callout).foregroundStyle(.secondary)
                 ForEach(model.connections.indices, id: \.self) { i in
                     let connection = model.connections[i]
                     HStack {
@@ -2693,7 +2785,7 @@ struct Connections: View {
                     }
                 }
                 }.padding(.top, 8)
-                }
+                } label: { Text(T("Advanced: connect another project folder, record prompts, undo a connection", "Gelişmiş: başka bir proje klasörünü bağla, istemleri kaydet, bağlantıyı geri al")) }
             }.padding(30)
         }.disabled(model.snapshot.isEmpty)
     }
@@ -3178,12 +3270,12 @@ let TR: [String: String] = [
     "Finished": "Bitti",
     "Failed": "Başarısız",
     "Harvest finished. New drafts, if any, are in the inbox (+/).": "Bitti. Yeni taslak çıktıysa Gelen kutusunda.",
-    "Harvest stopped with an error. See the log on the Harvest tab.": "Bir hata oluştu. Ayrıntı için Sohbet notları sekmesindeki kayda bakın.",
+    "Harvest stopped with an error. See the log on the Harvest tab.": "Bir hata oluştu. Ayrıntı için Yakalama sekmesindeki kayda bakın.",
     "The open note was moved or deleted outside Carry, so it was closed.": "Açık not Carry dışında taşındığı ya da silindiği için kapatıldı.",
     "A harvest is already running.": "Zaten çalışıyor.",
     "Show all changes": "Tüm değişiklikleri göster",
     "The nightly harvest on this Mac belongs to another Carry workspace.": "Bu Mac'teki gecelik çalışma başka bir Carry kurulumuna ait.",
-    "launchd has not loaded this job. Save the schedule again on the Harvest tab.": "Gecelik çalışma macOS tarafından başlatılmamış. Sohbet notları sekmesinden yeniden kaydedin.",
+    "launchd has not loaded this job. Save the schedule again on the Harvest tab.": "Gecelik çalışma macOS tarafından başlatılmamış. Yakalama sekmesinden yeniden kaydedin.",
     "Harvest running…": "Sohbetlerden not çıkarılıyor…",
     "Waiting to be indexed": "Değişti; arama birazdan güncellenecek",
     "Showing %d of %d notes. Narrow the filter to see the rest.": "%d / %d not gösteriliyor. Kalanlar için aramayı daraltın.",
@@ -3252,7 +3344,7 @@ let EN: [String: String] = [
     "Run harvest now": "Take notes from chats now",
     "Harvest running…": "Taking notes from chats…",
     "Harvest finished. New drafts, if any, are in the inbox (+/).": "Done. New drafts, if any, are in your Inbox.",
-    "Harvest stopped with an error. See the log on the Harvest tab.": "Something went wrong. See the log on the Chat notes tab.",
+    "Harvest stopped with an error. See the log on the Harvest tab.": "Something went wrong. See the log on the Capture tab.",
     "Runs every evening at %@ · drafts in %@. Chats also harvest when they end.": "Runs every evening at %@ · drafts in %@. Notes are also taken when a chat ends.",
     "Not scheduled. Chats still harvest when they end if the client hooks are set up.": "The nightly run is off. Notes are still taken when a chat ends.",
     "Runs through launchd (%@) while you are logged in.": "Runs while you are logged in to your Mac.",
