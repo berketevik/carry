@@ -31,7 +31,7 @@ carry app open
 
 Pick a new notes folder or an existing folder of `.md` files. Then go to **Settings → Assistants → Start with my notes** and ask: “Use Carry to find my notes about this project.”
 
-Working in a team? Setup can also connect a shared GitHub repo of Markdown notes (or later: `carry github add --id team --repository owner/name`). It is read-only and refreshed every five minutes, and your teammates' notes show up in the same search, each with a link to the file and commit.
+Working in a team? Setup can also connect a shared GitHub repo of Markdown notes (needs the GitHub CLI, `gh`; or later: `carry github add --id team --repository owner/name`). It is read-only and refreshed every five minutes, and your teammates' notes show up in the same search, each with a link to the file and commit.
 
 ## Your data
 

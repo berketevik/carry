@@ -31,7 +31,7 @@ carry app open
 
 Yeni bir not klasörü oluşturun veya mevcut `.md` klasörünüzü seçin. Sonra **Ayarlar → Asistanlar → Notlarımla başlat** yolunu izleyip şunu sorun: “Carry ile bu proje hakkındaki notlarımı bul.”
 
-Ekiple mi çalışıyorsunuz? Kurulum, paylaşılan bir Markdown notları GitHub reposunu da bağlayabilir (sonradan: `carry github add --id team --repository sahip/ad`). Salt okunurdur, beş dakikada bir yenilenir; ekip arkadaşlarınızın notları aynı aramada, dosyanın ve commit'in bağlantısıyla çıkar.
+Ekiple mi çalışıyorsunuz? Kurulum, ekibin Markdown notlarını tutan ortak bir GitHub reposunu da bağlayabilir (GitHub CLI `gh` gerekir; sonradan: `carry github add --id team --repository sahip/ad`). Salt okunurdur, beş dakikada bir yenilenir; ekip arkadaşlarınızın notları aynı aramada, dosyanın ve commit'in bağlantısıyla çıkar.
 
 ## Verileriniz
 
