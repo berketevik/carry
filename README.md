@@ -4,7 +4,7 @@
 
 **Claude Code and Codex start every chat from zero. Carry gives them a memory made of your own notes.**
 
-In September you find that a client's user IDs are broken. In November you sit down to stitch them, and your assistant checks your notes first: it reminds you what you found and links the note where you wrote it. When a chat ends, Carry lists the new decisions and open tasks, and you keep the ones that are right.
+In September you find that a client's user IDs are broken. In November you sit down to stitch them, and your assistant checks your notes first: it reminds you what you found, with a link to where it's written. When a chat ends, Carry lists the new decisions and open tasks, and you keep the ones that are right.
 
 It pays off most when you juggle several clients or projects over months, or move between assistants and machines. Your notes stay on your Mac as plain Markdown (`.md`) files in a folder you choose.
 
@@ -33,7 +33,7 @@ Pick a new notes folder or an existing folder of `.md` files. Then go to **Setti
 
 ## Your data
 
-- Carry doesn't upload your notes anywhere. Passages your assistant finds go to that assistant, and chat drafts are made through it too (Claude Code or Codex, with your existing account); without Jev, the passages drafts are compared with go to it as well.
+- Carry doesn't upload your notes anywhere. Passages your assistant finds go to that assistant, and chat drafts are made through it too (Claude Code or Codex, with your existing account); if you don't use TypeSafe Jev (below), the passages drafts are compared with go to it as well.
 - If you turn on **TypeSafe Jev** as the relevance checker, questions and passages go to TypeSafe, and so do secret-masked excerpts of your chats while chat drafts are checked and compared with your notes. Notes marked `sensitivity: secret` are never sent.
 
 <details>

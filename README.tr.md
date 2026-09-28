@@ -4,7 +4,7 @@
 
 **Claude Code ve Codex her sohbete sıfırdan başlar. Carry onlara kendi notlarınızdan bir hafıza verir.**
 
-Eylülde bir müşterinizin user ID'lerinin hatalı olduğunu buluyorsunuz. Kasımda o ID'leri birleştirmeye oturduğunuzda asistanınız önce notlarınıza bakar: ne bulduğunuzu hatırlatır ve bunu yazdığınız notun bağlantısını verir. Sohbet bitince Carry yeni kararları ve yarım kalan işleri listeler, siz doğru olanları tutarsınız.
+Eylülde bir müşterinizin user ID'lerinin hatalı olduğunu buluyorsunuz. Kasımda o ID'leri birleştirmeye oturduğunuzda asistanınız önce notlarınıza bakar: ne bulduğunuzu hatırlatır ve nerede yazdığını gösterir. Sohbet bitince Carry yeni kararları ve yarım kalan işleri listeler, siz doğru olanları tutarsınız.
 
 En çok, aylara yayılan birden fazla müşteri ya da projeyle uğraşırken veya asistanlar ve bilgisayarlar arasında geçiş yaparken işe yarar. Notlarınız seçtiğiniz klasörde, düz Markdown (`.md`) dosyaları olarak Mac'inizde kalır.
 
@@ -12,7 +12,7 @@ En çok, aylara yayılan birden fazla müşteri ya da projeyle uğraşırken vey
 
 ## Nasıl çalışır?
 
-1. **Başlayın.** Carry'nin kurduğu not klasöründe açtığınız her sohbet kısa bir özetle başlar: son kararlar, son sohbetlerden kalan açık işler ve incelemenizi bekleyenler. Baştan anlatmanız gerekmez.
+1. **Açın.** Carry'nin kurduğu not klasöründe her sohbet kısa bir özetle başlar: son kararlar, son sohbetlerden kalan açık işler ve incelemenizi bekleyenler. Baştan anlatmanız gerekmez.
 2. **Sorun.** Claude Code veya Codex'te not aldığınız herhangi bir şeyi sorun. Carry notlarınızda arar ve eşleşen bölümleri kaynağı ve tarihiyle verir; cevabı kontrol edebilirsiniz. “Geçen hafta” veya “eylülde” gibi ifadeler aramayı o döneme daraltır.
 3. **Çalışın.** Her zamanki gibi sohbet edin. Sohbet bitince (ve açarsanız her akşam) Carry kararları, bilgileri ve açık işleri Gelen kutunuzdaki bir taslağa çıkarır; notlarınızda zaten yazanları ve onlarla çelişenleri işaretler.
 4. **İnceleyin.** Uygulamanın **İncele** sayfasında taslağı madde madde geçin: **Kabul et**, **Düzelt** ya da **Atla**. Kabul edilen maddeler, söylendikleri günün log'una kaydedilir. Sohbetten hiçbir şey siz olmadan nota dönüşmez; sohbetin kendisi, gizli bilgileri maskelenmiş olarak, ham malzeme olarak `sources/carry/harvest/` altında saklanır.
@@ -33,7 +33,7 @@ Yeni bir not klasörü oluşturun veya mevcut `.md` klasörünüzü seçin. Sonr
 
 ## Verileriniz
 
-- Carry notlarınızı hiçbir yere yüklemez. Asistanınızın bulduğu bölümler o asistana gider; sohbet taslakları da onun üzerinden çıkarılır (mevcut hesabınızla Claude Code veya Codex); Jev yoksa taslakların karşılaştırıldığı not bölümleri de ona gider.
+- Carry notlarınızı hiçbir yere yüklemez. Asistanınızın bulduğu bölümler o asistana gider; sohbet taslakları da onun üzerinden çıkarılır (mevcut hesabınızla Claude Code veya Codex); TypeSafe Jev kullanmıyorsanız (aşağıda) taslakların karşılaştırıldığı not bölümleri de ona gider.
 - İlgi denetçisi olarak **TypeSafe Jev**'i açarsanız sorular ve bölümler TypeSafe'e gider; sohbet taslakları denetlenip notlarınızla karşılaştırılırken sohbetlerinizden gizli bilgileri maskelenmiş alıntılar da gider. `sensitivity: secret` işaretli notlar hiç gönderilmez.
 
 <details>
