@@ -269,12 +269,15 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
                 warn(f'Ollama başlatılamadı ({how}); anahtar kelime aramasıyla devam.')
                 semantic = False
     has_key = bool(jev.api_key())
-    keychain = sys.platform == 'darwin'
+    # The key store's name with its Turkish suffixes: (in it, into it).
+    keychain = {'Keychain': ("Keychain'de", "Keychain'e"),
+                'Windows Credential Manager': ("Kimlik Bilgisi Yöneticisi'nde", "Kimlik Bilgisi Yöneticisi'ne")
+                }.get(jev.key_store())
     judge = 'jev' if has_key else 'assistant'
     if not assume_yes:
         judge = p.choose('Sonuçları kim süzsün?', [
             ('assistant', 'Asistanın küçük modeli (Haiku / gpt-reserve alt ajanı, ek hesap gerekmez)'),
-            ('jev', 'TypeSafe Jev (en hızlı ve en isabetli, anahtar gerekir' + (', Keychain\'de var)' if has_key else ')'))],
+            ('jev', 'TypeSafe Jev (en hızlı ve en isabetli, anahtar gerekir' + (f', {keychain[0]} var)' if has_key and keychain else ')'))],
             2 if has_key else 1)
     if judge == 'jev' and not has_key:
         say(paint('  Soru ve en fazla 32 aday parça (gizli bilgiler maskelenerek) TypeSafe\'e (ABD) gider.', DIM))
@@ -283,7 +286,7 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
             warn('Keychain yok: anahtarı TYPESAFE_API_KEY ortam değişkeni olarak tanımlayıp setup\'ı yeniden çalıştırın.')
         if key:
             jev.store_key(key)
-            ok('Anahtar Keychain\'e kaydedildi.')
+            ok(f'Anahtar {keychain[1]} kaydedildi.')
         else:
             judge = 'assistant'
             warn('Anahtar yok; asistanın küçük modeli süzecek.')

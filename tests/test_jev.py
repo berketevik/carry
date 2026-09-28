@@ -1,6 +1,8 @@
 """Jev judge: one request per recall, masked passages, gate, injection filter, never blocking."""
 from dataclasses import replace
 import os
+import sys
+import unittest
 from unittest.mock import patch
 
 from _support import WorkspaceCase
@@ -171,3 +173,17 @@ class JevBridgeTest(WorkspaceCase):
             result = call(action='jev_key', key='secret-value')
         store.assert_called_once_with('secret-value')
         self.assertEqual(result, dict(key_present=True))
+
+
+@unittest.skipUnless(sys.platform == 'win32', 'Windows Credential Manager')
+class CredentialManagerTest(unittest.TestCase):
+    def test_key_round_trips_through_credential_manager(self):
+        from carry import wincred
+        target = ('carry-typesafe-test-' + os.urandom(4).hex(), 'api')  # never the user's real key
+        self.addCleanup(wincred.delete, target[0])
+        with patch.object(jev, 'KEYCHAIN', target), patch.dict(os.environ, {'TYPESAFE_API_KEY': ''}):
+            self.assertIsNone(jev.api_key())
+            jev.store_key('  tsk-şifre-1  ')
+            self.assertEqual(jev.api_key(), 'tsk-şifre-1')
+            jev.store_key('tsk-2')
+            self.assertEqual(jev.api_key(), 'tsk-2')
