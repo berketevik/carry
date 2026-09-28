@@ -210,21 +210,34 @@ def extract_window(exchanges, language, which):
     return ask_agent(SYSTEM.format(language=language), _render(exchanges), which, 'items')
 
 
+def _client(name):
+    """The client's argv prefix. On Windows it is never an npm .cmd shim (cmd.exe would reparse
+    the prompt) and the prompt goes through stdin: a command line holds 32,767 characters there."""
+    if sys.platform != 'win32':
+        return [name]
+    from .desktop import command_for
+    return command_for(name)
+
+
 def ask_agent(system, body, which, field):
     """One JSON answer from the owner's own client (Claude or Codex), two tries."""
+    piped = sys.platform == 'win32'
     for _ in range(2):
         with tempfile.TemporaryDirectory(prefix='carry-harvest-') as cwd:
             if which.startswith('claude'):
-                proc = subprocess.run(['claude', '-p', '--model', which.split(':')[1], '--output-format', 'json',
-                                       '--tools', '', '--system-prompt', system, body],
-                                      capture_output=True, text=True, timeout=900, cwd=cwd)
+                proc = subprocess.run(_client('claude') + ['-p', '--model', which.split(':')[1], '--output-format', 'json',
+                                       '--tools', '', '--system-prompt', system] + ([] if piped else [body]),
+                                      input=body if piped else None,
+                                      capture_output=True, text=True, encoding='utf-8', timeout=900, cwd=cwd)
                 try:
                     text = json.loads(proc.stdout).get('result', '')
                 except ValueError:
                     text = ''
             else:
-                proc = subprocess.run(['codex', 'exec', '--skip-git-repo-check', '-m', which.split(':')[1],
-                                       system + '\n\n' + body], capture_output=True, text=True, timeout=900, cwd=cwd)
+                prompt = system + '\n\n' + body
+                proc = subprocess.run(_client('codex') + ['exec', '--skip-git-repo-check', '-m', which.split(':')[1],
+                                       '-' if piped else prompt], input=prompt if piped else None,
+                                      capture_output=True, text=True, encoding='utf-8', timeout=900, cwd=cwd)
                 text = proc.stdout
         items = _items_from(text, field)
         if items is not None:

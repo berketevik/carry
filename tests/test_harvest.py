@@ -7,6 +7,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 from unittest.mock import patch
 
 import _support  # noqa: F401
@@ -411,3 +412,43 @@ class HarvestJevRuleTest(HarvestTest):
             report = harvest.run(self.ws, which='claude:sonnet', progress=lambda m: None)
         digest = (self.root / report['digests'][0]).read_text(encoding='utf-8')
         self.assertNotIn('"judge": "jev"', digest)  # the assistant compares instead
+
+
+class ClientLaunchTest(unittest.TestCase):
+    """How harvest starts Claude/Codex; the client itself is faked."""
+    def run_agent(self, platform, which):
+        items = [dict(statement='x')]  # Claude wraps the answer in `result`; Codex prints it as is
+        reply = mock.Mock(stdout=json.dumps(dict(result=json.dumps(dict(items=items)), items=items)))
+        with patch.object(harvest.sys, 'platform', platform), \
+                patch.object(harvest, '_client', side_effect=lambda name: ['/bin/' + name]), \
+                patch.object(harvest.subprocess, 'run', return_value=reply) as run:
+            harvest.ask_agent('SYSTEM', 'line one\nline & two', which, 'items')
+        return run.call_args
+
+    def test_the_chat_goes_through_stdin_on_windows_and_as_an_argument_elsewhere(self):
+        for which in ('claude:sonnet', 'codex:gpt-5'):
+            args, options = self.run_agent('darwin', which)
+            self.assertIn('line one\nline & two', args[0][-1])
+            self.assertIsNone(options['input'])
+            args, options = self.run_agent('win32', which)
+            self.assertFalse(any('line & two' in a for a in args[0]))
+            self.assertIn('line one\nline & two', options['input'])
+
+    @unittest.skipUnless(sys.platform == 'win32', 'npm shims are a Windows thing')
+    def test_an_npm_shim_is_resolved_to_the_program_it_runs(self):
+        from carry import desktop
+        with tempfile.TemporaryDirectory() as npm:
+            npm = Path(npm)
+            program = npm / 'node_modules' / 'tool' / 'bin' / 'tool.exe'
+            program.parent.mkdir(parents=True)
+            program.write_bytes(b'')
+            script = npm / 'node_modules' / 'other' / 'cli.js'
+            script.parent.mkdir(parents=True)
+            script.write_text('', encoding='utf-8')
+            (npm / 'tool.cmd').write_text('@ECHO off\r\n' + r'"%dp0%\node_modules\tool\bin\tool.exe"   %*' + '\r\n',
+                                          encoding='utf-8')
+            (npm / 'other.cmd').write_text('@ECHO off\r\n' + r'"%_prog%"  "%dp0%\node_modules\other\cli.js" %*' + '\r\n',
+                                           encoding='utf-8')
+            with patch.object(desktop, 'executable_for', side_effect=lambda name: str(npm / (name + '.cmd'))):
+                self.assertEqual(desktop.command_for('tool'), [str(program)])
+                self.assertEqual(desktop.command_for('other')[1:], [str(script)])

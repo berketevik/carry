@@ -5,6 +5,7 @@ is loaded for every command so CLI/hook edits remain visible to the app.
 """
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -30,7 +31,39 @@ def executable_for(client):
     if client == 'codex':
         candidates += [Path('/Applications/Codex.app/Contents/Resources/codex'),
                        Path('/Applications/ChatGPT.app/Contents/Resources/codex')]
+    if sys.platform == 'win32':
+        # The native installer's ~/.local/bin, then npm's global folder.
+        candidates = [Path.home() / '.local/bin' / (client + '.exe'),
+                      Path(os.environ.get('APPDATA', Path.home() / 'AppData/Roaming')) / 'npm' / (client + '.cmd')]
     return found or next((str(p) for p in candidates if p.is_file()), client)
+
+
+def command_for(client):
+    """The argv prefix that starts a client without cmd.exe. An npm .cmd shim is resolved to the
+    program it runs: cmd.exe would reparse every argument, cutting a prompt at its first newline
+    and treating & | % ^ as commands."""
+    found = executable_for(client)
+    if sys.platform != 'win32':
+        return [found]
+    if not Path(found).is_absolute():
+        raise CarryError('client_not_found')  # a bare name would be looked up in the current folder first
+    if Path(found).suffix.lower() not in ('.cmd', '.bat'):
+        return [found]
+    shim = Path(found)
+    try:
+        targets = re.findall(r'"%dp0%\\([^"]+)"', shim.read_text(encoding='utf-8', errors='ignore'))
+    except OSError:
+        targets = []
+    for target in reversed(targets):
+        path = shim.parent / target
+        if path.suffix.lower() == '.exe' and path.is_file():
+            return [str(path)]
+        if path.suffix.lower() in ('.js', '.cjs', '.mjs') and path.is_file():
+            node = shim.parent / 'node.exe'
+            node = str(node) if node.is_file() else which('node')
+            if node:
+                return [node, str(path)]
+    raise CarryError('client_launcher_unresolved')
 
 
 HARVEST_JOB = 'harvest-now.json'
