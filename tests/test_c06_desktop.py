@@ -7,7 +7,7 @@ import sys
 import tomllib
 from unittest.mock import patch
 
-from _support import WorkspaceCase, SRC, tree_digest
+from _support import WorkspaceCase, SRC, symlink_or_skip, tree_digest
 from carry import capture, connections, lifecycle
 from carry.config import Workspace
 from carry.desktop import Bridge, serve, MAX_REQUEST
@@ -115,7 +115,7 @@ class DesktopTest(WorkspaceCase):
         for relative in ('../state/workspace.json', str(path)):
             with self.assertRaises(CarryError):
                 self.call('source', source_id='corpus', path=relative)
-        (self.corpus / 'escape.md').symlink_to(self.workspace.config_path)
+        symlink_or_skip(self, self.corpus / 'escape.md', self.workspace.config_path)
         with self.assertRaises(CarryError):
             self.call('source', source_id='corpus', path='escape.md')
 
@@ -252,7 +252,7 @@ class ConnectionTest(WorkspaceCase):
         with self.assertRaisesRegex(CarryError, 'existing_carry_connection_conflict'):
             self.plan()
         path.unlink()
-        path.symlink_to(self.workspace.config_path)
+        symlink_or_skip(self, path, self.workspace.config_path)
         with self.assertRaisesRegex(CarryError, 'settings_symlink_refused'):
             self.plan()
 

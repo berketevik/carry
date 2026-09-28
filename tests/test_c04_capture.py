@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from unittest import mock
 
-from _support import SRC, WorkspaceCase, tree_digest
+from _support import SRC, WorkspaceCase, symlink_or_skip, tree_digest
 from carry import capture, store
 from carry.config import Workspace
 from carry.errors import SourceError
@@ -160,7 +160,7 @@ class CaptureTest(WorkspaceCase):
     def test_symlink_escape_is_refused_without_external_writes(self):
         outside = self.base / 'outside'
         outside.mkdir()
-        (self.records / 'carry').symlink_to(outside, target_is_directory=True)
+        symlink_or_skip(self, self.records / 'carry', outside, target_is_directory=True)
         self.assertEqual(self.send()['state'], 'failed')
         self.assertEqual(list(outside.iterdir()), [])
 

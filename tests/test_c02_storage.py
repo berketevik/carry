@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from _support import HASHING, WorkspaceCase, tree_digest
+from _support import HASHING, WorkspaceCase, symlink_or_skip, tree_digest
 
 from carry import index as index_module
 from carry import sidecar as sidecar_map
@@ -67,7 +67,7 @@ class PathContainmentTest(WorkspaceCase):
     def test_symlink_escape_is_rejected(self):
         outside = self.base / "outside"
         outside.mkdir()
-        (self.corpus / "link").symlink_to(outside, target_is_directory=True)
+        symlink_or_skip(self, self.corpus / "link", outside, target_is_directory=True)
         with self.assertRaises(SourceError):
             resolve_within(self.corpus, "link/secret.md")
 
@@ -76,8 +76,8 @@ class PathContainmentTest(WorkspaceCase):
         outside = self.base / "outside"
         outside.mkdir()
         (outside / "Secret.md").write_text("secret evidence", encoding="utf-8")
-        (self.corpus / "linked").symlink_to(outside, target_is_directory=True)
-        (self.corpus / "Secret Link.md").symlink_to(outside / "Secret.md")
+        symlink_or_skip(self, self.corpus / "linked", outside, target_is_directory=True)
+        symlink_or_skip(self, self.corpus / "Secret Link.md", outside / "Secret.md")
         found = {relative for relative, _ in walk_markdown(self.corpus)}
         self.assertEqual(found, {"Inside.md"})
 
@@ -86,7 +86,7 @@ class PathContainmentTest(WorkspaceCase):
         outside = self.base / "outside"
         outside.mkdir()
         (outside / "Secret.md").write_text("---\ntype: note\n---\nsecret sentinel", encoding="utf-8")
-        (self.corpus / "linked").symlink_to(outside, target_is_directory=True)
+        symlink_or_skip(self, self.corpus / "linked", outside, target_is_directory=True)
         self.build()
         result = recall(self.workspace, "secret sentinel")
         self.assertNotIn("sentinel", json.dumps(result["evidence"], default=str))

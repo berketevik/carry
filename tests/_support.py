@@ -26,6 +26,17 @@ def tree_digest(root):
     return result
 
 
+def symlink_or_skip(test, link, target, **options):
+    """Windows grants symlinks only to admins or in Developer Mode; without that, the escape
+    a test stages cannot exist on this machine, so the test is skipped rather than failed."""
+    try:
+        link.symlink_to(target, **options)
+    except OSError as exc:
+        if getattr(exc, "winerror", None) == 1314:  # ERROR_PRIVILEGE_NOT_HELD
+            test.skipTest("this Windows account cannot create symlinks")
+        raise
+
+
 class WorkspaceCase(unittest.TestCase):
     """A temporary workspace whose state directory sits outside every source."""
 
