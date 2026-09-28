@@ -836,8 +836,8 @@ struct Onboarding: View {
             Text(T("Welcome to Carry", "Carry'ye hoş geldiniz")).font(.largeTitle.bold())
             Text(T("Carry turns your notes into a memory for your AI assistant.",
                    "Carry, notlarınızı yapay zekâ asistanınızın hafızasına dönüştürür.")).font(.title3).foregroundStyle(.secondary)
-            Text(T("Carry works with Claude Code and Codex on this Mac. It does not connect to the regular Claude or ChatGPT chat apps.",
-                   "Carry bu Mac'te Claude Code ve Codex ile çalışır. Claude'un ya da ChatGPT'nin normal sohbet uygulamalarına bağlanmaz."))
+            Text(T("Carry works with Claude Code and Codex on this Mac.",
+                   "Carry bu Mac'te Claude Code ve Codex ile çalışır."))
                 .padding(10).background(Color.accentColor.opacity(0.08)).clipShape(RoundedRectangle(cornerRadius: 8)).fixedSize(horizontal: false, vertical: true)
             point("brain.head.profile", T("Your assistant uses your notes", "Asistanınız notlarınızdan yararlanır"),
                   T("When you ask a question, your connected assistant can look up the related parts of your notes through Carry.",

@@ -89,7 +89,7 @@ The core needs Python 3.11+ and no packages. Extras: `.[embed]` (NumPy), `.[yaml
 <summary><b>Limits</b></summary>
 
 - **Pilot:** the app is built on your Mac and ad-hoc signed; there is no notarized release.
-- Works with Claude Code and Codex, not the Claude or ChatGPT chat apps. Reads `.md` files only.
+- Works with Claude Code and Codex. Reads `.md` files only.
 - Search and chat drafts can miss or misread things; check drafts against their sources.
 - Secret masking is best effort. Date searches use dated headings, file names and `created`/`date`/`updated` metadata, not file modification times.
 
