@@ -31,6 +31,8 @@ carry app open
 
 Pick a new notes folder or an existing folder of `.md` files. Then go to **Settings → Assistants → Start with my notes** and ask: “Use Carry to find my notes about this project.”
 
+Working in a team? Setup can also connect a shared GitHub repo of Markdown notes (or later: `carry github add --id team --repository owner/name`). It is read-only and refreshed every five minutes, and your teammates' notes show up in the same search, each with a link to the file and commit.
+
 ## Your data
 
 - Carry doesn't upload your notes anywhere. Passages your assistant finds go to that assistant, and chat drafts are made through it too (Claude Code or Codex, with your existing account); if you don't use TypeSafe Jev (below), the passages drafts are compared with go to it as well.
@@ -96,4 +98,4 @@ The core needs Python 3.11+ and no packages. Extras: `.[embed]` (NumPy), `.[yaml
 
 </details>
 
-<sub>Made by **Berke Tevik**.</sub>
+<sub>Made by **Berke Tevik**. Team knowledge base conventions by **İsmail Aykut**.</sub>

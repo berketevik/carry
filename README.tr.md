@@ -31,6 +31,8 @@ carry app open
 
 Yeni bir not klasörü oluşturun veya mevcut `.md` klasörünüzü seçin. Sonra **Ayarlar → Asistanlar → Notlarımla başlat** yolunu izleyip şunu sorun: “Carry ile bu proje hakkındaki notlarımı bul.”
 
+Ekiple mi çalışıyorsunuz? Kurulum, paylaşılan bir Markdown notları GitHub reposunu da bağlayabilir (sonradan: `carry github add --id team --repository sahip/ad`). Salt okunurdur, beş dakikada bir yenilenir; ekip arkadaşlarınızın notları aynı aramada, dosyanın ve commit'in bağlantısıyla çıkar.
+
 ## Verileriniz
 
 - Carry notlarınızı hiçbir yere yüklemez. Asistanınızın bulduğu bölümler o asistana gider; sohbet taslakları da onun üzerinden çıkarılır (mevcut hesabınızla Claude Code veya Codex); TypeSafe Jev kullanmıyorsanız (aşağıda) taslakların karşılaştırıldığı not bölümleri de ona gider.
@@ -96,4 +98,4 @@ uv pip install --python .venv/bin/python -e .
 
 </details>
 
-<sub>**Berke Tevik** tarafından geliştirildi.</sub>
+<sub>**Berke Tevik** tarafından geliştirildi. Ekip bilgi tabanı kuralları: **İsmail Aykut**.</sub>
