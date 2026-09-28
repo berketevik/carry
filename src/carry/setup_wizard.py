@@ -126,6 +126,27 @@ def icloud_synced(path):
     return inside and (synced or 'Mobile Documents' in str(path))
 
 
+def onedrive_synced(path):
+    """OneDrive's folder backup does the same to Documents and Desktop on Windows."""
+    path = Path(path).expanduser().resolve()
+    roots = {Path(os.environ[k]).resolve() for k in ('OneDrive', 'OneDriveConsumer', 'OneDriveCommercial')
+             if os.environ.get(k)}
+    return any(path == root or root in path.parents for root in roots)
+
+
+def cloud_synced(path):
+    """The sync service that holds `path`, or None."""
+    if icloud_synced(path):
+        return 'iCloud'
+    if sys.platform == 'win32' and onedrive_synced(path):
+        return 'OneDrive'
+    return None
+
+
+# Where the notes stay, for the Turkish messages.
+HERE = "bu Mac'te" if sys.platform == 'darwin' else 'bu bilgisayarda'
+
+
 # 5-row block font for the banner; only the letters it needs.
 FONT = {
     'A': [' ███ ', '█   █', '█████', '█   █', '█   █'], 'B': ['████ ', '█   █', '████ ', '█   █', '████ '],
@@ -183,14 +204,14 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
     p = Prompter(assume_yes, stream)
     total = 8
     say(paint('\n  CARRY', BOLD + ';' + MAGENTA) + paint('  · ikinci beyin kurulumu', DIM))
-    say(paint('  Notların bu Mac\'te kalır. Asistanın (Claude Code / Codex) onlardan alıntılı cevap verir.', DIM))
+    say(paint(f'  Notların {HERE} kalır. Asistanın (Claude Code / Codex) onlardan alıntılı cevap verir.', DIM))
     say(paint('  Sırasıyla: workspace → vault / kaynak → ekip reposu → arama → asistan → yedek → uygulama → index.', DIM))
 
     # 1. Workspace
     step(1, total, 'Workspace (index ve ayarlar)')
     state = Path(p.ask('Klasör:', state_dir or '~/CarryState')).expanduser()
-    if icloud_synced(state):
-        warn('Bu klasör iCloud ile senkronlanıyor; index bozulabilir. Ev klasöründe bir yer önerilir.')
+    if cloud_synced(state):
+        warn(f'Bu klasör {cloud_synced(state)} ile senkronlanıyor; index bozulabilir. Ev klasöründe bir yer önerilir.')
         if not p.yes('Yine de devam edilsin mi?', default=False):
             state = Path('~/CarryState').expanduser()
     if (state / CONFIG_NAME).exists():
@@ -210,8 +231,8 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
     project = None
     if kind == 'new':
         target = Path(vault_path or p.ask('Vault klasörü (boş olmalı):', '~/Vault')).expanduser()
-        if icloud_synced(target):
-            warn('Vault iCloud ile senkronlanan bir klasörde; git ile yedeklemek daha güvenli.')
+        if cloud_synced(target):
+            warn(f'Vault {cloud_synced(target)} ile senkronlanan bir klasörde; git ile yedeklemek daha güvenli.')
         lang = language or p.choose('Notlarının dili?', [('Turkish', 'Türkçe'), ('English', 'English')], 1)
         capture = False if assume_yes else p.yes('Prompt\'larını vault\'a kaydetsin mi (sources/carry, gözden geçirmek için)?', default=False)
         plan = vault_module.plan(target, language=lang, workspace=ws.state_dir, capture=capture, attach=True)
@@ -234,7 +255,8 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
     repo = '' if assume_yes else p.ask('Repo (sahip/ad, boş bırak = geç):', '')
     if repo:
         if not github.executable():
-            warn('GitHub CLI (gh) bulunamadı: `brew install gh` ve `gh auth login`, sonra `carry github add`.')
+            install_gh = '`winget install GitHub.cli`' if sys.platform == 'win32' else '`brew install gh`'
+            warn(f'GitHub CLI (gh) bulunamadı: {install_gh} ve `gh auth login`, sonra `carry github add`.')
         else:
             try:
                 with Spinner(f'{repo} indiriliyor ve indeksleniyor'):
@@ -249,18 +271,23 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
     from . import ollama_setup
     semantic = semantic_default
     if semantic and not assume_yes:
-        semantic = p.yes('Anlamsal arama açılsın mı? (embeddinggemma, 0,6 GB, bu Mac\'te Ollama ile; '
+        semantic = p.yes(f'Anlamsal arama açılsın mı? (embeddinggemma, 0,6 GB, {HERE} Ollama ile; '
                          'eş anlamlıları ve Türkçe↔İngilizce eşleşmeyi yakalar)', default=True)
     if semantic:
         st = ollama_setup.status()
         if not st['installed']:
-            if st['brew'] and (assume_yes or p.yes('Ollama kurulu değil. Homebrew ile kurulsun mu (brew install ollama)?', default=True)):
-                with Spinner('Ollama kuruluyor (brew)'):
+            if sys.platform == 'win32':
+                tool, offer = 'winget', 'Ollama kurulu değil. winget ile kurulsun mu (winget install Ollama.Ollama)?'
+            else:
+                tool, offer = 'brew', 'Ollama kurulu değil. Homebrew ile kurulsun mu (brew install ollama)?'
+            if st['installer'] and (assume_yes or p.yes(offer, default=True)):
+                with Spinner(f'Ollama kuruluyor ({tool})'):
                     good, how = ollama_setup.install()
                 (ok if good else warn)('Ollama kuruldu ve açılışta başlayacak.' if good else f'Ollama kurulamadı ({how}).')
                 semantic = good
             else:
-                warn('Ollama yok' + ('' if st['brew'] else ' ve Homebrew yok') + ': https://ollama.com/download · '
+                missing = {'brew': ' ve Homebrew yok', 'winget': ' ve winget yok'}[tool]
+                warn('Ollama yok' + ('' if st['installer'] else missing) + ': https://ollama.com/download · '
                      'sonra: carry search --semantic on')
                 semantic = False
         else:
@@ -365,6 +392,8 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
                 ok(f'Uygulama kuruldu: {path} · açmak için: carry app open')
             except CarryError as exc:
                 warn(f'Uygulama kurulamadı ({exc}); sonra: carry app install')
+    elif sys.platform != 'darwin':
+        say(paint('  Carry uygulaması şimdilik yalnızca macOS\'ta; burada komut satırı ve asistan üzerinden çalışır.', DIM))
     else:
         say(paint('  Sonra istersen: carry app install', DIM))
 

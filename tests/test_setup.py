@@ -1,6 +1,7 @@
 """carry setup: defaults end to end, scripted answers, iCloud warning, banner font."""
 import io
 import json
+import os
 from contextlib import redirect_stdout
 from pathlib import Path
 import tempfile
@@ -39,7 +40,7 @@ class SetupTest(unittest.TestCase):
         def fake_setup(ws, preset):
             calls.append(preset)
         with redirect_stdout(io.StringIO()), \
-                patch.object(ollama_setup, 'status', return_value=dict(installed=False, brew='/opt/homebrew/bin/brew', running=False)), \
+                patch.object(ollama_setup, 'status', return_value=dict(installed=False, brew='/opt/homebrew/bin/brew', installer='/opt/homebrew/bin/brew', running=False)), \
                 patch.object(ollama_setup, 'install', return_value=(True, 'brew_service')) as install, \
                 patch.object(models, 'setup', side_effect=fake_setup):
             code = setup_wizard.run(state_dir=str(self.base / 'ws'), assume_yes=True, vault_path=str(self.base / 'Vault'),
@@ -52,7 +53,7 @@ class SetupTest(unittest.TestCase):
         from carry import models, ollama_setup
         calls = []
         with redirect_stdout(io.StringIO()) as out, \
-                patch.object(ollama_setup, 'status', return_value=dict(installed=False, brew=None, running=False)), \
+                patch.object(ollama_setup, 'status', return_value=dict(installed=False, brew=None, installer=None, running=False)), \
                 patch.object(models, 'setup', side_effect=lambda ws, preset: calls.append(preset)):
             setup_wizard.run(state_dir=str(self.base / 'ws'), assume_yes=True, vault_path=str(self.base / 'Vault'), animation=False, app=False)
         self.assertEqual(calls, ['keyword_assistant'])
@@ -81,6 +82,14 @@ class SetupTest(unittest.TestCase):
         with patch.object(Path, 'home', return_value=home):
             self.assertTrue(setup_wizard.icloud_synced(home / 'Documents' / 'CarryState'))
             self.assertFalse(setup_wizard.icloud_synced(home / 'CarryState'))
+
+    def test_onedrive_folders_are_flagged_on_windows(self):
+        home, onedrive = self.base / 'home', self.base / 'home' / 'OneDrive'
+        onedrive.mkdir(parents=True)
+        with patch.object(Path, 'home', return_value=home), patch.object(setup_wizard.sys, 'platform', 'win32'), \
+                patch.dict(os.environ, {'OneDrive': str(onedrive)}):
+            self.assertEqual(setup_wizard.cloud_synced(onedrive / 'Documents' / 'CarryState'), 'OneDrive')
+            self.assertIsNone(setup_wizard.cloud_synced(home / 'CarryState'))
 
     def test_connect_previews_applies_lists_and_undoes(self):
         ws_dir, proj = self.base / 'ws', self.base / 'proj'

@@ -23,9 +23,16 @@ PRESETS = {
 }
 
 
+def windows_ollama_dir():
+    """Where the Ollama installer for Windows puts ollama.exe and the tray app."""
+    return Path(os.environ.get('LOCALAPPDATA') or Path.home() / 'AppData/Local') / 'Programs' / 'Ollama'
+
+
 def ollama_binary():
-    for candidate in (Path(sys.prefix).parent / 'ollama/ollama',
-                      Path('/Applications/Ollama.app/Contents/Resources/ollama')):
+    candidates = [Path(sys.prefix).parent / 'ollama/ollama', Path('/Applications/Ollama.app/Contents/Resources/ollama')]
+    if sys.platform == 'win32':
+        candidates.append(windows_ollama_dir() / 'ollama.exe')
+    for candidate in candidates:
         if candidate.is_file():
             return str(candidate)
     return which('ollama')

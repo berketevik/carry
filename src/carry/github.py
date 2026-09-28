@@ -30,7 +30,9 @@ MAX_FILES = 20_000
 def executable():
     candidates = [Path(sys.prefix).parent / 'bin/gh',
                   Path('/opt/homebrew/bin/gh'), Path('/usr/local/bin/gh')]
-    found = shutil.which('gh')
+    if sys.platform == 'win32':
+        candidates = [Path(os.environ.get('ProgramFiles', r'C:\Program Files')) / 'GitHub CLI' / 'gh.exe']
+    found = which('gh')
     if found:
         return found
     for path in candidates:
