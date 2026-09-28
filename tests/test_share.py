@@ -1,10 +1,15 @@
 """Sharing an approved digest item into a team repo's inbox: render and checks only, nothing sent."""
+import base64
 import contextlib
+from dataclasses import replace
 import datetime
 import io
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
+from urllib.parse import quote
 
 import _support  # noqa: F401
 from carry import cli, digest, share, vault, vaultview
@@ -148,6 +153,105 @@ class ShareTest(unittest.TestCase):
         self.assertIn('- **decision:** The pilot ships on 15 October.', out)
         code, _ = self.run_cli('share', 'disable', '--id', 'team')
         self.assertEqual(Workspace.load(self.ws.state_dir).source('team').share, {})
+
+
+class SendTest(ShareTest):
+    """The write path with the GitHub calls recorded, never made."""
+
+    def enable(self, mode='direct'):
+        ws = Workspace.load(self.ws.state_dir)
+        ws.with_sources([replace(s, share=dict(enabled=True, mode=mode)) if s.source_id == 'team' else s
+                         for s in ws.sources]).save()
+        self.ws = Workspace.load(self.ws.state_dir)
+
+    def fake(self, taken=(), fail=None):
+        calls = []
+        def call(method, path, body=None, missing_ok=False):
+            calls.append((method, path, body))
+            if method == 'GET' and '/contents/' in path:
+                return {'sha': 'x'} if any(quote(t, safe='/') in path for t in taken) else None
+            if fail and fail in path and method != 'GET':
+                raise CarryError('github_write_failed')
+            if '/git/ref/heads/' in path:
+                return {'object': {'sha': 'b' * 40}}
+            if method == 'PUT':
+                return {'content': {'html_url': 'https://github.com/acme/kb/blob/main/x.md'}}
+            if path.endswith('/pulls'):
+                return {'html_url': 'https://github.com/acme/kb/pull/7'}
+            return {}
+        return calls, call
+
+    def planned(self):
+        return self.plan(self.accept('The pilot ships on 15 October.'))
+
+    def test_direct_checks_the_name_then_puts_and_logs_the_share(self):
+        self.enable()
+        calls, call = self.fake()
+        with patch.object(share, '_call', side_effect=call):
+            got = share.send(self.ws, self.planned(), today=DAY)
+        path = quote('90_Inbox/2026-09-28 — Pilot tarihi.md', safe='/')
+        self.assertEqual([(m, p.split('?')[0]) for m, p, _ in calls],
+                         [('GET', f'/repos/acme/kb/contents/{path}'), ('PUT', f'/repos/acme/kb/contents/{path}')])
+        body = calls[1][2]
+        self.assertEqual((body['message'], body['branch']), ('docs(inbox): Pilot tarihi', 'main'))
+        self.assertIn('The pilot ships on 15 October.', base64.b64decode(body['content']).decode())
+        self.assertEqual(got, dict(sent=True, mode='direct', repository='acme/kb',
+                                   path='90_Inbox/2026-09-28 — Pilot tarihi.md',
+                                   url='https://github.com/acme/kb/blob/main/x.md'))
+        log = (self.root / 'log' / '2026-09-27.md').read_text()
+        self.assertIn('The pilot ships on 15 October. → ekibe paylaşıldı: https://github.com/acme/kb/blob/main/x.md', log)
+
+    def test_a_taken_name_gets_a_number(self):
+        self.enable()
+        calls, call = self.fake(taken=['90_Inbox/2026-09-28 — Pilot tarihi.md'])
+        with patch.object(share, '_call', side_effect=call):
+            got = share.send(self.ws, self.planned(), today=DAY)
+        self.assertEqual(got['path'], '90_Inbox/2026-09-28 — Pilot tarihi (2).md')
+        self.assertEqual([m for m, _, _ in calls], ['GET', 'GET', 'PUT'])
+
+    def test_pr_mode_branches_puts_and_opens_a_pull_request(self):
+        self.enable('pr')
+        calls, call = self.fake()
+        planned = self.planned()
+        with patch.object(share, '_call', side_effect=call):
+            got = share.send(self.ws, planned, today=DAY)
+        head = f"carry/share-2026-09-28-{planned['item']}"
+        self.assertEqual([(m, p.split('/')[-1]) for m, p, _ in calls][1:],
+                         [('GET', 'main'), ('POST', 'refs'),
+                          ('PUT', quote('2026-09-28 — Pilot tarihi.md')), ('POST', 'pulls')])
+        self.assertEqual(calls[2][2], dict(ref=f'refs/heads/{head}', sha='b' * 40))
+        self.assertEqual(calls[3][2]['branch'], head)
+        self.assertEqual((calls[4][2]['head'], calls[4][2]['base']), (head, 'main'))
+        self.assertEqual(got['url'], 'https://github.com/acme/kb/pull/7')
+
+    def test_a_pr_that_fails_after_the_branch_names_the_branch_and_logs_nothing(self):
+        self.enable('pr')
+        _, call = self.fake(fail='/pulls')
+        planned = self.planned()
+        with patch.object(share, '_call', side_effect=call):
+            with self.assertRaisesRegex(CarryError, f"share_pr_incomplete: branch carry/share-2026-09-28-{planned['item']}"):
+                share.send(self.ws, planned, today=DAY)
+        self.assertNotIn('ekibe paylaşıldı', (self.root / 'log' / '2026-09-27.md').read_text())
+
+    def test_send_checks_again_instead_of_trusting_the_plan(self):
+        planned = self.planned()
+        with patch.object(share, '_call', side_effect=AssertionError('no call expected')):
+            with self.assertRaisesRegex(CarryError, 'share_not_enabled'):
+                share.send(self.ws, planned)
+            self.enable()
+            tampered = dict(planned, text=planned['text'] + 'password: hunter2\n', blocked=[])
+            with self.assertRaisesRegex(CarryError, 'share_blocked_secrets'):
+                share.send(self.ws, tampered)
+
+    def test_gh_errors_never_surface_stderr(self):
+        failed = subprocess.CompletedProcess([], 1, stdout=b'{"message": "Not Found", "status": "404"}',
+                                             stderr=b'token ghp_secret')
+        with patch.object(share.subprocess, 'run', return_value=failed), \
+                patch('carry.github.executable', return_value='gh'):
+            self.assertIsNone(share._call('GET', '/repos/acme/kb/contents/x.md', missing_ok=True))
+            with self.assertRaises(CarryError) as caught:
+                share._call('PUT', '/repos/acme/kb/contents/x.md', {'content': ''})
+        self.assertEqual(str(caught.exception), 'github_write_failed')
 
 
 if __name__ == '__main__':
