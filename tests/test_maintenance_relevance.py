@@ -34,9 +34,9 @@ class MaintenanceTest(WorkspaceCase):
         self.assertEqual(recall(self.workspace, 'October 22')['evidence'], [])
 
     def test_only_one_worker_and_interruption_visible(self):
-        import fcntl
+        from carry.filelock import try_lock
         with (self.workspace.state_dir/'maintenance.lock').open('a') as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+            self.assertTrue(try_lock(lock))
             self.assertFalse(maintenance.start(self.workspace)['started'])
             maintenance.job_progress(self.workspace, state='running')
             self.assertEqual(maintenance.job_status(self.workspace)['state'], 'running')

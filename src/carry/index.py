@@ -5,7 +5,6 @@ single atomic rename, so an interrupted or failed build always leaves the
 previous usable index in place. Nothing in this module writes inside a source
 root.
 """
-import fcntl
 import hashlib
 import json
 import os
@@ -19,6 +18,7 @@ from pathlib import Path
 from . import sidecar as sidecar_map
 from .embedding import build_provider
 from .errors import ProviderUnavailable
+from .filelock import try_lock
 from .markdown import chunk_body, parse_document
 from .paths import walk_markdown
 from .records import read_record_meta
@@ -182,9 +182,7 @@ def build(workspace):
     # Kernel-owned advisory lock, scoped to this workspace and released on exit.
     # The lock file is kept: unlinking it would create a second lock domain.
     with open(workspace.lock_path, "a+") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
+        if not try_lock(lock):
             return {"status": "reindexing"}
         return _build_locked(workspace)
 

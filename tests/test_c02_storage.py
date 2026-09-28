@@ -3,7 +3,6 @@
 Acceptance: two independent workspaces cannot contaminate each other, and a
 rebuild leaves the original files untouched.
 """
-import fcntl
 import json
 import shutil
 import unittest
@@ -17,6 +16,7 @@ from carry import sidecar as sidecar_map
 from carry import store
 from carry.config import RetrievalConfig, SourceConfig, Workspace
 from carry.errors import RevisionConflict, SourceError, WorkspaceError
+from carry.filelock import try_lock
 from carry.paths import resolve_within, walk_markdown
 from carry.recall import recall
 
@@ -222,7 +222,7 @@ class RebuildSafetyTest(WorkspaceCase):
         self.note("Alpha")
         self.build()
         with open(self.workspace.lock_path, "a+") as held:
-            fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.assertTrue(try_lock(held))
             self.assertEqual(index_module.build(self.workspace)["status"], "reindexing")
 
     def test_no_leftover_build_file_after_success_or_failure(self):

@@ -1,5 +1,4 @@
 """Workspace-scoped background jobs with a kernel lock and inspectable progress."""
-import fcntl
 import json
 import os
 import subprocess
@@ -9,6 +8,7 @@ import threading
 
 from .config import Workspace
 from .errors import CarryError
+from .filelock import try_lock, unlock
 from .persistence import atomic_text
 
 
@@ -24,12 +24,15 @@ def job_status(workspace):
 
 def is_running(workspace):
     workspace.state_dir.mkdir(parents=True, exist_ok=True)
-    with (workspace.state_dir / 'maintenance.lock').open('a') as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            return True
-        return False
+    if _held(workspace.state_dir / 'maintenance.lock'):
+        return True
+    # Windows: held by start() while the job passes to its worker (see HANDOVER).
+    return sys.platform == 'win32' and _held(workspace.state_dir / HANDOVER)
+
+
+def _held(path):
+    with path.open('a') as lock:
+        return not try_lock(lock)
 
 
 def job_progress(workspace, **fields):
@@ -43,15 +46,30 @@ def job_progress(workspace, **fields):
     return payload
 
 
+HANDOVER = 'maintenance.start.lock'
+
+
 def start(workspace, action='maintain', **arguments):
     if action not in ('maintain', 'github_connect', 'github_sync', 'model_setup', 'index'):
         raise CarryError('invalid_maintenance_action')
     workspace.state_dir.mkdir(parents=True, exist_ok=True)
+    if sys.platform != 'win32':
+        return _start(workspace, action, arguments)
+    # A Windows lock cannot pass to the worker, which takes it itself once start() lets go of it.
+    # This second lock covers that hand-over, so no one sees the job as free in between.
+    with (workspace.state_dir / HANDOVER).open('a') as handover:
+        if not try_lock(handover):
+            return dict(state='running', started=False)
+        try:
+            return _start(workspace, action, arguments)
+        finally:
+            unlock(handover)
+
+
+def _start(workspace, action, arguments):
     lock = (workspace.state_dir / 'maintenance.lock').open('a')
     try:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
+        if not try_lock(lock):
             return dict(state='running', started=False)
         job_progress(workspace, state='running', stage='queued', action=action, error=None,
                      source_id=None, completed=None, total=None, started_at=time.time())
@@ -133,7 +151,12 @@ def run(workspace, action, arguments):
 def main():
     state, descriptor, action, arguments = sys.argv[1:]
     workspace = Workspace.load(state)
-    lock = int(descriptor)
+    if descriptor == '-':
+        lock = _take_lock(workspace)
+        if lock is None:
+            return  # another worker got the lock first; it owns the progress file
+    else:
+        lock = int(descriptor)
     try:
         result = run(workspace, action, json.loads(arguments))
         failed = result.get('status') in ('failed', 'reindexing')
@@ -143,7 +166,28 @@ def main():
         job_progress(workspace, state='failed', stage='failed',
                      error=str(exc) if isinstance(exc, CarryError) else type(exc).__name__)
     finally:
-        os.close(lock)
+        if isinstance(lock, int):
+            os.close(lock)
+        else:
+            lock.close()
+
+
+def _await_worker(workspace, process, timeout=10.0):
+    """Windows: return once the worker holds the lock; until then start() keeps the hand-over lock."""
+    deadline = time.monotonic() + timeout
+    while process.poll() is None and time.monotonic() < deadline and not _held(workspace.state_dir / 'maintenance.lock'):
+        time.sleep(0.02)
+
+
+def _take_lock(workspace, timeout=10.0):
+    handle = (workspace.state_dir / 'maintenance.lock').open('a')
+    deadline = time.monotonic() + timeout
+    while not try_lock(handle):
+        if time.monotonic() >= deadline:
+            handle.close()
+            return None
+        time.sleep(0.02)
+    return handle
 
 
 if __name__ == '__main__':
