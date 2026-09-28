@@ -84,15 +84,47 @@ def _harvest_result(ws, offset):
 def _is_harvest(pid, state_dir):
     """True while `pid` is still a harvest of this workspace (a reused pid is some other command)."""
     try:
-        command = subprocess.run(['ps', '-p', str(int(pid)), '-o', 'command='], capture_output=True, text=True, timeout=5).stdout
+        command = _command_line(int(pid))
     except (OSError, ValueError, TypeError, subprocess.SubprocessError):
         return False
     return ' harvest' in command and str(state_dir) in command
 
 
+def _command_line(pid):
+    if sys.platform != 'win32':
+        return subprocess.run(['ps', '-p', str(pid), '-o', 'command='], capture_output=True, text=True, timeout=5).stdout
+    # No ps on Windows, and wmic is being removed: ask CIM, in UTF-8 so non-ASCII paths survive.
+    query = ('[Console]::OutputEncoding = [Text.Encoding]::UTF8; '
+             f"(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').CommandLine")
+    return subprocess.run([system_tool(r'WindowsPowerShell\v1.0\powershell.exe'), '-NoProfile', '-NonInteractive', '-Command', query], capture_output=True,
+                          text=True, encoding='utf-8', timeout=15, creationflags=subprocess.CREATE_NO_WINDOW).stdout
+
+
 def carry_executable():
     beside = Path(sys.executable).with_name('carry')
-    return str(beside) if beside.is_file() else (shutil.which('carry') or 'carry')
+    return str(beside) if beside.is_file() else (which('carry') or 'carry')
+
+
+def _max_rss_bytes():
+    if sys.platform != 'win32':
+        import resource
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * (1 if sys.platform == 'darwin' else 1024)
+    import ctypes
+    from ctypes import wintypes
+
+    class Counters(ctypes.Structure):  # PROCESS_MEMORY_COUNTERS
+        _fields_ = [('cb', wintypes.DWORD), ('PageFaultCount', wintypes.DWORD)] + [
+            (name, ctypes.c_size_t) for name in (
+                'PeakWorkingSetSize', 'WorkingSetSize', 'QuotaPeakPagedPoolUsage', 'QuotaPagedPoolUsage',
+                'QuotaPeakNonPagedPoolUsage', 'QuotaNonPagedPoolUsage', 'PagefileUsage', 'PeakPagefileUsage')]
+
+    kernel32 = ctypes.WinDLL('kernel32')
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel32.K32GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(Counters), wintypes.DWORD]
+    counters = Counters(cb=ctypes.sizeof(Counters))
+    if not kernel32.K32GetProcessMemoryInfo(kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb):
+        return None
+    return counters.PeakWorkingSetSize
 
 
 class Bridge:
@@ -106,9 +138,7 @@ class Bridge:
             raise CarryError('invalid_desktop_request')
         action = request['action']
         if action == 'ping':
-            import resource
-            return dict(ready=True, python=sys.version.split()[0], pid=os.getpid(),
-                        max_rss_bytes=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * (1 if sys.platform == 'darwin' else 1024))
+            return dict(ready=True, python=sys.version.split()[0], pid=os.getpid(), max_rss_bytes=_max_rss_bytes())
         state = request.get('workspace')
         if not isinstance(state, str) or not state.strip():
             raise CarryError('workspace_required')
