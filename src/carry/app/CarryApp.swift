@@ -639,6 +639,7 @@ func pageName(_ key: String) -> String {
     switch key {
     case "Overview": return T("Home", "Ana sayfa")
     case "Vault": return T("Notes", "Notlar")
+    case "Graph": return T("Map", "Harita")
     case "Search": return T("Search notes", "Notlarda ara")
     case "Review": return T("Review", "İncele")
     case "Proposals": return T("Change proposals", "Değişiklik önerileri")
@@ -2874,9 +2875,307 @@ struct Activity: View {
     }
 }
 
+// MARK: - Map
+
+/// Categorical slots for topics, stepped separately for light and dark. Hues are assigned
+/// in this fixed order (largest topic first); topics past the eighth stay neutral.
+let topicPalette: [(UInt32, UInt32)] = [(0x2a78d6, 0x3987e5), (0xeb6834, 0xd95926), (0x1baf7a, 0x199e70), (0xeda100, 0xc98500),
+                                        (0xe87ba4, 0xd55181), (0x008300, 0x008300), (0x4a3aa7, 0x9085e9), (0xe34948, 0xe66767)]
+func topicColor(_ slot: Int?) -> Color {
+    guard let slot, slot >= 0, slot < topicPalette.count else { return Color.secondary }
+    let (light, dark) = topicPalette[slot]
+    return Color(nsColor: NSColor(name: nil) { appearance in
+        let hex = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
+        return NSColor(srgbRed: CGFloat((hex >> 16) & 0xff) / 255, green: CGFloat((hex >> 8) & 0xff) / 255, blue: CGFloat(hex & 0xff) / 255, alpha: 1)
+    })
+}
+
+/// The map's data parsed once per load, so drawing never touches dictionaries.
+struct MapData {
+    struct Node { let path: String; let title: String; let point: CGPoint; let cluster: Int; let radius: CGFloat; let degree: Double }
+    struct Topic { let id: Int; let label: String; let size: Int; let centre: CGPoint; let r: CGFloat; let slot: Int?; let unlinked: Bool }
+    var nodes: [Node] = []
+    var topics: [Topic] = []
+    var edges: [(Int, Int)] = []
+    var neighbours: [[Int]] = []
+    var bounds = CGRect(x: -1, y: -1, width: 2, height: 2)
+    var sourceId = ""
+    var folders: [String] = []
+    var available: [String] = []
+    var truncated = false
+    var semantic = true
+    init() {}
+    init(_ v: [String: Any]) {
+        sourceId = str(v, "source_id", ""); folders = v["folders"] as? [String] ?? []; available = v["available_folders"] as? [String] ?? []
+        truncated = v["truncated"] as? Bool == true
+        semantic = v["semantic"] as? Bool != false
+        topics = (v["clusters"] as? [[String: Any]] ?? []).map { c in
+            Topic(id: Int(num(c, "id")), label: str(c, "label", ""), size: Int(num(c, "size")), centre: CGPoint(x: num(c, "x"), y: num(c, "y")),
+                  r: num(c, "r"), slot: (c["color"] as? NSNumber)?.intValue, unlinked: c["unlinked"] as? Bool == true)
+        }
+        nodes = (v["nodes"] as? [[String: Any]] ?? []).map { n in
+            Node(path: str(n, "path", ""), title: { let t = str(n, "title", ""); return t.count > 40 ? String(t.prefix(38)) + "…" : t }(),
+                 point: CGPoint(x: num(n, "x"), y: num(n, "y")), cluster: Int(num(n, "cluster")),
+                 radius: 3 + min(7, sqrt(num(n, "degree")) * 1.1), degree: num(n, "degree"))
+        }
+        neighbours = Array(repeating: [], count: nodes.count)
+        for e in v["edges"] as? [[Int]] ?? [] where e.count == 2 && e[0] < nodes.count && e[1] < nodes.count {
+            edges.append((e[0], e[1])); neighbours[e[0]].append(e[1]); neighbours[e[1]].append(e[0])
+        }
+        if !topics.isEmpty {
+            var r = CGRect.null
+            for t in topics { let rad = t.r * 1.2; r = r.union(CGRect(x: t.centre.x - rad, y: t.centre.y - rad * 1.4, width: rad * 2, height: rad * 2.4)) }
+            bounds = r
+        }
+    }
+    func topic(_ id: Int) -> Topic? { topics.first { $0.id == id } }
+    func slot(_ cluster: Int) -> Int? { topics.first { $0.id == cluster }?.slot }
+}
+
+/// Every note as a dot, notes about the same thing pulled into topic clouds. Zoomed out the clouds and
+/// their names show what the vault is about; zooming in brings out the note titles.
+/// Topics come from the meaning of the notes (the search index's vectors); the lines drawn
+/// are the links. Deliberately still: no animation, and hovering
+/// only lights the note and its links.
+struct GraphView: View {
+    @ObservedObject var model: Model
+    @State private var map = MapData()
+    @State private var loaded = false
+    @State private var folders: [String]? = nil
+    @State private var loading = false
+    @State private var zoom: CGFloat = 1
+    @State private var liveZoom: CGFloat = 1
+    @State private var pan: CGSize = .zero
+    @State private var livePan: CGSize = .zero
+    @State private var hover: Int? = nil
+    @State private var focus: Int? = nil
+    @State private var source = ""
+    @State private var canvasSize = CGSize(width: 800, height: 600)
+    var scale: CGFloat { zoom * liveZoom }
+    var offset: CGSize { CGSize(width: pan.width + livePan.width, height: pan.height + livePan.height) }
+    func fit(_ size: CGSize) -> CGFloat {
+        let b = map.bounds
+        return min(size.width / max(b.width, 0.001), size.height / max(b.height, 0.001)) * 0.92
+    }
+    func project(_ size: CGSize) -> (CGPoint) -> CGPoint {
+        let b = map.bounds, s = fit(size) * scale, o = offset
+        return { p in CGPoint(x: size.width / 2 + (p.x - b.midX) * s + o.width, y: size.height / 2 + (p.y - b.midY) * s + o.height) }
+    }
+    func nearest(_ location: CGPoint, _ size: CGSize) -> Int? {
+        let at = project(size)
+        var best: (Int, CGFloat)? = nil
+        for (i, n) in map.nodes.enumerated() {
+            let p = at(n.point), d = hypot(p.x - location.x, p.y - location.y)
+            if d <= n.radius + 6, d < (best?.1 ?? .infinity) { best = (i, d) }
+        }
+        return best?.0
+    }
+    /// 0 when zoomed out (topics lead), 1 when zoomed in far enough to read note titles.
+    var detail: Double { Double(min(1, max(0, (scale - 1.6) / 1.2))) }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(T("Map of your notes", "Notlarının haritası")).font(.title2.bold())
+                    Text(T("Each dot is a note; notes about the same thing gather into topics, lines are links. Zoom in to read titles, click a note to open it.",
+                           "Her nokta bir not; aynı şeyden bahseden notlar konulara toplanır, çizgiler linklerdir. Başlıkları okumak için yakınlaş, açmak için nota tıkla."))
+                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                if loading { ProgressView().controlSize(.small) }
+                Button { zoom = min(8, zoom * 1.5) } label: { Image(systemName: "plus.magnifyingglass") }.help(T("Zoom in", "Yakınlaş"))
+                Button { zoom = max(0.4, zoom / 1.5) } label: { Image(systemName: "minus.magnifyingglass") }.help(T("Zoom out", "Uzaklaş"))
+                Button { reset() } label: { Image(systemName: "arrow.up.left.and.down.right.magnifyingglass") }.help(T("Show everything", "Tümünü göster"))
+            }.padding([.horizontal, .top], 20).padding(.bottom, 10)
+            HStack(spacing: 6) {
+                Text(T("Folders:", "Klasörler:")).font(.caption).foregroundStyle(.secondary)
+                ForEach(map.available, id: \.self) { f in
+                    Toggle(f.isEmpty ? T("(top level)", "(en üst)") : f + "/", isOn: Binding(get: { map.folders.contains(f) }, set: { value in
+                        var current = Set(map.folders)
+                        if value { current.insert(f) } else { current.remove(f) }
+                        guard !current.isEmpty else { return }
+                        folders = current.sorted(); load()
+                    })).toggleStyle(.button).controlSize(.small)
+                }
+                Spacer()
+                if !map.semantic {
+                    Text(T("Meaning search is off, so these groups follow shared words.", "Anlam araması kapalı; gruplar ortak kelimelere göre.")).font(.caption).foregroundStyle(.secondary)
+                }
+                if map.truncated {
+                    Text(T("Showing the most-linked notes only.", "Yalnızca en çok bağlantılı notlar gösteriliyor.")).font(.caption).foregroundStyle(.secondary)
+                }
+                Text(T("\(map.nodes.count) notes · \(map.edges.count) links", "\(map.nodes.count) not · \(map.edges.count) bağlantı")).font(.caption).foregroundStyle(.secondary)
+            }.padding(.horizontal, 20).padding(.bottom, 8)
+            HStack(alignment: .top, spacing: 0) {
+                GeometryReader { geo in canvas(geo.size).onAppear { canvasSize = geo.size }.onChange(of: geo.size) { canvasSize = geo.size } }
+                    .background(Color(nsColor: .textBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.2)))
+                legend.frame(width: 220)
+            }.padding(.horizontal, 20).padding(.bottom, 16)
+        }
+        .onAppear { if !loaded || source != model.vaultSource { load() } }
+        .onChange(of: model.vaultSource) { folders = nil; load() }   // another source has its own folders
+    }
+    var legend: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(T("Topics", "Konular")).font(.headline).padding(.bottom, 6)
+                ForEach(map.topics, id: \.id) { t in
+                    Button { focusOn(t.id) } label: {
+                        HStack(spacing: 8) {
+                            Circle().fill(topicColor(t.slot)).frame(width: 10, height: 10)
+                            Text(t.unlinked ? T("Not indexed yet", "Henüz indekslenmedi") : t.label).lineLimit(2).multilineTextAlignment(.leading)
+                            Spacer(minLength: 4)
+                            Text("\(t.size)").monospacedDigit().foregroundStyle(.secondary)
+                        }.padding(.vertical, 4).padding(.horizontal, 6).contentShape(Rectangle())
+                        .background(RoundedRectangle(cornerRadius: 6).fill(focus == t.id ? Color.accentColor.opacity(0.12) : .clear))
+                    }.buttonStyle(.plain).font(.callout)
+                }
+                if focus != nil {
+                    Button(T("Show all topics", "Tüm konuları göster")) { reset() }.buttonStyle(.link).font(.caption).padding(.top, 6)
+                }
+            }.padding(.leading, 14)
+        }
+    }
+    func canvas(_ size: CGSize) -> some View {
+        let at = project(size), u = fit(size) * scale, detail = detail, map = map, focus = focus
+        let hovered = hover.flatMap { $0 < map.nodes.count ? $0 : nil }
+        let lit = Set(hovered.map { map.neighbours[$0] } ?? [])
+        let surface = Color(nsColor: .textBackgroundColor)
+        let colors = Dictionary(uniqueKeysWithValues: map.topics.map { ($0.id, topicColor($0.slot)) })
+        let view = CGRect(origin: .zero, size: size).insetBy(dx: -60, dy: -30)
+        return Canvas(rendersAsynchronously: true) { ctx, _ in
+            // Clouds: one soft disc per topic.
+            for t in map.topics where !t.unlinked {
+                let c = at(t.centre), r = t.r * 1.12 * u
+                let dim = focus != nil && focus != t.id
+                ctx.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)),
+                         with: .color((colors[t.id] ?? .secondary).opacity(dim ? 0.03 : 0.07 + 0.07 * (1 - detail))))
+            }
+            // Links, batched into one path per topic plus one for links between topics.
+            var inner: [Int: Path] = [:], across = Path()
+            for (a, b) in map.edges {
+                let na = map.nodes[a], nb = map.nodes[b]
+                if focus != nil && na.cluster != focus && nb.cluster != focus { continue }
+                if na.cluster == nb.cluster {
+                    inner[na.cluster, default: Path()].move(to: at(na.point)); inner[na.cluster]!.addLine(to: at(nb.point))
+                } else { across.move(to: at(na.point)); across.addLine(to: at(nb.point)) }
+            }
+            ctx.stroke(across, with: .color(Color.secondary.opacity(0.12)), lineWidth: 0.8)
+            for (cluster, path) in inner { ctx.stroke(path, with: .color((colors[cluster] ?? .secondary).opacity(0.28)), lineWidth: 0.8) }
+            if let h = hovered {
+                var path = Path()
+                for j in map.neighbours[h] { path.move(to: at(map.nodes[h].point)); path.addLine(to: at(map.nodes[j].point)) }
+                ctx.stroke(path, with: .color(Color.primary.opacity(0.7)), lineWidth: 1.5)
+            }
+            // Notes: a dot per note with a surface ring so overlapping dots stay distinct.
+            let grow = 0.8 + 0.2 * min(scale, 3)
+            var rings = Path(), dots: [Int: Path] = [:], faded: [Int: Path] = [:]
+            for n in map.nodes {
+                let p = at(n.point)
+                guard view.contains(p) else { continue }
+                let r = n.radius * grow, rect = CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)
+                rings.addEllipse(in: rect.insetBy(dx: -1.5, dy: -1.5))
+                if focus != nil && n.cluster != focus { faded[n.cluster, default: Path()].addEllipse(in: rect) }
+                else { dots[n.cluster, default: Path()].addEllipse(in: rect) }
+            }
+            ctx.fill(rings, with: .color(surface))
+            for (cluster, path) in faded { ctx.fill(path, with: .color((colors[cluster] ?? .secondary).opacity(0.2))) }
+            for (cluster, path) in dots { ctx.fill(path, with: .color(colors[cluster] ?? .secondary)) }
+            if let h = hovered {
+                let n = map.nodes[h], p = at(n.point), r = n.radius * grow + 3
+                ctx.stroke(Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)), with: .color(.primary), lineWidth: 1.5)
+            }
+            // Note titles once zoomed in, plus the hovered note and its neighbours. The
+            // most-linked notes are named first; a title that would cover another is skipped.
+            if detail > 0 || hovered != nil {
+                var placed: [CGRect] = []
+                var order = (detail > 0 ? Array(map.nodes.indices) : []).filter { i in
+                    (focus == nil || map.nodes[i].cluster == focus) && view.contains(at(map.nodes[i].point))
+                }.sorted { map.nodes[$0].degree > map.nodes[$1].degree }
+                if let h = hovered { order = [h] + map.neighbours[h] + order }
+                for i in order {
+                    let n = map.nodes[i], p = at(n.point), strong = i == hovered || lit.contains(i)
+                    let points: CGFloat = i == hovered ? 12 : 10.5
+                    // An estimate is enough to keep titles apart and much cheaper than measuring each one.
+                    let width = CGFloat(n.title.count) * points * 0.55, height = points * 1.3
+                    let rect = CGRect(x: p.x - width / 2, y: p.y + n.radius * grow + 4, width: width, height: height)
+                    if i != hovered && placed.contains(where: { $0.intersects(rect) }) { continue }
+                    placed.append(rect.insetBy(dx: -3, dy: -1))
+                    ctx.draw(Text(n.title).font(.system(size: points, weight: i == hovered ? .semibold : .regular))
+                                .foregroundColor(.primary.opacity(strong ? 1 : detail)),
+                             at: CGPoint(x: p.x, y: rect.minY), anchor: .top)
+                }
+            }
+            // Topic names: zoomed out, a tag in the middle of each cloud; zoomed in, a quieter
+            // name above it so the note titles inside stay readable.
+            for t in map.topics where !t.unlinked && !t.label.isEmpty {
+                let c = at(t.centre), r = t.r * 1.12 * u
+                let dim = focus != nil && focus != t.id
+                let points = min(20, max(12, 10 + sqrt(Double(t.size)) * 1.2))
+                if detail < 1 {
+                    let tag = ctx.resolve(Text(t.label).font(.system(size: points, weight: .bold)).foregroundColor(.primary.opacity(dim ? 0.3 : 1)))
+                    let fits = tag.measure(in: CGSize(width: max(160, r * 2.4), height: 200))
+                    let box = CGRect(x: c.x - fits.width / 2 - 8, y: c.y - fits.height / 2 - 4, width: fits.width + 16, height: fits.height + 8)
+                    ctx.drawLayer { layer in
+                        layer.opacity = 1 - detail
+                        layer.fill(Path(roundedRect: box, cornerRadius: box.height / 2), with: .color(surface.opacity(0.82)))
+                        layer.stroke(Path(roundedRect: box, cornerRadius: box.height / 2), with: .color((colors[t.id] ?? .secondary).opacity(dim ? 0.2 : 0.7)), lineWidth: 1.5)
+                        layer.draw(tag, in: box.insetBy(dx: 8, dy: 4))
+                    }
+                }
+                if detail > 0 {
+                    ctx.draw(Text(t.label).font(.system(size: points, weight: .bold)).foregroundColor(.primary.opacity((dim ? 0.3 : 0.85) * detail)),
+                             at: CGPoint(x: c.x, y: c.y - r - 4), anchor: .bottom)
+                }
+            }
+        }
+        .contentShape(Rectangle())
+        .onContinuousHover { phase in
+            let found: Int?
+            switch phase {
+            case .active(let location): found = nearest(location, size)
+            case .ended: found = nil
+            }
+            if found != hover { hover = found }   // redraw only when the note under the pointer changes
+        }
+        .simultaneousGesture(SpatialTapGesture().onEnded { value in
+            if let i = nearest(value.location, size) { model.openNote(map.nodes[i].path, source: map.sourceId.isEmpty ? model.vaultSource : map.sourceId) }
+        })
+        .gesture(DragGesture(minimumDistance: 3).onChanged { livePan = $0.translation; hover = nil }.onEnded { v in
+            pan.width += v.translation.width; pan.height += v.translation.height; livePan = .zero
+        })
+        .simultaneousGesture(MagnifyGesture().onChanged { liveZoom = $0.magnification }.onEnded { v in
+            zoom = min(8, max(0.4, zoom * v.magnification)); liveZoom = 1
+        })
+    }
+    func reset() { zoom = 1; pan = .zero; focus = nil }
+    /// Centres a topic and zooms until it fills most of the view.
+    func focusOn(_ id: Int) {
+        guard focus != id, let t = map.topic(id) else { reset(); return }
+        let b = map.bounds
+        focus = id
+        zoom = min(8, max(1, min(b.width, b.height) / max(t.r * 2.6, 0.001)))
+        let f = fit(canvasSize)
+        pan = CGSize(width: -(t.centre.x - b.midX) * f * zoom, height: -(t.centre.y - b.midY) * f * zoom)
+    }
+    func load() {
+        var fields = model.vaultFields
+        if let folders { fields["folders"] = folders }
+        loading = true
+        let requested = model.vaultSource
+        model.request("vault_graph", fields, clearError: false, quiet: true, orElse: { e in loading = false; model.error = e.localizedDescription }) { value in
+            loading = false
+            guard requested == model.vaultSource else { return }
+            map = MapData(value); loaded = true; source = requested; hover = nil; focus = nil; zoom = 1; pan = .zero
+        }
+    }
+}
+
 struct ContentView: View {
     @StateObject private var model = Model()
-    let pages = [("Overview", "house"), ("Review", "checkmark.circle"), ("Vault", "books.vertical"), ("Search", "magnifyingglass"), ("Settings", "gearshape")]
+    let pages = [("Overview", "house"), ("Review", "checkmark.circle"), ("Vault", "books.vertical"), ("Graph", "circle.hexagongrid"), ("Search", "magnifyingglass"), ("Settings", "gearshape")]
     var body: some View {
         Group { if model.onboarding { Onboarding(model: model) } else {
         NavigationSplitView {
@@ -2913,6 +3212,7 @@ struct ContentView: View {
                 Group {
                     switch model.page {
                     case "Vault": VaultView(model: model)
+                    case "Graph": GraphView(model: model)
                     case "Search": Search(model: model).disabled(model.busy)
                     case "Review": ReviewView(model: model)
                     case "Proposals": Activity(model: model).disabled(model.busy)

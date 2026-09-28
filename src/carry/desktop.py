@@ -243,7 +243,7 @@ class Bridge:
             self.vault_plans.clear()
             maintenance.start(Workspace.load(state))
             return result
-        if action in ('vault_browse', 'vault_note', 'vault_resolve', 'vault_backlinks', 'vault_overview', 'note_create', 'note_approve', 'note_approve_many',
+        if action in ('vault_browse', 'vault_note', 'vault_resolve', 'vault_backlinks', 'vault_overview', 'vault_graph', 'note_create', 'note_approve', 'note_approve_many',
                       'digest_items', 'digest_decide'):
             from . import vaultview
             sid = request.get('source_id') or vaultview.default_vault(ws)
@@ -255,6 +255,9 @@ class Bridge:
                 return vaultview.note(ws, sid, request['path'])
             if action == 'vault_backlinks':
                 return vaultview.backlinks(ws, sid, request['path'])
+            if action == 'vault_graph':
+                from . import graph
+                return graph.build(ws, sid, request.get('folders'))
             if action == 'note_create':
                 created = vaultview.create_note(ws, sid, request.get('title', ''), request.get('body', ''))
                 maintenance.start(ws)
