@@ -353,10 +353,10 @@ def cmd_harvest(args):
             pass
         return EXIT_OK
     ws = open_workspace(args.workspace)
-    if (args.install_schedule or args.remove_schedule) and sys.platform != 'darwin':
+    if (args.install_schedule or args.remove_schedule) and sys.platform not in ('darwin', 'win32'):
         import shutil
         line = f"30 21 * * * {shutil.which('carry') or 'carry'} --workspace {ws.state_dir} harvest"
-        _print(dict(cron=line), args.json, ['launchd is macOS only; add this line with `crontab -e`:', line])
+        _print(dict(cron=line), args.json, ['nightly harvest is scheduled on macOS and Windows; add this line with `crontab -e`:', line])
         return EXIT_OK
     if args.install_schedule or args.remove_schedule:
         import shutil
@@ -579,7 +579,7 @@ def build_parser():
     hv.add_argument("--from-hook", action="store_true", help="SessionEnd hook: read the client's JSON on stdin, harvest in the background")
     hv.add_argument("--min-exchanges", type=int, help="skip threads shorter than this (default 2)")
     hv.add_argument("--extractor", help="claude:<model> or codex:<model> (default: claude:sonnet, else codex:gpt-6-astra)")
-    hv.add_argument("--install-schedule", action="store_true", help="run every evening at 21:30 (launchd)")
+    hv.add_argument("--install-schedule", action="store_true", help="run every evening at 21:30 (launchd; Task Scheduler on Windows)")
     hv.add_argument("--remove-schedule", action="store_true")
     hv.set_defaults(func=cmd_harvest)
 

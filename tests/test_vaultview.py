@@ -82,6 +82,13 @@ class VaultViewTest(unittest.TestCase):
 
 
 class ScheduleTest(unittest.TestCase):
+    def setUp(self):
+        # The launchd backend, on any machine: the fake launchctl stands in for the real one.
+        for patcher in (mock.patch.object(harvest.sys, 'platform', 'darwin'),
+                        mock.patch.object(harvest.os, 'getuid', return_value=501, create=True)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     def launchctl(self, fail_bootstrap=0):
         """Fake launchctl: remembers what is loaded so `print` answers like the real one.
         The first `fail_bootstrap` bootstraps fail."""
@@ -120,6 +127,57 @@ class ScheduleTest(unittest.TestCase):
                 with self.assertRaisesRegex(CarryError, 'schedule_load_failed'):
                     harvest.install_schedule('/bin/carry', '/state-b', hour=6, minute=0)
                 self.assertEqual(harvest.schedule_status()['workspace'], '/state-a')
+
+
+class WindowsScheduleTest(unittest.TestCase):
+    def setUp(self):
+        # The Task Scheduler backend, on any machine: the fake schtasks stands in for the real one.
+        self.appdata = tempfile.TemporaryDirectory()
+        self.addCleanup(self.appdata.cleanup)
+        for patcher in (mock.patch.object(harvest.sys, 'platform', 'win32'),
+                        mock.patch.dict(os.environ, {'LOCALAPPDATA': self.appdata.name})):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def schtasks(self, fail_create=0):
+        """Fake schtasks: remembers what is registered so /Query answers like the real one.
+        The first `fail_create` creations fail."""
+        registered, failures = set(), [fail_create]
+        def run(args, **kw):
+            verb, name = args[1], args[3]
+            code = 0
+            if verb == '/Create':
+                code = 1 if failures[0] > 0 else 0
+                failures[0] -= 1
+                if not code:
+                    registered.add(name)
+            elif verb == '/Delete':
+                registered.discard(name)
+            elif verb == '/Query':
+                code = 0 if name in registered else 1
+            return mock.Mock(returncode=code)
+        return run
+
+    def test_status_reads_back_what_install_wrote(self):
+        with mock.patch.object(harvest.subprocess, 'run', side_effect=self.schtasks()):
+            status = harvest.install_schedule('carry', r'C:\Carry State', vault=r'C:\My "vault"\ş',
+                                              language='Turkish', hour=6, minute=5)
+            self.assertEqual((status['hour'], status['minute'], status['vault'], status['language'],
+                              status['workspace'], status['loaded']),
+                             (6, 5, r'C:\My "vault"\ş', 'Turkish', r'C:\Carry State', True))
+            self.assertIn('carry.nightly', harvest.schedule_path().read_bytes().decode('utf-16'))
+            with self.assertRaises(CarryError):
+                harvest.install_schedule('carry', r'C:\state', hour=24)
+            self.assertEqual(harvest.remove_schedule(), dict(installed=False, loaded=False))
+            self.assertFalse(harvest.schedule_status()['installed'])
+
+    def test_failed_registration_restores_the_previous_task(self):
+        with mock.patch.object(harvest.subprocess, 'run', side_effect=self.schtasks()):
+            harvest.install_schedule('carry', r'C:\state-a', hour=21, minute=30)
+        with mock.patch.object(harvest.subprocess, 'run', side_effect=self.schtasks(fail_create=1)):
+            with self.assertRaisesRegex(CarryError, 'schedule_load_failed'):
+                harvest.install_schedule('carry', r'C:\state-b', hour=6, minute=0)
+            self.assertEqual(harvest.schedule_status()['workspace'], r'C:\state-a')
 
 
 class LinksAndWorkspaceTest(unittest.TestCase):

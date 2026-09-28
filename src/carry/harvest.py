@@ -19,10 +19,12 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 
-from . import jev
+from . import jev, taskscheduler
+from .background import detached
 from .errors import CarryError
 from .mask import mask
 from .persistence import atomic_text
@@ -636,7 +638,6 @@ def in_vault(cwd, root):
 def spawn_from_hook(state_dir, payload, root, language=None, python=None):
     """SessionEnd: start the harvest of the closed thread in the background and return at once
     (Codex allows a SessionEnd hook three seconds at most)."""
-    import sys
     transcript = payload.get('transcript_path')
     if not transcript or not in_vault(payload.get('cwd') or '', root):
         return False
@@ -671,6 +672,8 @@ def schedule_plist(carry_bin, state_dir, hour=21, minute=30, extra=()):
 
 
 def schedule_path():
+    if sys.platform == 'win32':
+        return taskscheduler.definition_path()
     return Path.home() / 'Library' / 'LaunchAgents' / (LAUNCH_LABEL + '.plist')
 
 
@@ -717,6 +720,8 @@ def _loaded():
 
 def schedule_status():
     """What the nightly launchd job runs, read back from its plist, and whether launchd has it."""
+    if sys.platform == 'win32':
+        return taskscheduler.status()
     import plistlib
     path = schedule_path()
     try:
@@ -734,12 +739,15 @@ def schedule_status():
 def install_schedule(carry_bin, state_dir, vault=None, language=None, hour=21, minute=30):
     if not (0 <= int(hour) <= 23 and 0 <= int(minute) <= 59):
         raise CarryError('invalid_schedule_time')
+    extra = (['--vault', str(vault)] if vault else []) + (['--language', language] if language else [])
+    if sys.platform == 'win32':
+        # The task runs this Python windowless through carry.nightly, not the carry console binary.
+        return taskscheduler.install(state_dir, int(hour), int(minute), extra)
     path, target = schedule_path(), f'gui/{os.getuid()}'
     previous = path.read_text(encoding='utf-8') if path.is_file() else None
     subprocess.run(['launchctl', 'bootout', target, str(path)], capture_output=True)
     path.parent.mkdir(parents=True, exist_ok=True)
-    extra = (['--vault', str(vault)] if vault else []) + (['--language', language] if language else [])
-    path.write_text(schedule_plist(carry_bin, state_dir, hour=int(hour), minute=int(minute), extra=extra))
+    path.write_text(schedule_plist(carry_bin, state_dir, hour=int(hour), minute=int(minute), extra=extra), encoding='utf-8', newline='\n')
     if subprocess.run(['launchctl', 'bootstrap', target, str(path)], capture_output=True).returncode != 0:
         # Put the job that was there back rather than leave a plist launchd does not run.
         if previous is None:
@@ -753,6 +761,8 @@ def install_schedule(carry_bin, state_dir, vault=None, language=None, hour=21, m
 
 
 def remove_schedule():
+    if sys.platform == 'win32':
+        return taskscheduler.remove()
     path = schedule_path()
     subprocess.run(['launchctl', 'bootout', f'gui/{os.getuid()}', str(path)], capture_output=True)
     if _loaded():

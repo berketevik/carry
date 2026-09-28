@@ -330,15 +330,22 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
                 ok(f'Özel repo oluşturuldu ve ilk commit gönderildi: {name}')
             except (OSError, subprocess.CalledProcessError) as exc:
                 warn('Yedek repo oluşturulamadı: ' + (getattr(exc, 'stderr', '') or str(exc)).strip()[:160])
-    if project and kind == 'new' and not assume_yes and sys.platform == 'darwin' and p.yes(
+    if project and kind == 'new' and not assume_yes and sys.platform in ('darwin', 'win32') and p.yes(
             'Her akşam 21:30\'da Claude Code / Codex sohbetlerinden taslak not çıkarılsın mı (inbox: +/)?', default=False):
         from . import harvest
         import subprocess
-        plist = Path.home() / 'Library' / 'LaunchAgents' / (harvest.LAUNCH_LABEL + '.plist')
-        plist.parent.mkdir(parents=True, exist_ok=True)
-        plist.write_text(harvest.schedule_plist(shutil.which('carry') or sys.argv[0], ws.state_dir))
-        subprocess.run(['launchctl', 'bootstrap', f'gui/{os.getuid()}', str(plist)], capture_output=True)
-        ok('Gecelik hasat kuruldu; kapatmak için: carry harvest --remove-schedule')
+        if sys.platform == 'win32':
+            try:
+                harvest.install_schedule(None, ws.state_dir)  # Task Scheduler runs this Python, not a binary
+                ok('Gecelik hasat kuruldu (Görev Zamanlayıcı); kapatmak için: carry harvest --remove-schedule')
+            except CarryError as exc:
+                warn(f'Gecelik hasat kurulamadı ({exc}); sonra: carry harvest --install-schedule')
+        else:
+            plist = Path.home() / 'Library' / 'LaunchAgents' / (harvest.LAUNCH_LABEL + '.plist')
+            plist.parent.mkdir(parents=True, exist_ok=True)
+            plist.write_text(harvest.schedule_plist(shutil.which('carry') or sys.argv[0], ws.state_dir), encoding='utf-8', newline='\n')
+            subprocess.run(['launchctl', 'bootstrap', f'gui/{os.getuid()}', str(plist)], capture_output=True)
+            ok('Gecelik hasat kuruldu; kapatmak için: carry harvest --remove-schedule')
     else:
         say(paint('  Sonra elle: carry harvest   (sohbetlerden taslak notlar, inbox: +/)', DIM))
 
