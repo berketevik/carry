@@ -2,6 +2,8 @@
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -375,7 +377,11 @@ class HarvestTest(unittest.TestCase):
         args = popen.call_args_list[0][0][0]
         self.assertIn('--thread', args)
         self.assertIn('Turkish', args)
-        self.assertTrue(popen.call_args_list[0][1]['start_new_session'])
+        options = popen.call_args_list[0][1]
+        if sys.platform == 'win32':
+            self.assertTrue(options['creationflags'] & subprocess.CREATE_NEW_PROCESS_GROUP)
+        else:
+            self.assertTrue(options['start_new_session'])
         self.assertEqual(popen.call_count, 1)
 
     def test_codex_threads_are_found_by_working_directory(self):

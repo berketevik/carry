@@ -6,6 +6,7 @@ import sys
 import time
 import threading
 
+from .background import detached
 from .config import Workspace
 from .errors import CarryError
 from .filelock import try_lock, unlock
@@ -73,11 +74,17 @@ def _start(workspace, action, arguments):
             return dict(state='running', started=False)
         job_progress(workspace, state='running', stage='queued', action=action, error=None,
                      source_id=None, completed=None, total=None, started_at=time.time())
-        process = subprocess.Popen([sys.executable, *(['-I'] if sys.flags.isolated else []), '-B',
-            '-m', 'carry.maintenance', str(workspace.state_dir), str(lock.fileno()),
-            action, json.dumps(arguments)], pass_fds=(lock.fileno(),),
-            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            start_new_session=True)
+        if sys.platform == 'win32':
+            descriptor, options = '-', {}
+        else:
+            descriptor, options = str(lock.fileno()), dict(pass_fds=(lock.fileno(),))
+        process = detached([sys.executable, *(['-I'] if sys.flags.isolated else []), '-B',
+            '-m', 'carry.maintenance', str(workspace.state_dir), descriptor,
+            action, json.dumps(arguments)],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **options)
+        if sys.platform == 'win32':
+            unlock(lock)
+            _await_worker(workspace, process)
         threading.Thread(target=process.wait, daemon=True).start()
         return dict(state='running', started=True, pid=process.pid)
     except Exception:

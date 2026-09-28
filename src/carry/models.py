@@ -10,6 +10,7 @@ from dataclasses import replace
 import urllib.request
 from urllib.parse import urlsplit
 
+from .background import detached, which
 from .config import EmbeddingConfig, Workspace
 from .embedding import build_provider
 from .errors import CarryError
@@ -27,7 +28,7 @@ def ollama_binary():
                       Path('/Applications/Ollama.app/Contents/Resources/ollama')):
         if candidate.is_file():
             return str(candidate)
-    return shutil.which('ollama')
+    return which('ollama')
 
 
 def ensure_runtime(endpoint):
@@ -44,9 +45,8 @@ def ensure_runtime(endpoint):
     if not executable:
         raise CarryError('ollama_runtime_missing')
     # Only called by an explicit installation action; do not change an existing server.
-    proc = subprocess.Popen([executable, 'serve'], env=dict(os.environ, OLLAMA_HOST=parsed.netloc),
-        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        start_new_session=True)
+    proc = detached([executable, 'serve'], env=dict(os.environ, OLLAMA_HOST=parsed.netloc),
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(40):
         try:
             with urllib.request.urlopen(endpoint + '/api/version', timeout=1) as response:

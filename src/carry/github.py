@@ -17,6 +17,7 @@ import time
 from dataclasses import replace
 from urllib.parse import quote, urlsplit
 
+from .background import which
 from .config import SOURCE_ID_RE, SourceConfig, Workspace
 from .errors import CarryError
 from .persistence import writer_lock

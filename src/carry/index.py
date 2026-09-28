@@ -16,6 +16,7 @@ from contextlib import closing
 from pathlib import Path
 
 from . import sidecar as sidecar_map
+from .background import detached
 from .embedding import build_provider
 from .errors import ProviderUnavailable
 from .filelock import try_lock
@@ -315,8 +316,7 @@ def maybe_refresh(workspace, spawn=True, backoff=60.0):
 
 
 def _spawn(workspace, subprocess, _sys):
-    subprocess.Popen([_sys.executable, "-m", "carry.cli", "--workspace",
-                      str(workspace.state_dir), "index"],
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                     start_new_session=True)
+    detached([_sys.executable, "-m", "carry.cli", "--workspace",
+              str(workspace.state_dir), "index"],
+             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return "spawned"

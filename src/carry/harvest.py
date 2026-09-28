@@ -647,8 +647,8 @@ def spawn_from_hook(state_dir, payload, root, language=None, python=None):
         pass
     args = [python or sys.executable, '-I', '-m', 'carry.cli', '--workspace', str(state_dir), 'harvest',
             '--thread', str(transcript), '--vault', str(root)] + (['--language', language] if language else [])
-    log = open(Path(state_dir) / 'harvest.log', 'a')
-    subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
+    with open(Path(state_dir) / 'harvest.log', 'a') as log:  # the child keeps its own handle
+        detached(args, stdin=subprocess.DEVNULL, stdout=log, stderr=log)
     return True
 
 

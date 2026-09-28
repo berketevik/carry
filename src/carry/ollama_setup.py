@@ -11,7 +11,8 @@ import subprocess
 import time
 import urllib.request
 
-from .models import ollama_binary
+from .background import detached, which
+from .models import ollama_binary, windows_ollama_dir
 
 ENDPOINT = 'http://127.0.0.1:11434'
 APP = '/Applications/Ollama.app'
@@ -66,10 +67,16 @@ def start():
         subprocess.run(['open', '-a', 'Ollama'], capture_output=True)
         if _wait():
             return True, 'app'
+    tray = windows_ollama_dir() / 'ollama app.exe'
+    if sys.platform == 'win32' and tray.is_file():
+        # The tray app runs the server and starts again at every sign-in, like the brew service.
+        detached([str(tray)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if _wait():
+            return True, 'app'
     binary = ollama_binary()
     if binary:
-        subprocess.Popen([binary, 'serve'], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL, start_new_session=True)
+        detached([binary, 'serve'], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                 stderr=subprocess.DEVNULL)
         if _wait():
             return True, 'serve'
     return False, 'ollama_not_started'

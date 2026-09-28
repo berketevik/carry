@@ -13,6 +13,7 @@ import time
 from dataclasses import replace
 
 from . import capture, connections, lifecycle, github, maintenance
+from .background import detached, system_tool, which
 from .config import EmbeddingConfig, RetrievalConfig, SourceConfig, Workspace
 from .errors import CarryError
 from .paths import resolve_within
@@ -23,7 +24,7 @@ MAX_REQUEST = 1_048_576
 
 
 def executable_for(client):
-    found = shutil.which(client)
+    found = which(client)
     candidates = [Path.home() / '.local/bin' / client, Path('/opt/homebrew/bin') / client,
                   Path('/usr/local/bin') / client, Path.home() / '.npm-global/bin' / client]
     if client == 'codex':
@@ -329,7 +330,7 @@ class Bridge:
             log_path = ws.state_dir / 'harvest.log'
             offset = log_path.stat().st_size if log_path.exists() else 0
             with open(log_path, 'a') as log:
-                proc = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
+                proc = detached(args, stdin=subprocess.DEVNULL, stdout=log, stderr=log)
             self.harvest_proc = proc
             atomic_text(ws.state_dir / HARVEST_JOB, json.dumps(dict(pid=proc.pid, started_at=time.time(), vault=vault, log_offset=offset)) + '\n')
             return dict(started=True, **harvest_job(ws, proc))
