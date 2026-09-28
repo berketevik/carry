@@ -198,7 +198,20 @@ class ConnectionTest(WorkspaceCase):
         self.assertEqual(data['model'], 'example')
         self.assertIn('-I', data['mcp_servers']['carry']['args'])
         connections.rollback(self.workspace, plan['id'])
-        self.assertEqual(path.read_text(), old)
+        self.assertEqual(path.read_text(encoding='utf-8'), old)
+
+    def test_codex_block_follows_the_line_endings_of_a_crlf_config(self):
+        path = self.project / '.codex/config.toml'
+        path.parent.mkdir()
+        old = b'# windows file\r\nmodel = "example"\r\n'
+        path.write_bytes(old)
+        plan = self.plan('codex')
+        connections.apply(self.workspace, plan)
+        written = path.read_bytes()
+        self.assertTrue(written.startswith(old))
+        self.assertNotIn(b'\n', written.replace(b'\r\n', b''))
+        connections.rollback(self.workspace, plan['id'])
+        self.assertEqual(path.read_bytes(), old)
 
     def test_settings_changed_after_preview_refuses_all_writes(self):
         plan = self.plan(prompts=True)
