@@ -8,7 +8,7 @@
 
 Notlarınız seçtiğiniz klasörde, düz Markdown (`.md`) dosyaları olarak Mac'inizde kalır.
 
-**Sürüm 0.6.0 · macOS 14+ · pilot**
+**Sürüm 0.7.0 · macOS 14+ · pilot**
 
 ## Nasıl çalışır?
 

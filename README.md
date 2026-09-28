@@ -8,7 +8,7 @@ Ask “what did we decide about pricing?” and your assistant finds the answer 
 
 Your notes stay on your Mac as plain Markdown (`.md`) files in a folder you choose.
 
-**Version 0.6.0 · macOS 14+ · pilot**
+**Version 0.7.0 · macOS 14+ · pilot**
 
 ## How it works
 
