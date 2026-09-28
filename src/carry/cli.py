@@ -385,13 +385,13 @@ def cmd_share(args):
     ws = open_workspace(args.workspace)
     if args.share_command in ('enable', 'disable'):
         team = share.team_source(ws, args.id)
-        settings = dict(enabled=True, folder=share.DEFAULT_FOLDER, mode=args.mode) if args.share_command == 'enable' else {}
+        settings = dict(enabled=True, mode=args.mode) if args.share_command == 'enable' else {}
         ws.with_sources([replace(s, share=settings) if s.source_id == team.source_id else s for s in ws.sources]).save()
         result = dict(source_id=team.source_id, share=settings)
         _print(result, args.json, [json.dumps(result, ensure_ascii=False)])
         return EXIT_OK
     if not args.dry_run:
-        raise CarryError('share_live_not_available: run with --dry-run')
+        raise CarryError('share_live_not_available')
     source = args.source or vaultview.default_vault(ws)
     result = share.plan(ws, args.team, source, args.digest, args.item, args.topic, args.author, args.with_quote)
     head = [f"{result['repository']} ({result['mode']}, {'enabled' if result['enabled'] else 'not enabled'})",

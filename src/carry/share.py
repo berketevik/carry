@@ -20,7 +20,7 @@ SHAREABLE = ('accepted', 'fixed')
 # Task state lives in the team's tracker, not in its knowledge base.
 NOT_SHARED_KINDS = ('open item', 'açık iş')
 PRIVATE = ('private', 'secret')
-DEFAULT_FOLDER = '90_Inbox'
+INBOX = '90_Inbox'  # the only folder a share may write to, by the team repo's rule
 MAX_TOPIC = 100
 
 
@@ -84,8 +84,7 @@ def plan(ws, team_id, digest_source, digest_path, item_id, topic, author, with_q
     day = (today or datetime.date.today()).isoformat()
     name, text = render(found, topic, author, day, with_quote)
     _, secrets = mask(text)
-    folder = team.share.get('folder', DEFAULT_FOLDER)
     return dict(repository=team.github.get('repository', ''), branch=team.github.get('branch', ''),
-                path=f'{folder}/{name}', text=text, message=f'docs(inbox): {topic}',
+                path=f'{INBOX}/{name}', text=text, message=f'docs(inbox): {topic}',
                 mode=team.share.get('mode', 'direct'), enabled=bool(team.share.get('enabled')),
                 blocked=sorted(set(secrets)), sent=False)

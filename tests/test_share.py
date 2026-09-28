@@ -135,7 +135,7 @@ class ShareTest(unittest.TestCase):
         code, _ = self.run_cli('share', 'enable', '--id', 'team', '--mode', 'pr')
         self.assertEqual(code, 0)
         self.assertEqual(Workspace.load(self.ws.state_dir).source('team').share,
-                         dict(enabled=True, folder='90_Inbox', mode='pr'))
+                         dict(enabled=True, mode='pr'))
         item = self.accept('The pilot ships on 15 October.')
         args = ('share', 'item', '--team', 'team', '--digest', self.rel, '--item', item,
                 '--topic', 'Pilot tarihi', '--author', 'Ada')
