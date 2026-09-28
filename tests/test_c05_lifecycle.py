@@ -271,6 +271,18 @@ class LifecycleTest(WorkspaceCase):
         with self.assertRaises(RevisionConflict):
             self.propose(event='correction', target_id=original['record_id'], expected_revision=9)
 
+    def test_generic_agent_client_proposes_only_after_the_owner_enables_it(self):
+        self.assertFalse(lifecycle.client_enabled(self.workspace, 'agent'))
+        with self.assertRaises(CarryError):
+            self.propose(client='agent')
+        lifecycle.configure_client(self.workspace, 'agent', 'records', True)
+        proposal = self.propose(client='agent')
+        meta = lifecycle.review(self.workspace, proposal['record_id'])
+        self.assertEqual(proposal['state'], 'draft')
+        self.assertTrue(meta['review_token'])
+        with self.assertRaises(CarryError):
+            lifecycle.configure_client(self.workspace, 'unknown', 'records', True)
+
     def test_other_workspace_has_no_proposals_or_policy(self):
         from carry.config import Workspace
         self.propose()

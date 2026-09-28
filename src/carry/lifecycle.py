@@ -17,7 +17,7 @@ from .paths import resolve_within, walk_markdown
 from .persistence import atomic_text, writer_lock
 from .records import read_record_meta
 
-CLIENTS = ('claude', 'codex')
+CLIENTS = ('claude', 'codex', 'agent')  # 'agent': any other MCP client, enabled only by the owner
 MAX_CONTENT = 100000
 
 

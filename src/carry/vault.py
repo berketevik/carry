@@ -231,7 +231,7 @@ def _configure_capture(workspace):
 def _configure_proposals(workspace):
     """The guide's correction rule needs carry_propose; acceptance stays with the owner."""
     states = {}
-    for client in lifecycle.CLIENTS:
+    for client in ('claude', 'codex'):  # the generic 'agent' client stays off until the owner enables it
         try:
             states[client] = 'enabled' if lifecycle.configure_client(workspace, client, 'vault', True)['enabled'] else 'disabled'
         except CarryError as exc:
