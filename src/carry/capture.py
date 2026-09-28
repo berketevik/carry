@@ -209,7 +209,7 @@ def normalize(client, payload):
 
 def _persist(workspace, client, source, event):
     root = Path(source.root).expanduser().resolve()
-    relative = str(Path(source.records_dir) / '.events' / (event['event_id'] + '.md'))
+    relative = (Path(source.records_dir) / '.events' / (event['event_id'] + '.md')).as_posix()
     path = resolve_within(root, relative)
     duplicate = path.exists()
     if duplicate:

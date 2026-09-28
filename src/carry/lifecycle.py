@@ -307,7 +307,7 @@ def propose(workspace, content, event_id, source_refs=(), *, title='Proposed dec
             _unchanged(item)
         atomic_text(path, _serialize(fm, '# ' + title + '\n\n' + content.strip()))
         return dict(record_id=fm['carry_record'], revision=fm['carry_revision'], state='draft',
-                    source_id=source.source_id, path=str(path.relative_to(source.root.resolve())),
+                    source_id=source.source_id, path=path.relative_to(source.root.resolve()).as_posix(),
                     duplicate=False, masked=categories)
 
 

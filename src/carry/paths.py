@@ -67,4 +67,4 @@ def walk_markdown(root, extensions=(".md",), max_bytes=2_000_000, exclude=()):
                     continue
             except OSError:
                 continue
-            yield str(path.relative_to(root)), path
+            yield relative, path
