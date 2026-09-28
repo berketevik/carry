@@ -4,9 +4,11 @@ import sys
 
 from .capture import CLIENTS, ingest
 from .config import open_workspace
+from .console import use_utf8
 
 
 def main(argv=None):
+    use_utf8()
     parser = argparse.ArgumentParser(prog='carry-hook')
     parser.add_argument('--workspace', required=True)
     parser.add_argument('--client', required=True, choices=CLIENTS)

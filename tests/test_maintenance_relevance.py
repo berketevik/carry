@@ -27,7 +27,7 @@ class MaintenanceTest(WorkspaceCase):
         self.assertTrue(started['started'])
         self.assertEqual(self.wait()['state'], 'complete')
         self.assertEqual(index.health(self.workspace)['state'], 'fresh')
-        note.write_text('The replacement milestone is November 5.')
+        note.write_text('The replacement milestone is November 5.', encoding='utf-8')
         maintenance.start(self.workspace)
         self.wait()
         self.assertIn('November 5', recall(self.workspace, 'replacement milestone')['evidence'][0]['text'])

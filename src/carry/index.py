@@ -122,7 +122,7 @@ def write_status(workspace, status, **fields):
     payload = dict(status=status, at=time.time(), **fields)
     handle, temp = tempfile.mkstemp(dir=str(path.parent), prefix=".carry-status-")
     try:
-        with os.fdopen(handle, "w") as out:
+        with os.fdopen(handle, "w", encoding="utf-8", newline="\n") as out:
             json.dump(payload, out)
         os.replace(temp, path)
     finally:

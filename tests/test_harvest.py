@@ -49,7 +49,7 @@ class HarvestTest(unittest.TestCase):
                 blocks.append({'type': 'tool_use', 'name': 'Write', 'input': {'file_path': str(self.root / writes)}})
             lines.append(claude_line('assistant', blocks))
         path = self.project / (name + '.jsonl')
-        path.write_text('\n'.join(lines) + '\n')
+        path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
         os.utime(path, (time.time() - age, time.time() - age))
         return path
 
@@ -73,7 +73,7 @@ class HarvestTest(unittest.TestCase):
         with self.items(good, invented), patch.object(jev, 'api_key', return_value=None):
             report = harvest.run(self.ws, which='claude:sonnet', progress=lambda m: None)
         self.assertEqual(report['harvested'], 1)
-        digest = (self.root / report['digests'][0]).read_text()
+        digest = (self.root / report['digests'][0]).read_text(encoding='utf-8')
         self.assertTrue(report['digests'][0].startswith('+/'))
         self.assertIn('draft: true', digest)
         self.assertIn('The pilot ships on 15 October.', digest)
@@ -81,7 +81,7 @@ class HarvestTest(unittest.TestCase):
         self.assertIn('"dropped_without_quote": 1', digest)
         raws = list((self.root / 'sources/carry/harvest').glob('*.md'))
         self.assertEqual(len(raws), 1)
-        self.assertIn('type: chat-raw', raws[0].read_text())
+        self.assertIn('type: chat-raw', raws[0].read_text(encoding='utf-8'))
 
     def test_assistant_suggestion_is_not_filed_as_the_owners_decision(self):
         self.thread('bbbb2222', [('What should we do about ECC?', 'I recommend installing only selected skills.')])
@@ -92,7 +92,7 @@ class HarvestTest(unittest.TestCase):
         with self.items(item), patch.object(jev, 'api_key', return_value='k'), \
                 patch.object(harvest, 'verify', return_value=scores), patch.object(harvest, 'compare', return_value=('new', None)):
             report = harvest.run(self.ws, which='claude:sonnet', progress=lambda m: None)
-        digest = (self.root / report['digests'][0]).read_text()
+        digest = (self.root / report['digests'][0]).read_text(encoding='utf-8')
         self.assertIn("assistant's suggestion or result", digest)
 
     def test_known_items_point_to_the_note_and_conflicts_are_separated(self):
@@ -105,7 +105,7 @@ class HarvestTest(unittest.TestCase):
                 patch.object(harvest, 'verify', return_value=dict(supported=0.9, owner_stated=0.9, durable=0.9, withdrawn=0.0)), \
                 patch.object(harvest, 'compare', side_effect=lambda *x, **kw: next(verdicts)):
             report = harvest.run(self.ws, which='claude:sonnet', progress=lambda m: None)
-        digest = (self.root / report['digests'][0]).read_text()
+        digest = (self.root / report['digests'][0]).read_text(encoding='utf-8')
         self.assertIn('## Conflict candidates (review)', digest)
         self.assertIn('[[Agent]]', digest)
         self.assertIn('## Already recorded', digest)
@@ -118,7 +118,7 @@ class HarvestTest(unittest.TestCase):
                 patch.object(harvest, 'verify', return_value=dict(supported=0.9, owner_stated=0.9, durable=0.9, withdrawn=0.0)), \
                 patch.object(harvest, 'compare', return_value=('resolved', str(self.root / 'log/Tests.md'))):
             report = harvest.run(self.ws, which='claude:sonnet', progress=lambda m: None)
-        digest = (self.root / report['digests'][0]).read_text()
+        digest = (self.root / report['digests'][0]).read_text(encoding='utf-8')
         self.assertIn('## Apparently done', digest)
         self.assertNotIn('## New', digest)
 
@@ -163,7 +163,7 @@ class HarvestTest(unittest.TestCase):
         self.assertNotIn(digest, served())
         self.assertIn(digest, served(include_drafts=True))
         path = self.root / digest
-        path.write_text(path.read_text().replace('draft: true\n', ''))
+        path.write_text(path.read_text(encoding='utf-8').replace('draft: true\n', ''), encoding='utf-8')
         build(self.ws)
         self.assertIn(digest, served())
 
@@ -236,7 +236,7 @@ class HarvestTest(unittest.TestCase):
         item = dict(type='fact', statement='The Mac mini has 16 GB.', exchange=1, quote='Mac mini has 16 GB')
         with self.items(item), patch.object(jev, 'api_key', return_value=None), \
                 patch.object(harvest, 'agent_compare', return_value=([('conflict', str(self.root / 'notes/Mac mini.md'))], True)) as agent:
-            digest = (self.root / harvest.run(self.ws, which='claude:sonnet', progress=lambda m: None)['digests'][0]).read_text()
+            digest = (self.root / harvest.run(self.ws, which='claude:sonnet', progress=lambda m: None)['digests'][0]).read_text(encoding='utf-8')
         agent.assert_called_once()
         self.assertIn('"judge": "agent"', digest)
         self.assertIn('## Conflict candidates', digest)
@@ -290,7 +290,7 @@ class HarvestTest(unittest.TestCase):
     def test_transcript_dates_reach_the_comparison(self):
         path = self.project / 'cccc3333.jsonl'
         path.write_text('\n'.join([claude_line('user', 'Signing is still open.', '2026-09-28T09:00:00Z'),
-                                    claude_line('assistant', [{'type': 'text', 'text': 'Yes, not signed yet.'}], '2026-09-28T09:00:05Z')]) + '\n')
+                                    claude_line('assistant', [{'type': 'text', 'text': 'Yes, not signed yet.'}], '2026-09-28T09:00:05Z')]) + '\n', encoding='utf-8')
         exchanges, _ = harvest.read_thread('claude', path, self.root)
         self.assertEqual(exchanges[0]['at'], harvest._day('2026-09-28T09:00:00Z'))
         os.utime(path, (time.time() - 3600, time.time() - 3600))
@@ -308,16 +308,16 @@ class HarvestTest(unittest.TestCase):
         first_item = dict(type='decision', statement='The pilot ships on 15 October.', exchange=1, quote='pilot ships on 15 October')
         with self.items(first_item), patch.object(jev, 'api_key', return_value=None):
             first = harvest.run(self.ws, which='claude:sonnet', progress=lambda m: None)['digests'][0]
-        decided = (self.root / first).read_text().replace('15 October.\n', '15 October. <!-- carry: accepted 2026-09-28 -->\n', 1)
-        (self.root / first).write_text(decided)
+        decided = (self.root / first).read_text(encoding='utf-8').replace('15 October.\n', '15 October. <!-- carry: accepted 2026-09-28 -->\n', 1)
+        (self.root / first).write_text(decided, encoding='utf-8')
         self.thread('acac1313', exchanges + [('Budget is 2k, decided.', 'Noted.')])
         second_item = dict(type='decision', statement='The budget is 2k.', exchange=2, quote='Budget is 2k')
         with self.items(second_item), patch.object(jev, 'api_key', return_value=None):
             second = harvest.run(self.ws, which='claude:sonnet', progress=lambda m: None)['digests'][0]
         self.assertNotEqual(first, second)
         self.assertTrue(second.endswith(' (2).md'))
-        self.assertEqual((self.root / first).read_text(), decided)
-        self.assertIn('The budget is 2k.', (self.root / second).read_text())
+        self.assertEqual((self.root / first).read_text(encoding='utf-8'), decided)
+        self.assertIn('The budget is 2k.', (self.root / second).read_text(encoding='utf-8'))
 
     def test_filed_and_active_threads_are_skipped_and_reruns_are_idempotent(self):
         self.thread('dddd4444', [('Save this.', 'Saved to notes.')], writes='notes/Plan.md')
@@ -337,7 +337,7 @@ class HarvestTest(unittest.TestCase):
                 patch.object(jev, 'api_key', return_value=None):
             report = harvest.run(self.ws, which='claude:sonnet', progress=lambda m: None)
         self.assertEqual(report['pending'], 1)
-        state = json.loads((self.ws.state_dir / harvest.STATE_NAME).read_text())
+        state = json.loads((self.ws.state_dir / harvest.STATE_NAME).read_text(encoding='utf-8'))
         self.assertEqual(state['claude:gggg7777']['status'], 'pending')
         self.assertFalse(list(self.root.glob('+/*harvest*')))
 
@@ -347,7 +347,7 @@ class HarvestTest(unittest.TestCase):
                                            {'type': 'tool_use', 'id': 't1', 'name': 'Write', 'input': {'file_path': str(self.root / 'notes/Office.md')}}]),
                  claude_line('user', [{'type': 'tool_result', 'tool_use_id': 't1', 'is_error': True, 'content': 'permission denied'}]),
                  claude_line('assistant', [{'type': 'text', 'text': 'I could not save it.'}])]
-        path = self.project / 'llll2222.jsonl'; path.write_text('\n'.join(lines) + '\n')
+        path = self.project / 'llll2222.jsonl'; path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
         _, filed = harvest.read_thread('claude', path, self.root)
         self.assertFalse(filed)
 
@@ -380,10 +380,10 @@ class HarvestTest(unittest.TestCase):
 
     def test_codex_threads_are_found_by_working_directory(self):
         sessions = self.home / '.codex' / 'sessions' / '2026' / '09' / '27'; sessions.mkdir(parents=True)
-        (sessions / 'rollout-x.jsonl').write_text(json.dumps({'type': 'session_meta', 'payload': {'id': 'abc', 'cwd': str(self.root)}}) + '\n')
-        (sessions / 'rollout-y.jsonl').write_text(json.dumps({'type': 'session_meta', 'payload': {'id': 'zzz', 'cwd': str(self.base)}}) + '\n')
+        (sessions / 'rollout-x.jsonl').write_text(json.dumps({'type': 'session_meta', 'payload': {'id': 'abc', 'cwd': str(self.root)}}) + '\n', encoding='utf-8')
+        (sessions / 'rollout-y.jsonl').write_text(json.dumps({'type': 'session_meta', 'payload': {'id': 'zzz', 'cwd': str(self.base)}}) + '\n', encoding='utf-8')
         (sessions / 'rollout-z.jsonl').write_text(json.dumps({'type': 'session_meta', 'payload': {
-            'id': 'rev', 'cwd': str(self.root), 'parent_thread_id': 'abc', 'thread_source': 'guardian_review'}}) + '\n')
+            'id': 'rev', 'cwd': str(self.root), 'parent_thread_id': 'abc', 'thread_source': 'guardian_review'}}) + '\n', encoding='utf-8')
         found = [(c, t) for c, t, _ in harvest.find_threads(self.root)]
         self.assertNotIn(('codex', 'rev'), found)
         self.assertIn(('codex', 'abc'), found)
@@ -403,5 +403,5 @@ class HarvestJevRuleTest(HarvestTest):
                 patch.object(harvest, 'verify', side_effect=AssertionError('Jev must not be called')), \
                 patch.object(harvest, 'compare', side_effect=AssertionError('Jev must not be called')):
             report = harvest.run(self.ws, which='claude:sonnet', progress=lambda m: None)
-        digest = (self.root / report['digests'][0]).read_text()
+        digest = (self.root / report['digests'][0]).read_text(encoding='utf-8')
         self.assertNotIn('"judge": "jev"', digest)  # the assistant compares instead

@@ -164,7 +164,7 @@ def _target(files, record_id, revision, source_id=None):
 
 def _policy(workspace):
     try:
-        value = json.loads((workspace.state_dir / 'proposals.json').read_text())
+        value = json.loads((workspace.state_dir / 'proposals.json').read_text(encoding='utf-8'))
     except FileNotFoundError:
         return {}
     if not isinstance(value, dict):

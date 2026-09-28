@@ -69,7 +69,7 @@ def install(target=DEFAULT_PATH, workspace=None, python=None):
         (app / 'Contents' / 'MacOS').mkdir(parents=True)
         (app / 'Contents' / 'Resources').mkdir()
         swift = Path(tmp) / 'CarryApp.swift'
-        swift.write_text(source.read_text(encoding='utf-8'), encoding='utf-8')
+        swift.write_text(source.read_text(encoding='utf-8'), encoding='utf-8', newline='\n')
         build = subprocess.run([compiler, '-O', '-parse-as-library', '-swift-version', '5',
                                 '-target', f'{arch}-apple-macosx14.0', '-module-cache-path', str(Path(tmp) / 'cache'),
                                 str(swift), '-o', str(app / 'Contents' / 'MacOS' / 'Carry')],
@@ -81,7 +81,7 @@ def install(target=DEFAULT_PATH, workspace=None, python=None):
                                CFBundleDisplayName='Carry', CFBundlePackageType='APPL', CFBundleShortVersionString=_version(),
                                CFBundleVersion='1', LSMinimumSystemVersion='14.0', NSHighResolutionCapable=True,
                                CFBundleIconFile='Carry'), f)
-        (app / 'Contents' / 'Resources' / 'python-path.txt').write_text((python or sys.executable) + '\n')
+        (app / 'Contents' / 'Resources' / 'python-path.txt').write_text((python or sys.executable) + '\n', encoding='utf-8', newline='\n')
         icon = resources.files('carry') / 'app' / 'Carry.icns'
         if icon.is_file():
             (app / 'Contents' / 'Resources' / 'Carry.icns').write_bytes(icon.read_bytes())

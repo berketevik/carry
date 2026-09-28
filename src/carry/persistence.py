@@ -28,7 +28,7 @@ def atomic_text(path, text):
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, name = tempfile.mkstemp(prefix='.carry-write-', dir=path.parent)
     try:
-        with os.fdopen(fd, 'w', encoding='utf-8') as out:
+        with os.fdopen(fd, 'w', encoding='utf-8', newline='\n') as out:
             out.write(text)
             out.flush()
             os.fsync(out.fileno())

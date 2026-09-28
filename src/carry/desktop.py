@@ -53,7 +53,7 @@ def harvest_vault(ws, requested):
 def harvest_job(ws, proc=None):
     """State of the last harvest started from the app: running while its process lives."""
     try:
-        job = json.loads((ws.state_dir / HARVEST_JOB).read_text())
+        job = json.loads((ws.state_dir / HARVEST_JOB).read_text(encoding='utf-8'))
     except (OSError, ValueError):
         return dict(running=False)
     if proc is not None and proc.pid == job.get('pid'):
@@ -345,7 +345,7 @@ class Bridge:
                         dict(jsonrpc='2.0', id=2, method='tools/list'),
                         dict(jsonrpc='2.0', id=3, method='tools/call', params=dict(name='carry_status', arguments={}))]
             proc = subprocess.run([sys.executable, *(['-I'] if sys.flags.isolated else []), '-m', 'carry.mcp_server', '--workspace', str(ws.state_dir)],
-                input=''.join(json.dumps(m) + '\n' for m in messages), capture_output=True, text=True, timeout=20)
+                input=''.join(json.dumps(m) + '\n' for m in messages), capture_output=True, text=True, encoding='utf-8', timeout=20)
             replies = [json.loads(line) for line in proc.stdout.splitlines()]
             valid = (proc.returncode == 0 and len(replies) == 3 and
                      replies[0].get('result', {}).get('serverInfo', {}).get('name') == 'carry' and

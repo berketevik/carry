@@ -29,7 +29,7 @@ class SetupTest(unittest.TestCase):
         self.assertEqual((ws.embedding.provider, ws.retrieval.reranker, ws.retrieval.top_k), ('hashing', 'off', 8))
         self.assertTrue((self.base / 'Vault' / 'LLM-GUIDE.md').exists())
         self.assertTrue((self.base / 'Vault' / '.claude' / 'agents' / 'carry-recall.md').exists())
-        mcp = json.loads((self.base / 'Vault' / '.mcp.json').read_text())
+        mcp = json.loads((self.base / 'Vault' / '.mcp.json').read_text(encoding='utf-8'))
         self.assertIn(str(self.base / 'ws'), mcp['mcpServers']['carry']['args'])
         self.assertIn('YOUR VAULT IS READY', out.getvalue())
 
@@ -64,7 +64,7 @@ class SetupTest(unittest.TestCase):
 
     def test_scripted_answers_connect_an_existing_folder_read_only(self):
         notes = self.base / 'notes'; notes.mkdir()
-        (notes / 'a.md').write_text('# Plan\nThe launch is on 15 October.')
+        (notes / 'a.md').write_text('# Plan\nThe launch is on 15 October.', encoding='utf-8')
         answers = io.StringIO('\n'.join([str(self.base / 'ws'), '2', str(notes), 'mine', '', 'h', '1', 'h', 'h', 'h', '']) + '\n')
         with redirect_stdout(io.StringIO()), patch('shutil.which', return_value='/usr/bin/true'):
             code = setup_wizard.run(assume_yes=False, animation=False, stream=answers)
@@ -73,7 +73,7 @@ class SetupTest(unittest.TestCase):
         source = ws.source('mine')
         self.assertFalse(source.writable)
         self.assertEqual(source.root.resolve(), notes)
-        self.assertEqual((notes / 'a.md').read_text(), '# Plan\nThe launch is on 15 October.')
+        self.assertEqual((notes / 'a.md').read_text(encoding='utf-8'), '# Plan\nThe launch is on 15 October.')
 
     def test_icloud_documents_are_flagged(self):
         home = self.base / 'home'

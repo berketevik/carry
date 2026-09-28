@@ -14,7 +14,7 @@ from .persistence import atomic_text
 
 def job_status(workspace):
     try:
-        data = json.loads((workspace.state_dir / 'maintenance.json').read_text())
+        data = json.loads((workspace.state_dir / 'maintenance.json').read_text(encoding='utf-8'))
     except (OSError, ValueError):
         return dict(state='idle')
     if data.get('state') == 'running' and not is_running(workspace):
@@ -38,7 +38,7 @@ def _held(path):
 def job_progress(workspace, **fields):
     path = workspace.state_dir / 'maintenance.json'
     try:
-        old = json.loads(path.read_text())
+        old = json.loads(path.read_text(encoding='utf-8'))
     except (OSError, ValueError):
         old = {}
     payload = dict(old, **fields, at=time.time())
@@ -102,7 +102,7 @@ def automatic(workspace):
 
 def sync_status(workspace):
     try:
-        return json.loads((workspace.state_dir / 'github.status.json').read_text())
+        return json.loads((workspace.state_dir / 'github.status.json').read_text(encoding='utf-8'))
     except (OSError, ValueError):
         return {}
 

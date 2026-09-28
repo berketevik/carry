@@ -99,7 +99,7 @@ def find_threads(root):
     if sessions.is_dir():
         for p in sorted(sessions.rglob('*.jsonl')):
             try:
-                with open(p, errors='ignore') as handle:
+                with open(p, encoding='utf-8', errors='ignore') as handle:
                     first = json.loads(handle.readline() or '{}')
             except (OSError, ValueError):
                 continue
@@ -117,7 +117,7 @@ def read_thread(client, path, root):
     turns, cur, filed = [], None, False
     notes = [str(Path(root) / d) for d in ('notes', 'log')]
     pending_writes, failed = set(), set()  # a denied or failed write did not file anything
-    for line in Path(path).read_text(errors='ignore').splitlines():
+    for line in Path(path).read_text(encoding='utf-8', errors='ignore').splitlines():
         try:
             d = json.loads(line)
         except ValueError:
@@ -494,7 +494,7 @@ def write_outputs(root, client, thread_id, exchanges, groups, meta, language, to
 
 def _state(workspace):
     try:
-        return json.loads((workspace.state_dir / STATE_NAME).read_text())
+        return json.loads((workspace.state_dir / STATE_NAME).read_text(encoding='utf-8'))
     except (OSError, ValueError):
         return {}
 
@@ -642,7 +642,7 @@ def spawn_from_hook(state_dir, payload, root, language=None, python=None):
         return False
     try:
         # The app's draft language wins over the --language baked into older hook commands.
-        language = json.loads((Path(state_dir) / LANGUAGE_NAME).read_text()).get('language') or language
+        language = json.loads((Path(state_dir) / LANGUAGE_NAME).read_text(encoding='utf-8')).get('language') or language
     except (OSError, ValueError):
         pass
     args = [python or sys.executable, '-I', '-m', 'carry.cli', '--workspace', str(state_dir), 'harvest',
@@ -680,14 +680,14 @@ LANGUAGE_NAME = 'harvest.json'
 def draft_language(workspace, root=None):
     """Language of harvest drafts: the app's setting, else the vault's, else the nightly job's, else English."""
     try:
-        chosen = json.loads((Path(workspace.state_dir) / LANGUAGE_NAME).read_text()).get('language')
+        chosen = json.loads((Path(workspace.state_dir) / LANGUAGE_NAME).read_text(encoding='utf-8')).get('language')
         if chosen:
             return chosen
     except (OSError, ValueError):
         pass
     if root is not None:
         try:
-            chosen = json.loads((Path(root) / '.carry' / 'vault.json').read_text()).get('language')
+            chosen = json.loads((Path(root) / '.carry' / 'vault.json').read_text(encoding='utf-8')).get('language')
             if chosen:
                 return chosen
         except (OSError, ValueError):
@@ -735,7 +735,7 @@ def install_schedule(carry_bin, state_dir, vault=None, language=None, hour=21, m
     if not (0 <= int(hour) <= 23 and 0 <= int(minute) <= 59):
         raise CarryError('invalid_schedule_time')
     path, target = schedule_path(), f'gui/{os.getuid()}'
-    previous = path.read_text() if path.is_file() else None
+    previous = path.read_text(encoding='utf-8') if path.is_file() else None
     subprocess.run(['launchctl', 'bootout', target, str(path)], capture_output=True)
     path.parent.mkdir(parents=True, exist_ok=True)
     extra = (['--vault', str(vault)] if vault else []) + (['--language', language] if language else [])
@@ -745,7 +745,7 @@ def install_schedule(carry_bin, state_dir, vault=None, language=None, hour=21, m
         if previous is None:
             path.unlink(missing_ok=True)
         else:
-            path.write_text(previous)
+            path.write_text(previous, encoding='utf-8', newline='\n')
             if subprocess.run(['launchctl', 'bootstrap', target, str(path)], capture_output=True).returncode != 0:
                 raise CarryError('schedule_restore_failed')
         raise CarryError('schedule_load_failed')

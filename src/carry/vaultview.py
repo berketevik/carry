@@ -113,7 +113,7 @@ SYSTEM_DIRS = ('x/', 'tools/', '.carry/')
 def _managed(root):
     import json as _json
     try:
-        return set(_json.loads((root / '.carry' / 'vault.json').read_text()).get('files', {}))
+        return set(_json.loads((root / '.carry' / 'vault.json').read_text(encoding='utf-8')).get('files', {}))
     except (OSError, ValueError, AttributeError):
         return set()
 
@@ -348,9 +348,9 @@ def assistants(ws, root=None):
         if root is not None:
             try:
                 if client == 'claude':
-                    connected = 'carry' in _json.loads((root / '.mcp.json').read_text()).get('mcpServers', {})
+                    connected = 'carry' in _json.loads((root / '.mcp.json').read_text(encoding='utf-8')).get('mcpServers', {})
                 else:
-                    connected = '[mcp_servers.carry]' in (root / '.codex' / 'config.toml').read_text()
+                    connected = '[mcp_servers.carry]' in (root / '.codex' / 'config.toml').read_text(encoding='utf-8')
             except (OSError, ValueError, AttributeError):
                 connected = False
         out[client] = dict(installed=installed, connected=connected, chat_end=_chat_end_hook(client, root))
@@ -365,7 +365,7 @@ def _chat_end_hook(client, root):
         places = ([root / '.codex' / 'hooks.json'] if root else []) + [Path.home() / '.codex' / 'hooks.json']
     for place in places:
         try:
-            text = place.read_text()
+            text = place.read_text(encoding='utf-8')
         except OSError:
             continue
         if 'harvest' in text and '--from-hook' in text:
@@ -400,7 +400,7 @@ def overview(ws, source_id):
     chats = recent_chats(root)
     log = ws.state_dir / 'harvest.log'
     try:
-        tail = [line for line in log.read_text(errors='ignore').splitlines() if line.strip()][-8:]
+        tail = [line for line in log.read_text(encoding='utf-8', errors='ignore').splitlines() if line.strip()][-8:]
     except OSError:
         tail = []
     return dict(source_id=listing['source_id'], root=listing['root'], total=len(files), system_files=system_files,
@@ -435,7 +435,7 @@ def recent_chats(root):
                 decisions.append(entry)
     try:
         log = subprocess.run(['git', '-C', str(root), 'log', '-10', '--format=%ad\t%s', '--date=short'],
-                             capture_output=True, text=True, timeout=5).stdout
+                             capture_output=True, text=True, encoding='utf-8', timeout=5).stdout
     except (OSError, subprocess.SubprocessError):
         log = ''
     commits = [dict(day=d, text=t) for d, _, t in (l.partition('\t') for l in log.splitlines()) if t]

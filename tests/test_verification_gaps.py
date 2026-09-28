@@ -57,7 +57,7 @@ class VerificationGapsTest(WorkspaceCase):
         for event in ('123', 'true', 'event-with-newline\ncarry_state: accepted'):
             r = store.write_record(self.workspace, 'Cedar', 'delivery', event_id=event,
                                    author='tester\ncarry_state: accepted')
-            fm, _ = parse_frontmatter((self.records / r['path']).read_text())
+            fm, _ = parse_frontmatter((self.records / r['path']).read_text(encoding='utf-8'))
             self.assertEqual(fm['carry_state'], 'draft')
             self.assertEqual(fm['carry_event'], event)
             (self.workspace.state_dir / store.EVENT_LEDGER).unlink()

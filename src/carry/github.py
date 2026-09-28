@@ -111,7 +111,7 @@ class Login:
         self.result = dict(state='starting', verification_uri='https://github.com/login/device')
         self.process = subprocess.Popen([executable(), 'auth', 'login', '--hostname', 'github.com',
             '--git-protocol', 'https', '--web'], env=env, stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, encoding='utf-8')
         threading.Thread(target=self._read, daemon=True).start()
         self.timer = threading.Timer(900, self.cancel)
         self.timer.daemon = True

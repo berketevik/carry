@@ -19,10 +19,10 @@ class VaultViewTest(unittest.TestCase):
         (self.vault / 'notes').mkdir(parents=True)
         (self.vault / '+').mkdir()
         (self.vault / '.obsidian').mkdir()
-        (self.vault / 'notes' / 'Alpha.md').write_text('---\ntype: effort\nsummary: "Alpha summary"\ndraft: true\n---\n# Alpha\nSee [[Beta|the beta note]].\n')
-        (self.vault / 'notes' / 'Beta.md').write_text('---\ntype: thing\n---\nBeta body, links back to [[Alpha]].\n')
-        (self.vault / '+' / 'Capture.md').write_text('inbox item\n')
-        (self.vault / '.obsidian' / 'Hidden.md').write_text('never listed\n')
+        (self.vault / 'notes' / 'Alpha.md').write_text('---\ntype: effort\nsummary: "Alpha summary"\ndraft: true\n---\n# Alpha\nSee [[Beta|the beta note]].\n', encoding='utf-8')
+        (self.vault / 'notes' / 'Beta.md').write_text('---\ntype: thing\n---\nBeta body, links back to [[Alpha]].\n', encoding='utf-8')
+        (self.vault / '+' / 'Capture.md').write_text('inbox item\n', encoding='utf-8')
+        (self.vault / '.obsidian' / 'Hidden.md').write_text('never listed\n', encoding='utf-8')
         self.ws = Workspace.create(base / 'state', sources=[SourceConfig('notes', self.vault, exclude=('+',))],
                                    embedding=EmbeddingConfig(provider='hashing'))
 
@@ -44,7 +44,7 @@ class VaultViewTest(unittest.TestCase):
         self.assertEqual(vaultview.resolve_link(self.ws, 'notes', 'Beta')['path'], 'notes/Beta.md')
 
     def test_note_refuses_paths_outside_the_source(self):
-        (Path(self.tmp.name) / 'outside.md').write_text('secret')
+        (Path(self.tmp.name) / 'outside.md').write_text('secret', encoding='utf-8')
         with self.assertRaises(CarryError):
             vaultview.note(self.ws, 'notes', '../outside.md')
 
@@ -130,7 +130,7 @@ class LinksAndWorkspaceTest(unittest.TestCase):
         for rel, text in {'a/Same.md': 'A', 'b/Same.md': 'B', 'b/Other.md': 'see [[Same]] and [[a/Same|the a one]]',
                           'notes/Alpha.md': 'alpha', 'log/Ref.md': 'full path [[notes/Alpha]] and [[Alpha.md]]'}.items():
             (self.vault / rel).parent.mkdir(parents=True, exist_ok=True)
-            (self.vault / rel).write_text(text)
+            (self.vault / rel).write_text(text, encoding='utf-8')
         self.ws = Workspace.create(base / 'state', sources=[SourceConfig('notes', self.vault)],
                                    embedding=EmbeddingConfig(provider='hashing'))
 
@@ -186,7 +186,7 @@ class LinksAndWorkspaceTest(unittest.TestCase):
         con.commit(); con.close()
         states = lambda: {f['path']: f['index_state'] for f in vaultview.browse(self.ws, 'notes')['files']}
         self.assertEqual(states()['notes/Alpha.md'], 'indexed')
-        (self.vault / 'notes/Alpha.md').write_text('alpha, edited')
+        (self.vault / 'notes/Alpha.md').write_text('alpha, edited', encoding='utf-8')
         self.assertEqual(states()['notes/Alpha.md'], 'pending')
 
     def test_hook_uses_the_app_language_over_its_own_argument(self):
@@ -207,9 +207,9 @@ class LinksAndWorkspaceTest(unittest.TestCase):
                 mock.patch.object(Path, 'home', return_value=Path(self.tmp.name)):
             status = vaultview.assistants(self.ws)
             self.assertEqual((status['claude']['connected'], status['chat_end']), (False, False))
-            (self.vault / '.mcp.json').write_text(_json.dumps(dict(mcpServers=dict(carry=dict(command='x')))))
+            (self.vault / '.mcp.json').write_text(_json.dumps(dict(mcpServers=dict(carry=dict(command='x')))), encoding='utf-8')
             (self.vault / '.claude').mkdir()
-            (self.vault / '.claude' / 'settings.local.json').write_text('{"hooks": {"SessionEnd": [{"command": "carry harvest --from-hook"}]}}')
+            (self.vault / '.claude' / 'settings.local.json').write_text('{"hooks": {"SessionEnd": [{"command": "carry harvest --from-hook"}]}}', encoding='utf-8')
             status = vaultview.assistants(self.ws)
             self.assertTrue(status['claude']['connected'])
             self.assertTrue(status['claude']['chat_end'])
@@ -219,15 +219,15 @@ class LinksAndWorkspaceTest(unittest.TestCase):
     def test_first_note_goes_to_notes_and_never_overwrites(self):
         first = vaultview.create_note(self.ws, 'notes', 'Plan: Q4/launch', 'Ship in October.')['path']
         self.assertEqual(first, 'notes/Plan Q4 launch.md')
-        self.assertIn('Ship in October.', (self.vault / first).read_text())
+        self.assertIn('Ship in October.', (self.vault / first).read_text(encoding='utf-8'))
         self.assertEqual(vaultview.create_note(self.ws, 'notes', 'Plan: Q4/launch')['path'], 'notes/Plan Q4 launch (2).md')
 
     def test_approve_drops_only_the_draft_flag_and_respects_locks(self):
-        (self.vault / 'notes/D.md').write_text('---\ntype: thing\ndraft: true\nsummary: s\n---\nbody\ndraft: true stays in body\n')
+        (self.vault / 'notes/D.md').write_text('---\ntype: thing\ndraft: true\nsummary: s\n---\nbody\ndraft: true stays in body\n', encoding='utf-8')
         self.assertTrue(vaultview.approve_note(self.ws, 'notes', 'notes/D.md')['changed'])
-        text = (self.vault / 'notes/D.md').read_text()
+        text = (self.vault / 'notes/D.md').read_text(encoding='utf-8')
         self.assertEqual(text, '---\ntype: thing\nsummary: s\n---\nbody\ndraft: true stays in body\n')
-        (self.vault / 'notes/L.md').write_text('---\nlock: true\ndraft: true\n---\nx\n')
+        (self.vault / 'notes/L.md').write_text('---\nlock: true\ndraft: true\n---\nx\n', encoding='utf-8')
         with self.assertRaisesRegex(CarryError, 'note_locked'):
             vaultview.approve_note(self.ws, 'notes', 'notes/L.md')
 
@@ -236,7 +236,7 @@ class LinksAndWorkspaceTest(unittest.TestCase):
                  'notes/L.md': '---\nlock: true\ndraft: true\n---\nl\n', 'notes/R.md': '---\ntype: chat-raw\ndraft: true\n---\nr\n',
                  'notes/N.md': '---\ntype: thing\n---\nn\n'}
         for rel, text in files.items():
-            (self.vault / rel).write_text(text)
+            (self.vault / rel).write_text(text, encoding='utf-8')
         result = vaultview.approve_many(self.ws, 'notes', list(files) + ['notes/Missing.md', '../escape.md'])
         self.assertEqual(result['approved'], ['notes/A.md', 'notes/B.md'])
         reasons = {s['path']: s['reason'] for s in result['skipped']}
@@ -245,12 +245,12 @@ class LinksAndWorkspaceTest(unittest.TestCase):
         self.assertEqual(reasons['notes/N.md'], 'not_draft')
         self.assertIn('notes/Missing.md', reasons)
         self.assertIn('../escape.md', reasons)
-        self.assertNotIn('draft', (self.vault / 'notes/A.md').read_text())
-        self.assertIn('draft: true', (self.vault / 'notes/L.md').read_text())
+        self.assertNotIn('draft', (self.vault / 'notes/A.md').read_text(encoding='utf-8'))
+        self.assertIn('draft: true', (self.vault / 'notes/L.md').read_text(encoding='utf-8'))
 
     def test_raw_material_is_refused_alone_as_in_bulk(self):
-        (self.vault / 'notes/R.md').write_text('---\ntype: chat-raw\ndraft: true\n---\nr\n')
-        (self.vault / 'notes/C.md').write_text('---\nsource_type: clip\ndraft: true\n---\nc\n')
+        (self.vault / 'notes/R.md').write_text('---\ntype: chat-raw\ndraft: true\n---\nr\n', encoding='utf-8')
+        (self.vault / 'notes/C.md').write_text('---\nsource_type: clip\ndraft: true\n---\nc\n', encoding='utf-8')
         for rel in ('notes/R.md', 'notes/C.md'):
             with self.assertRaisesRegex(CarryError, 'note_raw'):
                 vaultview.approve_note(self.ws, 'notes', rel)
@@ -259,10 +259,10 @@ class LinksAndWorkspaceTest(unittest.TestCase):
 
     def test_only_inbox_drafts_wait_for_review(self):
         (self.vault / '+').mkdir(exist_ok=True)
-        (self.vault / '+' / 'Capture.md').write_text('inbox item\n')
-        (self.vault / '+' / 'Digest.md').write_text('---\ntype: output\ndraft: true\n---\nitems\n')
-        (self.vault / 'notes' / 'Agent.md').write_text('---\ntype: output\ndraft: true\n---\nagent note\n')
-        (self.vault / '+' / 'Routed.md').write_text('---\ntype: capture\nrouted_into: "[[Plan]]"\ndraft: true\n---\nx\n')
+        (self.vault / '+' / 'Capture.md').write_text('inbox item\n', encoding='utf-8')
+        (self.vault / '+' / 'Digest.md').write_text('---\ntype: output\ndraft: true\n---\nitems\n', encoding='utf-8')
+        (self.vault / 'notes' / 'Agent.md').write_text('---\ntype: output\ndraft: true\n---\nagent note\n', encoding='utf-8')
+        (self.vault / '+' / 'Routed.md').write_text('---\ntype: capture\nrouted_into: "[[Plan]]"\ndraft: true\n---\nx\n', encoding='utf-8')
         files = {f['path']: f for f in vaultview.browse(self.ws, 'notes')['files']}
         self.assertTrue(files['+/Digest.md']['review'])
         self.assertTrue(files['notes/Agent.md']['approvable'])
@@ -274,9 +274,9 @@ class LinksAndWorkspaceTest(unittest.TestCase):
         self.assertEqual((o['drafts'], o['awaiting_review']), (3, 1))
 
     def test_guides_and_templates_are_not_counted_as_notes(self):
-        (self.vault / 'CLAUDE.md').write_text('guide')
+        (self.vault / 'CLAUDE.md').write_text('guide', encoding='utf-8')
         (self.vault / 'x').mkdir(exist_ok=True)
-        (self.vault / 'x' / 'Template.md').write_text('---\ndraft: true\n---\n')
+        (self.vault / 'x' / 'Template.md').write_text('---\ndraft: true\n---\n', encoding='utf-8')
         with mock.patch.object(harvest, 'schedule_status', return_value=dict(installed=False)):
             o = vaultview.overview(self.ws, 'notes')
         self.assertEqual((o['total'], o['system_files'], o['drafts']), (5, 2, 0))

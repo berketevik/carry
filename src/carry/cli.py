@@ -15,6 +15,7 @@ from . import index as index_module
 from . import store, capture, lifecycle
 from . import vault as vault_module
 from .config import EmbeddingConfig, RetrievalConfig, SourceConfig, Workspace, open_workspace
+from .console import use_utf8
 from .errors import CarryError, RevisionConflict
 from .fixtures import install_fixture
 from .recall import recall
@@ -609,6 +610,7 @@ def build_parser():
 
 
 def main(argv=None):
+    use_utf8()
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)

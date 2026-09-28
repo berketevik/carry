@@ -326,7 +326,7 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
                 subprocess.run(['git', '-C', str(project), 'add', '-A'], check=True, capture_output=True)
                 subprocess.run(['git', '-C', str(project), 'commit', '-q', '-m', 'vault: initial'], check=True, capture_output=True)
                 subprocess.run([github.executable(), 'repo', 'create', name, '--private', '--source', str(project),
-                                '--remote', 'origin', '--push'], check=True, capture_output=True, text=True)
+                                '--remote', 'origin', '--push'], check=True, capture_output=True, text=True, encoding='utf-8')
                 ok(f'Özel repo oluşturuldu ve ilk commit gönderildi: {name}')
             except (OSError, subprocess.CalledProcessError) as exc:
                 warn('Yedek repo oluşturulamadı: ' + (getattr(exc, 'stderr', '') or str(exc)).strip()[:160])

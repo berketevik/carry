@@ -43,7 +43,7 @@ class DesktopTest(WorkspaceCase):
     def test_add_readonly_source_and_reopen_fresh_config(self):
         root = self.base / 'extra'
         root.mkdir()
-        (root / 'note.md').write_text('Cedar synthetic note')
+        (root / 'note.md').write_text('Cedar synthetic note', encoding='utf-8')
         before = tree_digest(root)
         self.call('add_source', source_id='extra', root=str(root))
         result = self.call('snapshot')
@@ -72,7 +72,7 @@ class DesktopTest(WorkspaceCase):
     def test_vault_preview_refuses_a_folder_with_notes_and_bad_fields(self):
         target = self.base / 'notes-here'
         target.mkdir()
-        (target / 'mine.md').write_text('# mine')
+        (target / 'mine.md').write_text('# mine', encoding='utf-8')
         with self.assertRaisesRegex(CarryError, 'vault_target_not_empty'):
             self.call('vault_preview', target=str(target))
         with self.assertRaisesRegex(CarryError, 'invalid_vault_request'):
@@ -96,7 +96,7 @@ class DesktopTest(WorkspaceCase):
         self.assertIn('-Cedar delivery October 15.', review['diff'])
         self.assertIn('+Cedar delivery October 22.', review['diff'])
         target_path = self.records / old['path']
-        target_path.write_text(target_path.read_text() + '\nAn external edit.')
+        target_path.write_text(target_path.read_text(encoding='utf-8') + '\nAn external edit.', encoding='utf-8')
         with self.assertRaises(CarryError):
             self.call('accept', record_id=draft['record_id'], revision=review['revision'], review_token=review['review_token'])
         self.assertEqual(self.call('review', record_id=draft['record_id'])['state'], 'draft')
@@ -165,19 +165,19 @@ class ConnectionTest(WorkspaceCase):
     def test_claude_merge_preview_apply_and_exact_rollback(self):
         mcp = self.project / '.mcp.json'
         original = '{"mcpServers":{"other":{"command":"other"}},"other":true}\n'
-        mcp.write_text(original)
+        mcp.write_text(original, encoding='utf-8')
         hook = self.project / '.claude/settings.local.json'
         hook.parent.mkdir()
-        hook.write_text('{"permissions":{"allow":[]},"hooks":{"UserPromptSubmit":[{"hooks":[]}]}}')
+        hook.write_text('{"permissions":{"allow":[]},"hooks":{"UserPromptSubmit":[{"hooks":[]}]}}', encoding='utf-8')
         before = tree_digest(self.project)
         plan = self.plan(prompts=True, proposals=True)
         self.assertEqual(before, tree_digest(self.project))
         self.assertIn('UserPromptSubmit', plan['summary'])
         connections.apply(self.workspace, plan)
-        data = json.loads(mcp.read_text())
+        data = json.loads(mcp.read_text(encoding='utf-8'))
         self.assertIn('other', data['mcpServers'])
         self.assertTrue(data['other'])
-        self.assertEqual(len(json.loads(hook.read_text())['hooks']['UserPromptSubmit']), 2)
+        self.assertEqual(len(json.loads(hook.read_text(encoding='utf-8'))['hooks']['UserPromptSubmit']), 2)
         self.assertEqual(capture.capture_status(self.workspace)['state'], 'no_receipt')
         self.assertTrue(lifecycle.client_enabled(self.workspace, 'claude'))
         connections.rollback(self.workspace, plan['id'])
@@ -189,12 +189,12 @@ class ConnectionTest(WorkspaceCase):
         path = self.project / '.codex/config.toml'
         path.parent.mkdir()
         old = '# keep my comment\nmodel = "example"\n[mcp_servers.other]\ncommand = "other"\n'
-        path.write_text(old)
+        path.write_text(old, encoding='utf-8')
         plan = self.plan('codex', prompts=True)
         self.assertIn('/hooks', plan['trust'])
         connections.apply(self.workspace, plan)
-        self.assertTrue(path.read_text().startswith(old))
-        data = tomllib.loads(path.read_text())
+        self.assertTrue(path.read_text(encoding='utf-8').startswith(old))
+        data = tomllib.loads(path.read_text(encoding='utf-8'))
         self.assertEqual(data['model'], 'example')
         self.assertIn('-I', data['mcp_servers']['carry']['args'])
         connections.rollback(self.workspace, plan['id'])
@@ -202,7 +202,7 @@ class ConnectionTest(WorkspaceCase):
 
     def test_settings_changed_after_preview_refuses_all_writes(self):
         plan = self.plan(prompts=True)
-        (self.project / '.mcp.json').write_text('{"external":true}')
+        (self.project / '.mcp.json').write_text('{"external":true}', encoding='utf-8')
         before = tree_digest(self.project)
         with self.assertRaisesRegex(CarryError, 'changed_since_preview'):
             connections.apply(self.workspace, plan)
@@ -212,7 +212,7 @@ class ConnectionTest(WorkspaceCase):
         plan = self.plan(prompts=True)
         connections.apply(self.workspace, plan)
         path = self.project / '.mcp.json'
-        path.write_text(path.read_text() + '\n')
+        path.write_text(path.read_text(encoding='utf-8') + '\n', encoding='utf-8')
         before = tree_digest(self.project)
         with self.assertRaisesRegex(CarryError, 'changed_since_install'):
             connections.rollback(self.workspace, plan['id'])
@@ -235,7 +235,7 @@ class ConnectionTest(WorkspaceCase):
 
     def test_existing_carry_and_symlinks_are_not_overwritten(self):
         path = self.project / '.mcp.json'
-        path.write_text('{"mcpServers":{"carry":{"command":"my-carry"}}}')
+        path.write_text('{"mcpServers":{"carry":{"command":"my-carry"}}}', encoding='utf-8')
         with self.assertRaisesRegex(CarryError, 'existing_carry_connection_conflict'):
             self.plan()
         path.unlink()

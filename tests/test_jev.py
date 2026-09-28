@@ -81,7 +81,7 @@ class JevTest(WorkspaceCase):
 
     def test_secret_notes_never_leave_and_come_back_marked_unjudged(self):
         path = self.corpus / 'notes' / 'Vault key.md'
-        path.write_text('---\ntype: fact\nsummary: "budget vault"\nsensitivity: secret\ncreated: 2026-09-01\n---\n# Q4 budget vault\nThe Q4 budget vault code is 7788.')
+        path.write_text('---\ntype: fact\nsummary: "budget vault"\nsensitivity: secret\ncreated: 2026-09-01\n---\n# Q4 budget vault\nThe Q4 budget vault code is 7788.', encoding='utf-8')
         build(self.workspace)
         sent, fake = self._send_capture()
         with patch.object(jev, 'call', side_effect=fake):
