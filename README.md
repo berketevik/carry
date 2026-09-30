@@ -20,7 +20,9 @@ Your notes stay on your Mac as plain Markdown (`.md`) files in a folder you choo
 
 ## Get started
 
-You need Claude Code or Codex, [uv](https://docs.astral.sh/uv/) and Xcode Command Line Tools (`xcode-select --install`).
+**Easiest:** give this page's link to Claude Code or Codex and say "install Carry". It asks you a few simple questions, installs what is needed and tells you what to do next.
+
+To install it yourself: you need Claude Code or Codex, git, [uv](https://docs.astral.sh/uv/) and Xcode Command Line Tools (`xcode-select --install`).
 
 ```sh
 uv tool install "git+https://github.com/berketevik/carry"
