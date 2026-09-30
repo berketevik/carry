@@ -32,7 +32,7 @@ class SetupTest(unittest.TestCase):
         self.assertTrue((self.base / 'Vault' / '.claude' / 'agents' / 'carry-recall.md').exists())
         mcp = json.loads((self.base / 'Vault' / '.mcp.json').read_text(encoding='utf-8'))
         self.assertIn(str(self.base / 'ws'), mcp['mcpServers']['carry']['args'])
-        self.assertIn('YOUR VAULT IS READY', out.getvalue())
+        self.assertIn('CARRY HAZIR', out.getvalue())
 
     def test_semantic_search_is_the_default_and_installs_ollama_when_missing(self):
         from carry import models, ollama_setup
@@ -85,7 +85,7 @@ class SetupTest(unittest.TestCase):
                 patch.object(github, 'executable', side_effect=CarryError('github_cli_missing')):
             code = setup_wizard.run(assume_yes=False, animation=False, stream=answers, semantic_default=False, app=False)
         self.assertEqual(code, 0)
-        self.assertIn('GitHub CLI (gh) bulunamadı', out.getvalue())
+        self.assertIn('komut satırı aracı (gh)', out.getvalue())
         self.assertTrue((self.base / 'Vault' / 'LLM-GUIDE.md').exists())
 
     def test_icloud_documents_are_flagged(self):

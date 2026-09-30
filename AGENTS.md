@@ -40,31 +40,107 @@ Both judges returned nothing for all 9 questions the vault could not answer. The
 
 ## Installing Carry for someone
 
-### Ask first
+### Talk to the owner in plain words
 
-`carry setup` is an interactive wizard. With `--yes` it silently takes defaults that the owner should decide, including installing Ollama with Homebrew (winget on Windows). So ask these before running anything:
+Assume the person who asked for Carry is not technical. They should understand every question you ask and every step you take.
 
-1. **New vault or existing folder?** A new vault gets Carry's folder layout, guide files and assistant wiring. An existing folder is only read, never changed, except that Carry writes the assistant's MCP settings into it.
-2. **Where?** Vault or notes folder, and the workspace folder (default `~/CarryState`). Avoid iCloud Drive or OneDrive synced folders for the workspace: syncing corrupts the index. A vault inside a synced folder works but git is a safer backup.
-3. **Note language** (Turkish or English) for a new vault.
-4. **Search by meaning?** Only if they accept installing Ollama (about 0.6 GB model).
-5. **Judge:** their own assistant, or Jev with a TypeSafe key.
-6. **Team knowledge base** on GitHub? Needs `gh` logged in.
-7. **Nightly harvest** at 21:30 (launchd on macOS, Task Scheduler on Windows)?
-8. **Capture every prompt** into the vault for review? Off unless they ask.
+- Speak their language (Turkish if they write Turkish). The ready-made Turkish texts below can be used word for word.
+- Ask **one question at a time**, say which answer you recommend, and treat "bilmiyorum", "sen seç", "sen bilirsin" or "I don't know" as the recommended answer.
+- Before each command, say in one sentence what it does and why. Ask before installing any program or changing anything outside the notes folder.
+- Do not ask what has a safe default: use `~/CarryState` for Carry's own folder and leave prompt capture off. Only mention them if something is wrong (for example the home folder is synced by iCloud or OneDrive).
+- If something fails, explain it in plain words and say what you will try next. Do not paste error output at them.
+- Never ask them to type a command in a terminal if you can run it yourself. When they must do something (a system window, a sign-in), say exactly which button to press.
+- Keep these words out of the conversation; say the plain version instead:
+
+| Instead of | Say (Turkish) | Say (English) |
+|---|---|---|
+| vault | not klasörü | notes folder |
+| workspace | Carry'nin kendi klasörü | Carry's own folder |
+| index, indexing | arama dizini, notları taramak | search index, scanning the notes |
+| MCP server | Carry aracı | the Carry tool |
+| semantic search, embeddings, Ollama model | anlamına göre arama | search by meaning |
+| judge, reranker, subagent | kontrol, kontrolü yapan | the check, who does the check |
+| repo, repository | GitHub'daki ortak klasör | a shared folder on GitHub |
+| API key | ücretli hesap | a paid account |
+| Xcode Command Line Tools | Apple'ın ücretsiz ek paketi | Apple's free add-on |
+| CLI, terminal command | komut | command |
+| harvest | akşam taslakları | evening drafts |
+
+**First message.** Say what Carry is and warn about the permission prompts, which are in English:
+
+> Carry, Claude'un senin kendi notlarını okuyup hatırlamasını sağlayan ücretsiz bir program. Kurmak için birkaç basit soru soracağım; bilmediğin olursa "bilmiyorum" de, en uygununu ben seçerim. Bir şey kurmadan ya da çalıştırmadan önce ekranda İngilizce bir onay sorusu çıkacak; o zaman "Yes" seçeneğini seçmen yeterli.
+
+### The questions, ready to ask
+
+Ask them in this order. Skip a question when the answer is already clear from the conversation.
+
+**1. New folder or existing notes**
+> Notlarını tutacağın yeni bir klasör mü kuralım, yoksa bilgisayarında notlarının zaten durduğu bir klasör var mı? Bilmiyorsan yeni bir klasör kuralım.
+
+Recommended: a new folder at `~/Vault`; tell them where it will be in plain words ("Finder'da, ev simgeli ana klasörünün içinde 'Vault' adıyla"). For an existing folder, ask where it is and tell them Carry only reads it and never changes their notes. Carry reads `.md` files only; if their notes are in Word, Apple Notes or elsewhere, say so plainly and suggest a new folder.
+
+**2. Language** (new folder only)
+> Notlarını çoğunlukla hangi dilde yazıyorsun, Türkçe mi İngilizce mi?
+
+**3. Search by meaning** (check `brew --version` on macOS or `winget --version` on Windows first, silently)
+> Carry notlarını kelimelere göre arar. İstersen anlamına göre de arayabilir: farklı kelimelerle yazdığın notları da bulur. Bunun için bilgisayarına ücretsiz bir program kurmam gerekiyor; bir filmden az yer kaplar ve notların internete gitmez. Kurayım mı? Emin değilsen şimdilik kurmayalım, sonra da açılabilir.
+
+Recommended: yes if Homebrew or winget is already there; otherwise no for now. Leaving it off loses little: assistants search with several wordings anyway.
+
+**4. Who checks the results**
+> Carry bir şey ararken bulduğu notlardan hangisinin gerçekten işine yarayacağını seçmek için bir kontrol yapar. Bunu senin kendi Claude'un yapabilir; ek bir şey gerekmez. Bunu yapan ücretli bir hizmet de var ama ayrı bir hesap açmak gerekir. Kendi Claude'unla devam edelim mi?
+
+Recommended: their own assistant (`--judge assistant`). Only name TypeSafe Jev if they ask about the paid option or already have a TypeSafe key. In Codex, say "kendi Codex'in".
+
+**5. Team notes**
+> İş yerinde ekibinle notlarınızı GitHub adlı sitede ortak tutuyor musunuz? Tutuyorsanız o ortak klasörün adını söyle (örneğin sirket/notlar). Bilmiyorsan bu adımı geçelim.
+
+Recommended: skip unless they know the name. If they give one, they need GitHub's `gh` tool and to sign in once (see below).
+
+**6. Evening drafts**
+> İstersen Carry her akşam o günkü sohbetlerimizi okuyup verilen kararları ve yarım kalan işleri taslak not olarak hazırlar; sen onaylamadan hiçbiri nota dönüşmez. Bilgisayar o saatte açıksa her akşam 21:30'da yapılsın mı? Emin değilsen şimdilik kapalı kalsın.
+
+Recommended: no for now.
+
+**7. The app** (macOS only)
+> Taslakları onaylamak ve ayarları görmek için küçük bir Carry uygulaması da kurayım mı? Bunun için Apple'ın ücretsiz bir ek paketi gerekiyor; bilgisayarında yoksa kurmana yardım ederim.
+
+Recommended: yes.
+
+### Missing programs, in this order
+
+The repository is public: no GitHub account is needed to install Carry. Check `git --version` first, then `uv --version`; `git` must work before Carry can be installed. Install what is missing, asking first.
+
+1. **git** (Carry is downloaded with it and it keeps the notes' change history).
+   - macOS: `git --version` without it opens Apple's installer, which also brings what the app needs. Tell them:
+     > Ekranda Apple'ın bir penceresi açıldı. "Yükle"ye bas, sonra sözleşmede "Kabul Et"e bas. "Xcode'u Al" düğmesine basma, ona gerek yok. Birkaç dakika sürer; bitince bana "bitti" yaz.
+
+     When they say it is done, run `git --version` again; if it still fails, the installer is not finished yet, so ask them to wait a little longer.
+   - Windows: `winget install Git.Git`.
+2. **uv** (installs Carry).
+   > Carry'yi kurmak için "uv" adlı küçük ve ücretsiz bir kurulum aracı gerekiyor. Kurayım mı?
+
+   macOS and Linux: `curl -LsSf https://astral.sh/uv/install.sh | sh`. Windows: `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`. If your permission settings block that command, `brew install uv` works where Homebrew exists; otherwise ask the owner to paste the same line into the chat with a leading `!` so it runs as their own command.
+
+   The current shell will not find `uv` or later `carry` yet: call them as `~/.local/bin/uv` and `~/.local/bin/carry`. Then, with their consent, run `~/.local/bin/uv tool update-shell` so new windows find them:
+   > Yeni açacağın pencerelerin de bu aracı tanıması için bilgisayarın bir ayar dosyasına tek satır eklemem gerekiyor. Ekleyeyim mi?
+3. **gh** (only for team notes or a GitHub backup): `brew install gh` (macOS) or `winget install GitHub.cli` (Windows). The owner signs in once. `gh auth login --hostname github.com --git-protocol https --web` needs no typing: it prints a one-time code and waits until the code is entered at https://github.com/login/device. In Claude Code the owner runs it from the chat with a leading `!`:
+   > GitHub'a bir kez giriş yapman gerekiyor. Sohbete şunu yapıştır: `! gh auth login --hostname github.com --git-protocol https --web`. Ekranda XXXX-XXXX gibi bir kod çıkacak; https://github.com/login/device sayfasını açıp bu kodu gir ve onayla. Bitince haber ver.
+
+   Afterwards run `gh auth setup-git` yourself.
 
 ### Prerequisites
 
 - Claude Code or Codex.
-- [uv](https://docs.astral.sh/uv/) (Python 3.11+ is fetched by uv).
-- macOS app only: Xcode Command Line Tools (`xcode-select --install`).
-- Private repo or team repo: GitHub CLI, `gh auth login && gh auth setup-git`.
+- git and [uv](https://docs.astral.sh/uv/) (Python 3.11+ is fetched by uv).
+- macOS app only: Xcode Command Line Tools (`xcode-select --install`; the git installer above brings them).
+- Team repo or backup repo only: GitHub CLI, signed in as above.
 
 ```sh
 uv tool install "git+https://github.com/berketevik/carry"
 ```
 
-Below, `WS` stands for the workspace folder. Every command takes `--workspace WS` (or the `CARRY_WORKSPACE` environment variable).
+Below, `WS` stands for the workspace folder. Every command takes `--workspace WS` (or the `CARRY_WORKSPACE` environment variable). Map the answers above to the flags: question 3 no = `--no-semantic`, question 4 = `carry search --judge ...`, question 5 = `carry github add`, question 6 = `carry harvest --install-schedule`, question 7 no = `--no-app`.
 
 ### A. A new vault
 
@@ -108,10 +184,24 @@ In order: a read-only team knowledge base from GitHub, search by meaning (instal
 
 ```sh
 carry --workspace WS status --probe
-carry --workspace WS recall "a question the notes can answer"
 ```
 
-`status` should show the sources, a usable index and, for semantic search, a reachable Ollama. Then tell the owner to open Claude Code or Codex **in the notes folder**, approve the `carry` MCP server when asked, and ask something like "Use Carry to find my notes about this project." The MCP settings are per folder: the assistant only sees Carry when started there.
+`status` should show the sources, a usable index and, for semantic search, a reachable Ollama. A new notes folder has no notes yet, so there is nothing to search. Make the first note together instead; it also shows the owner how Carry works:
+
+> Carry'yi denemek için ilk notunu birlikte yazalım. Hatırlamak istediğin bir şey söyle; örneğin bir telefon numarası, bir doğum günü ya da bir tarif.
+
+Write it as a note in `notes/` (the new folder's `LLM-GUIDE.md` says how), run `carry --workspace WS index`, then `carry --workspace WS recall "<a question about it>"` and tell them it was found. For an existing folder, recall something from their own notes instead.
+
+**Tell the owner how to start.** The Carry tool is set up per folder: the assistant sees it only when started in the notes folder, and this chat cannot move there by itself. Use the absolute path (never `~` inside quotes, where it is not expanded). For Claude Code in the terminal:
+
+> Kurulum bitti. Notların şu klasörde: <tam yol>. Carry'yi kullanmak için Claude'u bu klasörde yeniden açmak gerekiyor. Şöyle yap:
+> 1. Klavyede Command ve boşluk tuşuna birlikte bas, "Terminal" yaz ve Enter'a bas.
+> 2. Açılan pencereye şu satırı yapıştır (Command+V) ve Enter'a bas: `cd "<tam yol>" && claude`
+> 3. Claude ilk açılışta "carry" aracını kullanmak için İngilizce bir onay sorar; "Yes" seçeneğini seç.
+>
+> Sonra "Notlarımda ne var?" diye sorabilirsin. Bir şeyi kaydetmek istediğinde "bunu not al" demen yeterli.
+
+Adapt it: Codex instead of Claude; for the Claude or Codex desktop app, say how to open the notes folder there instead of the terminal steps. "Bunu not al" works in a new notes folder, whose guide tells the assistant how to file notes; for an existing folder leave that sentence out. If the app was installed, open it for them (`carry app open`) and say what it is for. It is built on their Mac, so macOS opens it without a security warning.
 
 ### Windows
 

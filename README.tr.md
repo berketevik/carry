@@ -20,7 +20,9 @@ Notlarınız seçtiğiniz klasörde, düz Markdown (`.md`) dosyaları olarak Mac
 
 ## Başlayın
 
-Claude Code veya Codex, [uv](https://docs.astral.sh/uv/) ve Xcode Command Line Tools (`xcode-select --install`) gerekir.
+**En kolayı:** Claude Code'a ya da Codex'e bu sayfanın linkini verip "Carry'yi kur" deyin. Size birkaç basit soru sorar, gerekenleri kurar ve bitince ne yapacağınızı söyler.
+
+Kendiniz kurmak isterseniz: Claude Code veya Codex, git, [uv](https://docs.astral.sh/uv/) ve Xcode Command Line Tools (`xcode-select --install`) gerekir.
 
 ```sh
 uv tool install "git+https://github.com/berketevik/carry"
