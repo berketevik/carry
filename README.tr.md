@@ -40,7 +40,7 @@ Yeni bir not klasörü oluşturun veya mevcut `.md` klasörünüzü seçin. Sonr
 
 `carry setup`, [Ollama](https://ollama.com) ile anlamına göre aramayı önerir (yaklaşık 0,6 GB). Yalnız kelime aramasıyla başlamak için `carry setup --no-semantic`.
 
-Güncellemek için `uv tool upgrade carry`, ardından `carry app install`.
+Güncellemek için `carry update` (`--check` yalnızca bakar), uygulamayı kullanıyorsan ardından `carry app install`. Komut `uv tool upgrade carry` çalıştırır; kaynaktan kurulumda `git pull` yapar.
 
 Sohbet taslakları `+/` klasörüne düşer. Bir maddeyi kabul etmek, onunla çelişen notu asla değiştirmez; log satırı o nota bağlantı verir, çelişkiyi siz çözersiniz. Hiç madde kalmayınca taslak İncele sayfasından çıkar. Asistanınızın başka yerlere yazdığı notlar siz kontrol edene kadar `draft: true` taşır, ama hemen aranabilir ve İncele sayfasında beklemez. Her ayarın açıklaması uygulamanın rehberinde (**Ayarlar → Genel → Yardım**).
 
@@ -54,6 +54,7 @@ Notları okuyan komutlar ayar klasörünüzü ister: `export CARRY_WORKSPACE="$H
 | Komut | Ne yapar |
 |---|---|
 | `carry setup` | Adım adım kurulum. |
+| `carry update` | Carry'yi güncelle; `--check` yalnızca bakar. |
 | `carry app install` / `open` / `remove` | Mac uygulamasını derler, açar veya kaldırır. |
 | `carry recall "soru"` | Notlarda arar. |
 | `carry status --probe` | Index'i ve arama sağlayıcısını denetler. |

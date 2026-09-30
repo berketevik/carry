@@ -399,6 +399,26 @@ def cmd_app(args):
     return EXIT_OK
 
 
+def cmd_update(args):
+    from . import update
+    if args.check:
+        info = update.check()
+        state = {True: 'an update is available', False: 'up to date', None: 'cannot check this install'}[info['available']]
+        _print(info, args.json, [f"carry {info['version']} ({info['kind']}): {state}"])
+        return EXIT_OK
+    result = update.update()
+    lines = [f"carry updated: {result['before']} -> {result['after']}" if result['updated'] else 'carry is up to date']
+    if result.get('reinstalled'):
+        lines.append('dependencies reinstalled (pyproject.toml changed)')
+    if result['updated']:
+        lines.append('restart Claude Code / Codex so their Carry servers load the new code')
+        from . import app_install
+        if sys.platform == 'darwin' and app_install.DEFAULT_PATH.exists():
+            lines.append('rebuild the app: carry app install')
+    _print(result, args.json, lines)
+    return EXIT_OK
+
+
 def cmd_setup(args):
     from . import setup_wizard
     return setup_wizard.run(state_dir=args.workspace, assume_yes=args.yes, vault_path=args.vault,
@@ -598,6 +618,10 @@ def build_parser():
     setup.add_argument("--no-semantic", action="store_true", help="keyword search only: no Ollama, no model on this Mac")
     setup.add_argument("--no-app", action="store_true", help="do not build the macOS app")
     setup.set_defaults(func=cmd_setup)
+
+    upd = sub.add_parser("update", help="update this Carry install (uv tool upgrade, or git pull for a source checkout)")
+    upd.add_argument("--check", action="store_true", help="only report whether an update is available")
+    upd.set_defaults(func=cmd_update)
 
     demo = sub.add_parser("demo", help="install the synthetic corpus and index it")
     demo.add_argument("--into", required=True, help="folder for the synthetic corpus")

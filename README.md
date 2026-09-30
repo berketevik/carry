@@ -40,7 +40,7 @@ Pick a new notes folder or an existing folder of `.md` files. Then go to **Setti
 
 `carry setup` offers search by meaning through [Ollama](https://ollama.com) (about 0.6 GB). `carry setup --no-semantic` starts with word search only.
 
-To update: `uv tool upgrade carry`, then `carry app install`.
+To update: `carry update` (`--check` only reports), then `carry app install` if you use the app. It runs `uv tool upgrade carry`, or `git pull` for a source checkout.
 
 Chat drafts land in the `+/` folder. Accepting an item never edits a note it contradicts; the log line links that note so you can settle it. When no item is left, the draft leaves the Review page. Notes your assistant writes elsewhere carry `draft: true` until you check them, but they are searchable right away and never wait on the Review page. The app's guide (**Settings → General → Help**) explains every setting.
 
@@ -54,6 +54,7 @@ Commands that read notes need your settings folder: `export CARRY_WORKSPACE="$HO
 | Command | Purpose |
 |---|---|
 | `carry setup` | Guided setup. |
+| `carry update` | Update Carry; `--check` only reports. |
 | `carry app install` / `open` / `remove` | Build, open or remove the Mac app. |
 | `carry recall "question"` | Search your notes. |
 | `carry status --probe` | Check the index and search provider. |
