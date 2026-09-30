@@ -147,6 +147,14 @@ def cloud_synced(path):
 HERE = "bu Mac'te" if sys.platform == 'darwin' else 'bu bilgisayarda'
 
 
+def _gh():
+    """The GitHub CLI, or None when it is missing (github.executable raises instead)."""
+    try:
+        return github.executable()
+    except CarryError:
+        return None
+
+
 # 5-row block font for the banner; only the letters it needs.
 FONT = {
     'A': [' ███ ', '█   █', '█████', '█   █', '█   █'], 'B': ['████ ', '█   █', '████ ', '█   █', '████ '],
@@ -254,7 +262,7 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
     step(3, total, 'Ekip bilgi tabanı (GitHub, isteğe bağlı)')
     repo = '' if assume_yes else p.ask('Repo (sahip/ad, boş bırak = geç):', '')
     if repo:
-        if not github.executable():
+        if not _gh():
             install_gh = '`winget install GitHub.cli`' if sys.platform == 'win32' else '`brew install gh`'
             warn(f'GitHub CLI (gh) bulunamadı: {install_gh} ve `gh auth login`, sonra `carry github add`.')
         else:
@@ -348,14 +356,14 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
 
     # 6. Backup and harvest
     step(6, total, 'Yedek ve otomatik not çıkarma')
-    if project and kind == 'new' and not assume_yes and github.executable():
+    if project and kind == 'new' and not assume_yes and _gh():
         if p.yes('Vault için özel bir GitHub reposu açılıp yedeklensin mi?', default=False):
             name = p.ask('Repo adı:', project.name.lower())
             try:
                 import subprocess
                 subprocess.run(['git', '-C', str(project), 'add', '-A'], check=True, capture_output=True)
                 subprocess.run(['git', '-C', str(project), 'commit', '-q', '-m', 'vault: initial'], check=True, capture_output=True)
-                subprocess.run([github.executable(), 'repo', 'create', name, '--private', '--source', str(project),
+                subprocess.run([_gh(), 'repo', 'create', name, '--private', '--source', str(project),
                                 '--remote', 'origin', '--push'], check=True, capture_output=True, text=True, encoding='utf-8')
                 ok(f'Özel repo oluşturuldu ve ilk commit gönderildi: {name}')
             except (OSError, subprocess.CalledProcessError) as exc:

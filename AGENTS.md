@@ -133,7 +133,7 @@ Then restart Claude Code / Codex so their Carry servers load the new code, and o
 - **Folder connected with an older Carry, `assistant` judge:** it has no `carry-recall` subagent, so recall returns unfiltered passages. Run `carry connect` again after updating; it adds only the missing subagent.
 - **`setup --yes` installs Ollama** unless `--no-semantic` is given.
 - **Workspace in iCloud Drive or OneDrive:** the index and virtual environments break. Keep it in the home folder.
-- **`gh` missing:** the wizard's team-repo step can fail; install and log in to `gh` first.
+- **`gh` missing:** the wizard skips the team repo and the private backup repo with a hint; install `gh`, run `gh auth login`, then `carry github add`.
 - **The assistant does not see Carry:** it was started outside the notes folder, or the MCP server was not approved. `carry connect list` shows what was written where.
 - **Jev chosen but no key:** recall falls back to unjudged passages and reports `reranker_unavailable:jev_*`. Store the key or switch with `carry search --judge assistant`.
 
