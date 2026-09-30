@@ -1,17 +1,20 @@
 """Find, install and start Ollama for semantic search (embeddinggemma).
 
 Installation goes through Homebrew (`brew install ollama`, then `brew services start
-ollama` so the server comes back after a restart). An existing Ollama.app or
-binary is reused. Without Homebrew the caller is told where to get Ollama and
-search stays keyword-only; nothing is downloaded behind the user's back.
+ollama` so the server comes back after a restart); on Windows through winget, whose
+Ollama starts its tray app at every sign-in. An existing Ollama.app or binary is
+reused. Without an installer the caller is told where to get Ollama and search
+stays keyword-only; nothing is downloaded behind the user's back.
 """
 import json
 import shutil
 import subprocess
+import sys
 import time
 import urllib.request
 
-from .models import ollama_binary
+from .background import detached, which
+from .models import ollama_binary, windows_ollama_dir
 
 ENDPOINT = 'http://127.0.0.1:11434'
 APP = '/Applications/Ollama.app'
@@ -25,10 +28,15 @@ def running(endpoint=ENDPOINT, timeout=2):
         return False
 
 
+def installer():
+    """The package manager Carry installs Ollama with here: brew, or winget on Windows."""
+    return which('winget') if sys.platform == 'win32' else shutil.which('brew')
+
+
 def status():
     binary = ollama_binary()
     return dict(installed=bool(binary), binary=binary, running=running(),
-                brew=shutil.which('brew'), app=shutil.os.path.isdir(APP))
+                brew=shutil.which('brew'), installer=installer(), app=shutil.os.path.isdir(APP))
 
 
 def _wait(seconds=30):
@@ -41,7 +49,17 @@ def _wait(seconds=30):
 
 
 def install():
-    """Homebrew install plus a login service. Returns (ok, message)."""
+    """Homebrew install plus a login service (winget on Windows). Returns (ok, message)."""
+    if sys.platform == 'win32':
+        winget = installer()
+        if not winget:
+            return False, 'winget_missing'
+        step = subprocess.run([winget, 'install', '--id', 'Ollama.Ollama', '--exact', '--silent',
+                               '--accept-package-agreements', '--accept-source-agreements'],
+                              capture_output=True, text=True, encoding='utf-8', errors='replace')
+        if step.returncode != 0 and not ollama_binary():
+            return False, (step.stderr or step.stdout).strip()[-300:] or 'winget_install_failed'
+        return start()
     brew = shutil.which('brew')
     if not brew:
         return False, 'homebrew_missing'
@@ -66,10 +84,16 @@ def start():
         subprocess.run(['open', '-a', 'Ollama'], capture_output=True)
         if _wait():
             return True, 'app'
+    tray = windows_ollama_dir() / 'ollama app.exe'
+    if sys.platform == 'win32' and tray.is_file():
+        # The tray app runs the server and starts again at every sign-in, like the brew service.
+        detached([str(tray)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if _wait():
+            return True, 'app'
     binary = ollama_binary()
     if binary:
-        subprocess.Popen([binary, 'serve'], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL, start_new_session=True)
+        detached([binary, 'serve'], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                 stderr=subprocess.DEVNULL)
         if _wait():
             return True, 'serve'
     return False, 'ollama_not_started'

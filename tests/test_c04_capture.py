@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from unittest import mock
 
-from _support import SRC, WorkspaceCase, tree_digest
+from _support import SRC, WorkspaceCase, symlink_or_skip, tree_digest
 from carry import capture, store
 from carry.config import Workspace
 from carry.errors import SourceError
@@ -44,11 +44,11 @@ class CaptureTest(WorkspaceCase):
         for client in capture.CLIENTS:
             r = self.send(client)
             self.assertEqual(r['state'], 'captured', r)
-            fm, body = parse_frontmatter((self.records / r['proposal_path']).read_text())
+            fm, body = parse_frontmatter((self.records / r['proposal_path']).read_text(encoding='utf-8'))
             self.assertEqual(fm['carry_state'], 'draft')
             self.assertEqual(fm['carry_event'], r['event_id'])
             self.assertIn('records:' + r['event_path'], fm['sources'])
-            raw = (self.records / r['event_path']).read_text()
+            raw = (self.records / r['event_path']).read_text(encoding='utf-8')
             self.assertNotIn('/unused/transcript', raw)
             self.assertNotIn('not captured', raw)
             self.assertIn('October 15', body)
@@ -160,7 +160,7 @@ class CaptureTest(WorkspaceCase):
     def test_symlink_escape_is_refused_without_external_writes(self):
         outside = self.base / 'outside'
         outside.mkdir()
-        (self.records / 'carry').symlink_to(outside, target_is_directory=True)
+        symlink_or_skip(self, self.records / 'carry', outside, target_is_directory=True)
         self.assertEqual(self.send()['state'], 'failed')
         self.assertEqual(list(outside.iterdir()), [])
 
@@ -235,7 +235,7 @@ class CaptureTest(WorkspaceCase):
             self.assertNotIn('carry_propose', hooks[0]['command'])
 
     def test_corrupt_config_fails_closed_and_status_answers(self):
-        (self.workspace.state_dir / 'capture.json').write_text('{broken')
+        (self.workspace.state_dir / 'capture.json').write_text('{broken', encoding='utf-8')
         self.assertEqual(self.send()['state'], 'failed')
         self.assertEqual(capture.capture_status(self.workspace)['state'], 'failed')
         self.assertEqual(list(self.records.rglob('*.md')), [])

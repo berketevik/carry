@@ -33,7 +33,7 @@ SKIP_SECTIONS = ('Yapılmış görünüyor', 'Apparently done', 'Vazgeçilmiş g
 
 def workspace_for(root):
     try:
-        return json.loads((Path(root) / LOCAL).read_text()).get('workspace')
+        return json.loads((Path(root) / LOCAL).read_text(encoding='utf-8')).get('workspace')
     except (OSError, ValueError):
         return None
 
@@ -54,7 +54,7 @@ def _digests(root, days=DAYS, today=None):
 
 def _still_draft(path):
     try:
-        head = path.read_text(errors='ignore').split('\n---', 1)[0]
+        head = path.read_text(encoding='utf-8', errors='ignore').split('\n---', 1)[0]
     except OSError:
         return False
     return bool(re.search(r'(?m)^draft:\s*true\s*$', head))
@@ -63,7 +63,7 @@ def _still_draft(path):
 def _items(path):
     """(kind, statement) per item line, skipping sections for done or already recorded items."""
     section, out = '', []
-    for line in path.read_text(errors='ignore').splitlines():
+    for line in path.read_text(encoding='utf-8', errors='ignore').splitlines():
         if line.startswith('## '):
             section = line[3:].strip()
             continue
@@ -82,14 +82,14 @@ def pack(root, workspace=None, language=None, max_chars=MAX_CHARS, today=None):
     root = Path(root).resolve()
     if language is None:
         try:
-            language = json.loads((root / '.carry/vault.json').read_text()).get('language', 'English')
+            language = json.loads((root / '.carry/vault.json').read_text(encoding='utf-8')).get('language', 'English')
         except (OSError, ValueError):
             language = 'English'
     H = HEAD.get(language, HEAD['English'])
     lines = [f'# {H["title"]} · {root.name}', '']
     try:
         log = subprocess.run(['git', '-C', str(root), 'log', '-10', '--format=%ad %s', '--date=short'],
-                             capture_output=True, text=True, timeout=5).stdout.strip()
+                             capture_output=True, text=True, encoding='utf-8', timeout=5).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         log = ''
     if log:

@@ -53,13 +53,30 @@ def api_key():
             return None
         if found.returncode == 0 and found.stdout.strip():
             return found.stdout.strip()
+    if sys.platform == 'win32':
+        from . import wincred
+        try:
+            found = wincred.read(KEYCHAIN[0])
+        except (OSError, ValueError):  # ValueError: a credential another tool wrote, not UTF-16
+            return None
+        return (found or '').strip() or None
     return None
 
 
+def key_store():
+    """Where store_key keeps the key on this platform, for messages; None where it cannot."""
+    return {'darwin': 'Keychain', 'win32': 'Windows Credential Manager'}.get(sys.platform)
+
+
 def store_key(key):
-    """Keychain item owned by /usr/bin/security, so every Carry process can read it without a prompt."""
-    if sys.platform != 'darwin' or not isinstance(key, str) or not key.strip():
+    """Keychain item owned by /usr/bin/security (Credential Manager on Windows), so every Carry
+    process can read it without a prompt."""
+    if key_store() is None or not isinstance(key, str) or not key.strip():
         raise ValueError('invalid_typesafe_key')
+    if sys.platform == 'win32':
+        from . import wincred
+        wincred.write(KEYCHAIN[0], KEYCHAIN[1], key.strip())
+        return
     subprocess.run(['/usr/bin/security', 'add-generic-password', '-U', '-s', KEYCHAIN[0], '-a', KEYCHAIN[1],
                     '-w', key.strip()], capture_output=True, check=True, timeout=10)
 

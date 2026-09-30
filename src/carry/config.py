@@ -212,7 +212,7 @@ class Workspace:
         Path(self.state_dir).mkdir(parents=True, exist_ok=True)
         tmp = self.config_path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(self.to_json(), indent=2, ensure_ascii=False) + "\n",
-                       encoding="utf-8")
+                       encoding="utf-8", newline="\n")
         os.replace(tmp, self.config_path)
         return self
 

@@ -19,10 +19,12 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 
-from . import jev
+from . import jev, taskscheduler
+from .background import detached
 from .errors import CarryError
 from .mask import mask
 from .persistence import atomic_text
@@ -99,7 +101,7 @@ def find_threads(root):
     if sessions.is_dir():
         for p in sorted(sessions.rglob('*.jsonl')):
             try:
-                with open(p, errors='ignore') as handle:
+                with open(p, encoding='utf-8', errors='ignore') as handle:
                     first = json.loads(handle.readline() or '{}')
             except (OSError, ValueError):
                 continue
@@ -117,7 +119,7 @@ def read_thread(client, path, root):
     turns, cur, filed = [], None, False
     notes = [str(Path(root) / d) for d in ('notes', 'log')]
     pending_writes, failed = set(), set()  # a denied or failed write did not file anything
-    for line in Path(path).read_text(errors='ignore').splitlines():
+    for line in Path(path).read_text(encoding='utf-8', errors='ignore').splitlines():
         try:
             d = json.loads(line)
         except ValueError:
@@ -208,21 +210,34 @@ def extract_window(exchanges, language, which):
     return ask_agent(SYSTEM.format(language=language), _render(exchanges), which, 'items')
 
 
+def _client(name):
+    """The client's argv prefix. On Windows it is never an npm .cmd shim (cmd.exe would reparse
+    the prompt) and the prompt goes through stdin: a command line holds 32,767 characters there."""
+    if sys.platform != 'win32':
+        return [name]
+    from .desktop import command_for
+    return command_for(name)
+
+
 def ask_agent(system, body, which, field):
     """One JSON answer from the owner's own client (Claude or Codex), two tries."""
+    piped = sys.platform == 'win32'
     for _ in range(2):
         with tempfile.TemporaryDirectory(prefix='carry-harvest-') as cwd:
             if which.startswith('claude'):
-                proc = subprocess.run(['claude', '-p', '--model', which.split(':')[1], '--output-format', 'json',
-                                       '--tools', '', '--system-prompt', system, body],
-                                      capture_output=True, text=True, timeout=900, cwd=cwd)
+                proc = subprocess.run(_client('claude') + ['-p', '--model', which.split(':')[1], '--output-format', 'json',
+                                       '--tools', '', '--system-prompt', system] + ([] if piped else [body]),
+                                      input=body if piped else None,
+                                      capture_output=True, text=True, encoding='utf-8', timeout=900, cwd=cwd)
                 try:
                     text = json.loads(proc.stdout).get('result', '')
                 except ValueError:
                     text = ''
             else:
-                proc = subprocess.run(['codex', 'exec', '--skip-git-repo-check', '-m', which.split(':')[1],
-                                       system + '\n\n' + body], capture_output=True, text=True, timeout=900, cwd=cwd)
+                prompt = system + '\n\n' + body
+                proc = subprocess.run(_client('codex') + ['exec', '--skip-git-repo-check', '-m', which.split(':')[1],
+                                       '-' if piped else prompt], input=prompt if piped else None,
+                                      capture_output=True, text=True, encoding='utf-8', timeout=900, cwd=cwd)
                 text = proc.stdout
         items = _items_from(text, field)
         if items is not None:
@@ -494,7 +509,7 @@ def write_outputs(root, client, thread_id, exchanges, groups, meta, language, to
 
 def _state(workspace):
     try:
-        return json.loads((workspace.state_dir / STATE_NAME).read_text())
+        return json.loads((workspace.state_dir / STATE_NAME).read_text(encoding='utf-8'))
     except (OSError, ValueError):
         return {}
 
@@ -636,19 +651,18 @@ def in_vault(cwd, root):
 def spawn_from_hook(state_dir, payload, root, language=None, python=None):
     """SessionEnd: start the harvest of the closed thread in the background and return at once
     (Codex allows a SessionEnd hook three seconds at most)."""
-    import sys
     transcript = payload.get('transcript_path')
     if not transcript or not in_vault(payload.get('cwd') or '', root):
         return False
     try:
         # The app's draft language wins over the --language baked into older hook commands.
-        language = json.loads((Path(state_dir) / LANGUAGE_NAME).read_text()).get('language') or language
+        language = json.loads((Path(state_dir) / LANGUAGE_NAME).read_text(encoding='utf-8')).get('language') or language
     except (OSError, ValueError):
         pass
     args = [python or sys.executable, '-I', '-m', 'carry.cli', '--workspace', str(state_dir), 'harvest',
             '--thread', str(transcript), '--vault', str(root)] + (['--language', language] if language else [])
-    log = open(Path(state_dir) / 'harvest.log', 'a')
-    subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
+    with open(Path(state_dir) / 'harvest.log', 'a') as log:  # the child keeps its own handle
+        detached(args, stdin=subprocess.DEVNULL, stdout=log, stderr=log)
     return True
 
 
@@ -671,6 +685,8 @@ def schedule_plist(carry_bin, state_dir, hour=21, minute=30, extra=()):
 
 
 def schedule_path():
+    if sys.platform == 'win32':
+        return taskscheduler.definition_path()
     return Path.home() / 'Library' / 'LaunchAgents' / (LAUNCH_LABEL + '.plist')
 
 
@@ -680,14 +696,14 @@ LANGUAGE_NAME = 'harvest.json'
 def draft_language(workspace, root=None):
     """Language of harvest drafts: the app's setting, else the vault's, else the nightly job's, else English."""
     try:
-        chosen = json.loads((Path(workspace.state_dir) / LANGUAGE_NAME).read_text()).get('language')
+        chosen = json.loads((Path(workspace.state_dir) / LANGUAGE_NAME).read_text(encoding='utf-8')).get('language')
         if chosen:
             return chosen
     except (OSError, ValueError):
         pass
     if root is not None:
         try:
-            chosen = json.loads((Path(root) / '.carry' / 'vault.json').read_text()).get('language')
+            chosen = json.loads((Path(root) / '.carry' / 'vault.json').read_text(encoding='utf-8')).get('language')
             if chosen:
                 return chosen
         except (OSError, ValueError):
@@ -717,6 +733,8 @@ def _loaded():
 
 def schedule_status():
     """What the nightly launchd job runs, read back from its plist, and whether launchd has it."""
+    if sys.platform == 'win32':
+        return taskscheduler.status()
     import plistlib
     path = schedule_path()
     try:
@@ -734,18 +752,21 @@ def schedule_status():
 def install_schedule(carry_bin, state_dir, vault=None, language=None, hour=21, minute=30):
     if not (0 <= int(hour) <= 23 and 0 <= int(minute) <= 59):
         raise CarryError('invalid_schedule_time')
+    extra = (['--vault', str(vault)] if vault else []) + (['--language', language] if language else [])
+    if sys.platform == 'win32':
+        # The task runs this Python windowless through carry.nightly, not the carry console binary.
+        return taskscheduler.install(state_dir, int(hour), int(minute), extra)
     path, target = schedule_path(), f'gui/{os.getuid()}'
-    previous = path.read_text() if path.is_file() else None
+    previous = path.read_text(encoding='utf-8') if path.is_file() else None
     subprocess.run(['launchctl', 'bootout', target, str(path)], capture_output=True)
     path.parent.mkdir(parents=True, exist_ok=True)
-    extra = (['--vault', str(vault)] if vault else []) + (['--language', language] if language else [])
-    path.write_text(schedule_plist(carry_bin, state_dir, hour=int(hour), minute=int(minute), extra=extra))
+    path.write_text(schedule_plist(carry_bin, state_dir, hour=int(hour), minute=int(minute), extra=extra), encoding='utf-8', newline='\n')
     if subprocess.run(['launchctl', 'bootstrap', target, str(path)], capture_output=True).returncode != 0:
         # Put the job that was there back rather than leave a plist launchd does not run.
         if previous is None:
             path.unlink(missing_ok=True)
         else:
-            path.write_text(previous)
+            path.write_text(previous, encoding='utf-8', newline='\n')
             if subprocess.run(['launchctl', 'bootstrap', target, str(path)], capture_output=True).returncode != 0:
                 raise CarryError('schedule_restore_failed')
         raise CarryError('schedule_load_failed')
@@ -753,6 +774,8 @@ def install_schedule(carry_bin, state_dir, vault=None, language=None, hour=21, m
 
 
 def remove_schedule():
+    if sys.platform == 'win32':
+        return taskscheduler.remove()
     path = schedule_path()
     subprocess.run(['launchctl', 'bootout', f'gui/{os.getuid()}', str(path)], capture_output=True)
     if _loaded():

@@ -27,16 +27,16 @@ class MaintenanceTest(WorkspaceCase):
         self.assertTrue(started['started'])
         self.assertEqual(self.wait()['state'], 'complete')
         self.assertEqual(index.health(self.workspace)['state'], 'fresh')
-        note.write_text('The replacement milestone is November 5.')
+        note.write_text('The replacement milestone is November 5.', encoding='utf-8')
         maintenance.start(self.workspace)
         self.wait()
         self.assertIn('November 5', recall(self.workspace, 'replacement milestone')['evidence'][0]['text'])
         self.assertEqual(recall(self.workspace, 'October 22')['evidence'], [])
 
     def test_only_one_worker_and_interruption_visible(self):
-        import fcntl
+        from carry.filelock import try_lock
         with (self.workspace.state_dir/'maintenance.lock').open('a') as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+            self.assertTrue(try_lock(lock))
             self.assertFalse(maintenance.start(self.workspace)['started'])
             maintenance.job_progress(self.workspace, state='running')
             self.assertEqual(maintenance.job_status(self.workspace)['state'], 'running')

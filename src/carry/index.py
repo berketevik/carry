@@ -5,7 +5,6 @@ single atomic rename, so an interrupted or failed build always leaves the
 previous usable index in place. Nothing in this module writes inside a source
 root.
 """
-import fcntl
 import hashlib
 import json
 import os
@@ -17,8 +16,10 @@ from contextlib import closing
 from pathlib import Path
 
 from . import sidecar as sidecar_map
+from .background import detached
 from .embedding import build_provider
 from .errors import ProviderUnavailable
+from .filelock import try_lock
 from .markdown import chunk_body, parse_document
 from .paths import walk_markdown
 from .records import read_record_meta
@@ -122,7 +123,7 @@ def write_status(workspace, status, **fields):
     payload = dict(status=status, at=time.time(), **fields)
     handle, temp = tempfile.mkstemp(dir=str(path.parent), prefix=".carry-status-")
     try:
-        with os.fdopen(handle, "w") as out:
+        with os.fdopen(handle, "w", encoding="utf-8", newline="\n") as out:
             json.dump(payload, out)
         os.replace(temp, path)
     finally:
@@ -182,9 +183,7 @@ def build(workspace):
     # Kernel-owned advisory lock, scoped to this workspace and released on exit.
     # The lock file is kept: unlinking it would create a second lock domain.
     with open(workspace.lock_path, "a+") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
+        if not try_lock(lock):
             return {"status": "reindexing"}
         return _build_locked(workspace)
 
@@ -317,8 +316,7 @@ def maybe_refresh(workspace, spawn=True, backoff=60.0):
 
 
 def _spawn(workspace, subprocess, _sys):
-    subprocess.Popen([_sys.executable, "-m", "carry.cli", "--workspace",
-                      str(workspace.state_dir), "index"],
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                     start_new_session=True)
+    detached([_sys.executable, "-m", "carry.cli", "--workspace",
+              str(workspace.state_dir), "index"],
+             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return "spawned"

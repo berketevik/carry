@@ -14,6 +14,7 @@ import sys
 
 from . import __version__, lifecycle
 from .config import open_workspace
+from .console import use_utf8
 from .errors import CarryError
 from .recall import recall
 from .status import status
@@ -283,6 +284,7 @@ def serve(stdin=None, stdout=None, state_dir=None, client=None):
 
 
 def main(argv=None):
+    use_utf8()
     argv = list(sys.argv[1:] if argv is None else argv)
     state_dir = None
     if "--workspace" in argv:

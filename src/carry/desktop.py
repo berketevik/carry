@@ -5,6 +5,7 @@ is loaded for every command so CLI/hook edits remain visible to the app.
 """
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -13,6 +14,7 @@ import time
 from dataclasses import replace
 
 from . import capture, connections, lifecycle, github, maintenance
+from .background import detached, system_tool, which
 from .config import EmbeddingConfig, RetrievalConfig, SourceConfig, Workspace
 from .errors import CarryError
 from .paths import resolve_within
@@ -23,13 +25,45 @@ MAX_REQUEST = 1_048_576
 
 
 def executable_for(client):
-    found = shutil.which(client)
+    found = which(client)
     candidates = [Path.home() / '.local/bin' / client, Path('/opt/homebrew/bin') / client,
                   Path('/usr/local/bin') / client, Path.home() / '.npm-global/bin' / client]
     if client == 'codex':
         candidates += [Path('/Applications/Codex.app/Contents/Resources/codex'),
                        Path('/Applications/ChatGPT.app/Contents/Resources/codex')]
+    if sys.platform == 'win32':
+        # The native installer's ~/.local/bin, then npm's global folder.
+        candidates = [Path.home() / '.local/bin' / (client + '.exe'),
+                      Path(os.environ.get('APPDATA', Path.home() / 'AppData/Roaming')) / 'npm' / (client + '.cmd')]
     return found or next((str(p) for p in candidates if p.is_file()), client)
+
+
+def command_for(client):
+    """The argv prefix that starts a client without cmd.exe. An npm .cmd shim is resolved to the
+    program it runs: cmd.exe would reparse every argument, cutting a prompt at its first newline
+    and treating & | % ^ as commands."""
+    found = executable_for(client)
+    if sys.platform != 'win32':
+        return [found]
+    if not Path(found).is_absolute():
+        raise CarryError('client_not_found')  # a bare name would be looked up in the current folder first
+    if Path(found).suffix.lower() not in ('.cmd', '.bat'):
+        return [found]
+    shim = Path(found)
+    try:
+        targets = re.findall(r'"%dp0%\\([^"]+)"', shim.read_text(encoding='utf-8', errors='ignore'))
+    except OSError:
+        targets = []
+    for target in reversed(targets):
+        path = shim.parent / target
+        if path.suffix.lower() == '.exe' and path.is_file():
+            return [str(path)]
+        if path.suffix.lower() in ('.js', '.cjs', '.mjs') and path.is_file():
+            node = shim.parent / 'node.exe'
+            node = str(node) if node.is_file() else which('node')
+            if node:
+                return [node, str(path)]
+    raise CarryError('client_launcher_unresolved')
 
 
 HARVEST_JOB = 'harvest-now.json'
@@ -53,7 +87,7 @@ def harvest_vault(ws, requested):
 def harvest_job(ws, proc=None):
     """State of the last harvest started from the app: running while its process lives."""
     try:
-        job = json.loads((ws.state_dir / HARVEST_JOB).read_text())
+        job = json.loads((ws.state_dir / HARVEST_JOB).read_text(encoding='utf-8'))
     except (OSError, ValueError):
         return dict(running=False)
     if proc is not None and proc.pid == job.get('pid'):
@@ -83,15 +117,47 @@ def _harvest_result(ws, offset):
 def _is_harvest(pid, state_dir):
     """True while `pid` is still a harvest of this workspace (a reused pid is some other command)."""
     try:
-        command = subprocess.run(['ps', '-p', str(int(pid)), '-o', 'command='], capture_output=True, text=True, timeout=5).stdout
+        command = _command_line(int(pid))
     except (OSError, ValueError, TypeError, subprocess.SubprocessError):
         return False
     return ' harvest' in command and str(state_dir) in command
 
 
+def _command_line(pid):
+    if sys.platform != 'win32':
+        return subprocess.run(['ps', '-p', str(pid), '-o', 'command='], capture_output=True, text=True, timeout=5).stdout
+    # No ps on Windows, and wmic is being removed: ask CIM, in UTF-8 so non-ASCII paths survive.
+    query = ('[Console]::OutputEncoding = [Text.Encoding]::UTF8; '
+             f"(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').CommandLine")
+    return subprocess.run([system_tool(r'WindowsPowerShell\v1.0\powershell.exe'), '-NoProfile', '-NonInteractive', '-Command', query], capture_output=True,
+                          text=True, encoding='utf-8', timeout=15, creationflags=subprocess.CREATE_NO_WINDOW).stdout
+
+
 def carry_executable():
     beside = Path(sys.executable).with_name('carry')
-    return str(beside) if beside.is_file() else (shutil.which('carry') or 'carry')
+    return str(beside) if beside.is_file() else (which('carry') or 'carry')
+
+
+def _max_rss_bytes():
+    if sys.platform != 'win32':
+        import resource
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * (1 if sys.platform == 'darwin' else 1024)
+    import ctypes
+    from ctypes import wintypes
+
+    class Counters(ctypes.Structure):  # PROCESS_MEMORY_COUNTERS
+        _fields_ = [('cb', wintypes.DWORD), ('PageFaultCount', wintypes.DWORD)] + [
+            (name, ctypes.c_size_t) for name in (
+                'PeakWorkingSetSize', 'WorkingSetSize', 'QuotaPeakPagedPoolUsage', 'QuotaPagedPoolUsage',
+                'QuotaPeakNonPagedPoolUsage', 'QuotaNonPagedPoolUsage', 'PagefileUsage', 'PeakPagefileUsage')]
+
+    kernel32 = ctypes.WinDLL('kernel32')
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel32.K32GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(Counters), wintypes.DWORD]
+    counters = Counters(cb=ctypes.sizeof(Counters))
+    if not kernel32.K32GetProcessMemoryInfo(kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb):
+        return None
+    return counters.PeakWorkingSetSize
 
 
 class Bridge:
@@ -105,9 +171,7 @@ class Bridge:
             raise CarryError('invalid_desktop_request')
         action = request['action']
         if action == 'ping':
-            import resource
-            return dict(ready=True, python=sys.version.split()[0], pid=os.getpid(),
-                        max_rss_bytes=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * (1 if sys.platform == 'darwin' else 1024))
+            return dict(ready=True, python=sys.version.split()[0], pid=os.getpid(), max_rss_bytes=_max_rss_bytes())
         state = request.get('workspace')
         if not isinstance(state, str) or not state.strip():
             raise CarryError('workspace_required')
@@ -329,7 +393,7 @@ class Bridge:
             log_path = ws.state_dir / 'harvest.log'
             offset = log_path.stat().st_size if log_path.exists() else 0
             with open(log_path, 'a') as log:
-                proc = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
+                proc = detached(args, stdin=subprocess.DEVNULL, stdout=log, stderr=log)
             self.harvest_proc = proc
             atomic_text(ws.state_dir / HARVEST_JOB, json.dumps(dict(pid=proc.pid, started_at=time.time(), vault=vault, log_offset=offset)) + '\n')
             return dict(started=True, **harvest_job(ws, proc))
@@ -345,7 +409,7 @@ class Bridge:
                         dict(jsonrpc='2.0', id=2, method='tools/list'),
                         dict(jsonrpc='2.0', id=3, method='tools/call', params=dict(name='carry_status', arguments={}))]
             proc = subprocess.run([sys.executable, *(['-I'] if sys.flags.isolated else []), '-m', 'carry.mcp_server', '--workspace', str(ws.state_dir)],
-                input=''.join(json.dumps(m) + '\n' for m in messages), capture_output=True, text=True, timeout=20)
+                input=''.join(json.dumps(m) + '\n' for m in messages), capture_output=True, text=True, encoding='utf-8', timeout=20)
             replies = [json.loads(line) for line in proc.stdout.splitlines()]
             valid = (proc.returncode == 0 and len(replies) == 3 and
                      replies[0].get('result', {}).get('serverInfo', {}).get('name') == 'carry' and

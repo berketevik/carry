@@ -78,7 +78,7 @@ def probe_client(client, executable=None):
     _client(client)
     executable = str(executable or client)
     try:
-        result = subprocess.run([executable, '--version'], capture_output=True, text=True, timeout=10)
+        result = subprocess.run([executable, '--version'], capture_output=True, text=True, encoding='utf-8', timeout=10)
         pattern = r'(\d+)\.(\d+)\.(\d+)'
         match = re.search(pattern, result.stdout)
         if result.returncode or not match:
@@ -90,7 +90,7 @@ def probe_client(client, executable=None):
             return dict(info, state='unsupported_version')
         if client == 'codex':
             features = subprocess.run([executable, 'features', 'list'], capture_output=True,
-                                      text=True, timeout=10)
+                                      text=True, encoding='utf-8', timeout=10)
             if features.returncode or not re.search(r'^hooks\s+.*\btrue\s*$', features.stdout, re.M):
                 return dict(info, state='hooks_disabled')
         return info
@@ -209,7 +209,7 @@ def normalize(client, payload):
 
 def _persist(workspace, client, source, event):
     root = Path(source.root).expanduser().resolve()
-    relative = str(Path(source.records_dir) / '.events' / (event['event_id'] + '.md'))
+    relative = (Path(source.records_dir) / '.events' / (event['event_id'] + '.md')).as_posix()
     path = resolve_within(root, relative)
     duplicate = path.exists()
     if duplicate:

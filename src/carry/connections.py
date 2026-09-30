@@ -25,7 +25,8 @@ def _read(path):
         return None
     if not path.is_file() or path.stat().st_size > 1_000_000:
         raise CarryError('settings_file_invalid')
-    return path.read_text(encoding='utf-8')
+    # Bytes, not read_text: newline translation would turn CRLF into LF and break exact rollback.
+    return path.read_bytes().decode('utf-8')
 
 
 def _object(text):
@@ -82,7 +83,9 @@ def preview(workspace, client, project, source_id=None, prompts=False, proposals
         if existing is not None and existing != desired:
             raise CarryError('existing_carry_connection_conflict')
         if existing is None:
-            new = old + '\n[mcp_servers.carry]\ncommand = ' + json.dumps(sys.executable) + '\nargs = ' + json.dumps(args) + '\n'
+            nl = '\r\n' if '\r\n' in old else '\n'  # the file's own line endings
+            new = old + nl.join(['', '[mcp_servers.carry]', 'command = ' + json.dumps(sys.executable),
+                                 'args = ' + json.dumps(args), ''])
             # Inline tables or exotic conflicting layouts are refused, never rewritten.
             tomllib.loads(new)
             change(path, new)

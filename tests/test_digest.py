@@ -52,7 +52,7 @@ class DigestTest(unittest.TestCase):
         self.ws = Workspace.load(base / 'ws')
         self.sid = vaultview.default_vault(self.ws)
         self.rel = '+/2026-09-28 — harvest claude abcd1234.md'
-        (self.root / self.rel).write_text(DIGEST)
+        (self.root / self.rel).write_text(DIGEST, encoding='utf-8')
 
     def ids(self):
         return {it['statement']: it for it in digest.items(self.ws, self.sid, self.rel)['items']}
@@ -68,17 +68,17 @@ class DigestTest(unittest.TestCase):
         self.assertEqual(items['The repo is public.']['decision'], 'folded')
 
     def test_accept_logs_under_the_chat_date_and_never_edits_the_matched_note(self):
-        (self.root / 'notes' / 'Mac mini.md').write_text('---\ntype: thing\n---\n8 GB\n')
+        (self.root / 'notes' / 'Mac mini.md').write_text('---\ntype: thing\n---\n8 GB\n', encoding='utf-8')
         items = self.ids()
         r = digest.decide(self.ws, self.sid, self.rel, items['The Mac mini has 16 GB.']['id'], 'accept')
         self.assertEqual(r['logged'], 'log/2026-09-27.md')
-        log = (self.root / 'log' / '2026-09-27.md').read_text()
+        log = (self.root / 'log' / '2026-09-27.md').read_text(encoding='utf-8')
         self.assertIn('## From chats', log)
         self.assertIn('- **fact:** The Mac mini has 16 GB. ↔ [[Mac mini]] ([[2026-09-28 — claude abcd1234]], exchange 4)', log)
         self.assertIn('  > the Mac mini has 16 GB', log)
         self.assertIn('type: daily', log)
-        self.assertEqual((self.root / 'notes' / 'Mac mini.md').read_text(), '---\ntype: thing\n---\n8 GB\n')
-        self.assertIn('<!-- carry: accepted ', (self.root / self.rel).read_text())
+        self.assertEqual((self.root / 'notes' / 'Mac mini.md').read_text(encoding='utf-8'), '---\ntype: thing\n---\n8 GB\n')
+        self.assertIn('<!-- carry: accepted ', (self.root / self.rel).read_text(encoding='utf-8'))
         with self.assertRaisesRegex(CarryError, 'item_already_decided'):
             digest.decide(self.ws, self.sid, self.rel, items['The Mac mini has 16 GB.']['id'], 'skip')
 
@@ -86,16 +86,16 @@ class DigestTest(unittest.TestCase):
         items = self.ids()
         digest.decide(self.ws, self.sid, self.rel, items['The pilot ships on 15 October.']['id'], 'accept')
         digest.decide(self.ws, self.sid, self.rel, items['The build takes 32 seconds.']['id'], 'accept')
-        log = (self.root / 'log' / '2026-09-27.md').read_text()
+        log = (self.root / 'log' / '2026-09-27.md').read_text(encoding='utf-8')
         self.assertEqual(log.count('## From chats'), 1)
         self.assertLess(log.index('15 October'), log.index('32 seconds'))
 
     def test_fix_rewrites_the_item_and_logs_the_fixed_text(self):
         items = self.ids()
         digest.decide(self.ws, self.sid, self.rel, items['The pilot ships on 15 October.']['id'], 'fix', 'The pilot ships on 22 October.')
-        text = (self.root / self.rel).read_text()
+        text = (self.root / self.rel).read_text(encoding='utf-8')
         self.assertIn('**decision:** The pilot ships on 22 October. <!-- carry: fixed ', text)
-        self.assertIn('22 October', (self.root / 'log' / '2026-09-27.md').read_text())
+        self.assertIn('22 October', (self.root / 'log' / '2026-09-27.md').read_text(encoding='utf-8'))
         with self.assertRaisesRegex(CarryError, 'fix_needs_text'):
             digest.decide(self.ws, self.sid, self.rel, items['The build takes 32 seconds.']['id'], 'fix', '  ')
 
@@ -108,7 +108,7 @@ class DigestTest(unittest.TestCase):
         results = [digest.decide(self.ws, self.sid, self.rel, it['id'], 'skip') for s, it in items.items() if it['decision'] is None]
         self.assertEqual([r['waiting'] for r in results], [3, 2, 1, 0])
         self.assertTrue(results[-1]['done'])
-        self.assertNotIn('draft: true', (self.root / self.rel).read_text())
+        self.assertNotIn('draft: true', (self.root / self.rel).read_text(encoding='utf-8'))
         files = {f['path']: f for f in vaultview.browse(self.ws, self.sid)['files']}
         self.assertFalse(files[self.rel]['review'])
         self.assertFalse((self.root / 'log' / '2026-09-27.md').exists())
@@ -116,7 +116,7 @@ class DigestTest(unittest.TestCase):
     def test_state_pack_drops_skipped_items_and_hides_markers(self):
         today = datetime.date.today().isoformat()
         rel = f'+/{today} — harvest claude abcd1234.md'
-        (self.root / rel).write_text(DIGEST)
+        (self.root / rel).write_text(DIGEST, encoding='utf-8')
         items = {it['statement']: it for it in digest.items(self.ws, self.sid, rel)['items']}
         digest.decide(self.ws, self.sid, rel, items['Invite two colleagues to the repository.']['id'], 'accept')
         pack = context.pack(self.root)
@@ -133,7 +133,7 @@ class DigestTest(unittest.TestCase):
         files = {f['path']: f for f in vaultview.browse(self.ws, self.sid)['files']}
         self.assertTrue(files[self.rel]['review'])
         self.assertFalse(files[self.rel]['approvable'])
-        self.assertIn('draft: true', (self.root / self.rel).read_text())
+        self.assertIn('draft: true', (self.root / self.rel).read_text(encoding='utf-8'))
 
     def test_the_reader_does_not_show_decision_markers(self):
         items = self.ids()
@@ -143,13 +143,13 @@ class DigestTest(unittest.TestCase):
         self.assertNotIn('<!--', body)
 
     def test_a_conflict_shows_the_line_of_the_note_it_contradicts(self):
-        (self.root / 'notes' / 'Mac mini.md').write_text('---\ntype: thing\n---\n# Mac mini\n\nIt runs the local server.\nThe Mac mini has 8 GB of memory.\n')
+        (self.root / 'notes' / 'Mac mini.md').write_text('---\ntype: thing\n---\n# Mac mini\n\nIt runs the local server.\nThe Mac mini has 8 GB of memory.\n', encoding='utf-8')
         conflict = next(it for it in digest.items(self.ws, self.sid, self.rel)['items'] if it['section'] == 'conflict')
         self.assertEqual(conflict['match_path'], 'notes/Mac mini.md')
         self.assertEqual(conflict['match_text'], 'The Mac mini has 8 GB of memory.')
         stored = DIGEST.replace('the Mac mini has 16 GB *(exchange 4, owner, 2026-09-27)*',
                                 'the Mac mini has 16 GB *(exchange 4, owner, 2026-09-27)*\n  ≠ Mac mini: 8 GB RAM, bought in July.')
-        (self.root / self.rel).write_text(stored)
+        (self.root / self.rel).write_text(stored, encoding='utf-8')
         conflict = next(it for it in digest.items(self.ws, self.sid, self.rel)['items'] if it['section'] == 'conflict')
         self.assertEqual(conflict['match_text'], 'Mac mini: 8 GB RAM, bought in July.')
 
@@ -176,7 +176,7 @@ class DigestTest(unittest.TestCase):
         before = digest.items(self.ws, self.sid, self.rel)['items']
         result = self.recheck(('new', str(self.root / 'notes' / 'Mac mini.md')))
         self.assertEqual((result['rechecked'], result['moved']['new']), (1, 1))
-        text = (self.root / self.rel).read_text()
+        text = (self.root / self.rel).read_text(encoding='utf-8')
         self.assertNotIn('## Conflict candidates', text)
         items = {it['statement']: it for it in digest.parse(text)['items']}
         moved = items['The Mac mini has 16 GB.']
@@ -186,16 +186,16 @@ class DigestTest(unittest.TestCase):
         self.assertLess(text.index('The Mac mini has 16 GB.'), text.index('## Already recorded'))
 
     def test_recheck_never_writes_the_fallback_date_as_the_chat_date(self):
-        (self.root / self.rel).write_text(DIGEST.replace('the Mac mini has 16 GB *(exchange 4, owner, 2026-09-27)*', 'the Mac mini has 16 GB *(exchange 4, owner)*'))
+        (self.root / self.rel).write_text(DIGEST.replace('the Mac mini has 16 GB *(exchange 4, owner, 2026-09-27)*', 'the Mac mini has 16 GB *(exchange 4, owner)*'), encoding='utf-8')
         self.recheck(('new', str(self.root / 'notes' / 'Mac mini.md')))
-        self.assertIn('the Mac mini has 16 GB *(exchange 4, owner)*', (self.root / self.rel).read_text())
+        self.assertIn('the Mac mini has 16 GB *(exchange 4, owner)*', (self.root / self.rel).read_text(encoding='utf-8'))
 
     def test_recheck_folds_a_known_one_and_never_touches_decided_items(self):
         items = self.ids()
         digest.decide(self.ws, self.sid, self.rel, items['The pilot ships on 15 October.']['id'], 'accept')
-        decided = [l for l in (self.root / self.rel).read_text().split('\n') if '<!-- carry:' in l]
+        decided = [l for l in (self.root / self.rel).read_text(encoding='utf-8').split('\n') if '<!-- carry:' in l]
         self.recheck(('known', str(self.root / 'notes' / 'Mac mini.md')), related=False)
-        text = (self.root / self.rel).read_text()
+        text = (self.root / self.rel).read_text(encoding='utf-8')
         self.assertIn('- The Mac mini has 16 GB. → [[Mac mini]]', text)
         self.assertEqual([l for l in text.split('\n') if '<!-- carry:' in l], decided)
         self.assertEqual(digest.items(self.ws, self.sid, self.rel)['waiting'], 2)
@@ -206,11 +206,11 @@ class DigestTest(unittest.TestCase):
             return [('conflict', str(self.root / 'notes' / 'Mac mini.md'))], True
         with patch.object(harvest, 'extractor', return_value='claude:sonnet'), patch.object(harvest, 'agent_compare', side_effect=fake):
             digest.recheck(self.ws, self.sid, self.rel)
-        c = next(it for it in digest.parse((self.root / self.rel).read_text())['items'] if it['statement'] == 'The Mac mini has 16 GB.')
+        c = next(it for it in digest.parse((self.root / self.rel).read_text(encoding='utf-8'))['items'] if it['statement'] == 'The Mac mini has 16 GB.')
         self.assertEqual((c['section'], c['match_text'], c['why']), ('conflict', '8 GB, bought in July.', 'Same Mac, different memory.'))
 
     def test_a_plain_note_is_not_a_digest(self):
-        (self.root / 'notes' / 'Plain.md').write_text('---\ntype: thing\ndraft: true\n---\n- **fact:** x\n')
+        (self.root / 'notes' / 'Plain.md').write_text('---\ntype: thing\ndraft: true\n---\n- **fact:** x\n', encoding='utf-8')
         with self.assertRaisesRegex(CarryError, 'not_a_digest'):
             digest.items(self.ws, self.sid, 'notes/Plain.md')
 

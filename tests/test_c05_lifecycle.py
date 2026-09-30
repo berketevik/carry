@@ -120,7 +120,7 @@ class LifecycleTest(WorkspaceCase):
         correction = self.correction(old)
         review = lifecycle.review(self.workspace, correction['record_id'])
         path = self.records / old['path']
-        path.write_text(path.read_text().replace('October 15', 'October 17'))
+        path.write_text(path.read_text(encoding='utf-8').replace('October 15', 'October 17'), encoding='utf-8')
         with self.assertRaises(RevisionConflict):
             lifecycle.accept(self.workspace, correction['record_id'], review['revision'], review['review_token'])
         self.assertEqual(lifecycle.review(self.workspace, correction['record_id'])['conflict'], 'target_content_changed')
@@ -130,7 +130,7 @@ class LifecycleTest(WorkspaceCase):
         pending = self.propose()
         review = lifecycle.review(self.workspace, pending['record_id'])
         path = self.records / pending['path']
-        path.write_text(path.read_text() + '\nUnreviewed addition\n')
+        path.write_text(path.read_text(encoding='utf-8') + '\nUnreviewed addition\n', encoding='utf-8')
         with self.assertRaises(RevisionConflict):
             lifecycle.accept(self.workspace, pending['record_id'], 1, review['review_token'])
 
@@ -200,7 +200,7 @@ class LifecycleTest(WorkspaceCase):
         self.build()
         target = next(iter(lifecycle.catalog(self.workspace).values()))
         self.accept(self.correction(target))
-        imported.write_text(imported.read_text().replace('October 15', 'October 18'))
+        imported.write_text(imported.read_text(encoding='utf-8').replace('October 15', 'October 18'), encoding='utf-8')
         self.build()
         result = recall(self.workspace, 'Cedar pilot delivery')
         self.assertIn('correction_target_conflict', result['diagnostics']['warnings'])
@@ -302,7 +302,7 @@ class LifecycleTest(WorkspaceCase):
         secret = 'sk-' + 'z' * 24
         self.propose('Cedar decision ' + secret)
         for path in self.records.rglob('*.md'):
-            self.assertNotIn(secret, path.read_text())
+            self.assertNotIn(secret, path.read_text(encoding='utf-8'))
 
     def test_same_proposal_refinement_never_decreases_revision_on_accept(self):
         original = self.accept(self.propose())
@@ -316,7 +316,7 @@ class LifecycleTest(WorkspaceCase):
 
     def test_missing_optional_policy_is_safe_but_corrupt_policy_fails_closed(self):
         self.assertFalse(lifecycle.client_enabled(self.workspace, 'claude'))
-        (self.workspace.state_dir / 'proposals.json').write_text('{broken')
+        (self.workspace.state_dir / 'proposals.json').write_text('{broken', encoding='utf-8')
         text, error = call_tool('carry_propose', dict(content=OCT15, event_id='a', source_refs=[]),
                                 self.workspace.state_dir, 'claude')
         self.assertTrue(error)
@@ -327,7 +327,7 @@ class LifecycleTest(WorkspaceCase):
         real = lifecycle._archive
         def edit(source, item):
             real(source, item)
-            item['absolute'].write_text(item['raw'] + '\nexternal edit\n')
+            item['absolute'].write_text(item['raw'] + '\nexternal edit\n', encoding='utf-8')
         with mock.patch('carry.lifecycle._archive', side_effect=edit):
             with self.assertRaises(RevisionConflict):
                 self.accept(pending)
@@ -364,7 +364,7 @@ class ClientLifecycleTest(WorkspaceCase):
             self.assertEqual(proposal['record_id'], receipt['proposal_id'])
             self.assertEqual(proposal['revision'], 2)
             self.assertEqual((self.records / receipt['event_path']).read_bytes(), raw_before)
-            fm, body = parse_frontmatter((self.records / proposal['path']).read_text())
+            fm, body = parse_frontmatter((self.records / proposal['path']).read_text(encoding='utf-8'))
             self.assertIn('records:' + receipt['event_path'], fm['sources'])
             self.assertNotIn('Please remember', body)
             self.assertEqual(fm['carry_state'], 'draft')

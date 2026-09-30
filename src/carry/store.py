@@ -142,7 +142,7 @@ def _write_record(workspace, title, content, source_refs=(), event_id="", state=
                 if fm.get("carry_event") == event_id and fm.get("carry_record"):
                     ledger[event_id] = dict(record_id=fm["carry_record"],
                         revision=fm.get("carry_revision", 1), state=fm.get("carry_state", "draft"),
-                        source_id=holder.source_id, path=str(candidate.relative_to(root)), masked=[])
+                        source_id=holder.source_id, path=candidate.relative_to(root).as_posix(), masked=[])
                     _save_ledger(workspace, ledger)
                     break
     if event_id and event_id in ledger:
@@ -151,7 +151,7 @@ def _write_record(workspace, title, content, source_refs=(), event_id="", state=
         existing = ledger[event_id]
         try:
             path, frontmatter, holder = find_record(workspace, existing["record_id"])
-            relative = str(path.relative_to(Path(holder.root).expanduser().resolve()))
+            relative = path.relative_to(Path(holder.root).expanduser().resolve()).as_posix()
             from .lifecycle import catalog
             effective = catalog(workspace)[(holder.source_id, relative)]
             existing = dict(existing, revision=effective['revision'], state=effective['state'],
@@ -184,7 +184,7 @@ def _write_record(workspace, title, content, source_refs=(), event_id="", state=
     atomic_text(path, body)
     result = dict(record_id=record_id, revision=1, state=state,
                   source_id=source.source_id,
-                  path=str(path.relative_to(Path(source.root).expanduser().resolve())),
+                  path=path.relative_to(Path(source.root).expanduser().resolve()).as_posix(),
                   masked=sorted(set(categories + title_categories)), duplicate=False)
     if event_id:
         ledger[event_id] = {k: v for k, v in result.items() if k != "duplicate"}
@@ -218,7 +218,7 @@ def _set_state(workspace, record_id, state, expected_revision):
     atomic_text(path, updated)
     return dict(record_id=record_id, revision=revision, state=state,
                 source_id=source.source_id,
-                path=str(path.relative_to(Path(source.root).expanduser().resolve())))
+                path=path.relative_to(Path(source.root).expanduser().resolve()).as_posix())
 
 
 def supersede(workspace, *args, **kwargs):
@@ -272,5 +272,5 @@ def _supersede(workspace, record_id, content, expected_revision, title=None, eve
     atomic_text(path, old)
     return dict(record_id=new_id, revision=revision + 1, state="accepted",
                 supersedes=record_id, source_id=source.source_id,
-                path=str(new_path.relative_to(Path(source.root).expanduser().resolve())),
+                path=new_path.relative_to(Path(source.root).expanduser().resolve()).as_posix(),
                 masked=sorted(set(categories)))

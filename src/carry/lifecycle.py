@@ -69,22 +69,30 @@ def catalog(workspace):
 MARKER = 'carry_superseded_by'
 
 
+def _newline(raw):
+    """The note's own line ending, so a marker written into a CRLF (Windows) note matches it."""
+    first = raw.find('\n')
+    return '\r\n' if first > 0 and raw[first - 1] == '\r' else '\n'
+
+
 def with_marker(raw, record_id):
     """The superseded note gains one frontmatter line so a human sees the correction."""
-    line = f'{MARKER}: {record_id}\n'
-    if raw.startswith('---\n'):
-        end = raw.find('\n---', 3)
+    nl = _newline(raw)
+    line = f'{MARKER}: {record_id}{nl}'
+    if raw.startswith('---' + nl):
+        end = raw.find(nl + '---', 3)
         if end != -1:
-            return raw[:end + 1] + line + raw[end + 1:]
-    return f'---\n{line}---\n' + raw
+            return raw[:end + len(nl)] + line + raw[end + len(nl):]
+    return f'---{nl}{line}---{nl}' + raw
 
 
 def _marked_digest_matches(entry, target, record_id):
     # Tolerate exactly the marker Carry wrote for this correction; any other edit is a conflict.
-    line = f'{MARKER}: {record_id}\n'
     raw = entry['raw']
+    nl = _newline(raw)
+    line = f'{MARKER}: {record_id}{nl}'
     candidates = [raw.replace(line, '', 1)] if line in raw else []
-    block = f'---\n{line}---\n'
+    block = f'---{nl}{line}---{nl}'
     if raw.startswith(block):
         candidates.append(raw[len(block):])
     return any(hashlib.sha256(c.encode('utf-8')).hexdigest() == target['digest'] for c in candidates)
@@ -164,7 +172,7 @@ def _target(files, record_id, revision, source_id=None):
 
 def _policy(workspace):
     try:
-        value = json.loads((workspace.state_dir / 'proposals.json').read_text())
+        value = json.loads((workspace.state_dir / 'proposals.json').read_text(encoding='utf-8'))
     except FileNotFoundError:
         return {}
     if not isinstance(value, dict):
@@ -307,7 +315,7 @@ def propose(workspace, content, event_id, source_refs=(), *, title='Proposed dec
             _unchanged(item)
         atomic_text(path, _serialize(fm, '# ' + title + '\n\n' + content.strip()))
         return dict(record_id=fm['carry_record'], revision=fm['carry_revision'], state='draft',
-                    source_id=source.source_id, path=str(path.relative_to(source.root.resolve())),
+                    source_id=source.source_id, path=path.relative_to(source.root.resolve()).as_posix(),
                     duplicate=False, masked=categories)
 
 

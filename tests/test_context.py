@@ -25,7 +25,7 @@ class ContextTest(unittest.TestCase):
             "- **decision · assistant's suggestion or result; not confirmed by the owner:** Use a bigger model.\n  > q\n"
             '- **open item:** Invite two colleagues to the repository.\n  > q\n\n'
             '## Apparently done\n\n- Write the release note → [[Release]]\n\n'
-            '## Apparently dropped\n\n- **open item:** Choose the full or light build.\n')
+            '## Apparently dropped\n\n- **open item:** Choose the full or light build.\n', encoding='utf-8')
 
     def test_pack_lists_open_items_and_owner_decisions_only(self):
         text = context.pack(self.root)
@@ -39,20 +39,20 @@ class ContextTest(unittest.TestCase):
 
     def test_a_fully_decided_digest_no_longer_waits_for_review(self):
         today = datetime.date.today().isoformat()
-        (self.root / '+' / f'{today} — harvest codex ffff0000.md').write_text('---\ntype: output\n---\n\n## New\n\n- **fact:** Done.\n')
+        (self.root / '+' / f'{today} — harvest codex ffff0000.md').write_text('---\ntype: output\n---\n\n## New\n\n- **fact:** Done.\n', encoding='utf-8')
         self.assertIn('1 draft digests (+/)', context.pack(self.root))
 
     def test_vault_wires_session_start_and_a_gitignored_workspace_pointer(self):
-        settings = json.loads((self.root / '.claude' / 'settings.local.json').read_text())
+        settings = json.loads((self.root / '.claude' / 'settings.local.json').read_text(encoding='utf-8'))
         command = settings['hooks']['SessionStart'][0]['hooks'][0]['command']
         self.assertIn('carry.cli', command)
         self.assertIn(' context', command)
         self.assertEqual(context.workspace_for(self.root), str(self.base / 'ws'))
-        self.assertIn('.carry/local.json', (self.root / '.gitignore').read_text())
+        self.assertIn('.carry/local.json', (self.root / '.gitignore').read_text(encoding='utf-8'))
 
     def test_both_clients_get_session_start_and_end_hooks(self):
-        claude = json.loads((self.root / '.claude' / 'settings.local.json').read_text())['hooks']
-        codex = json.loads((self.root / '.codex' / 'hooks.json').read_text())['hooks']
+        claude = json.loads((self.root / '.claude' / 'settings.local.json').read_text(encoding='utf-8'))['hooks']
+        codex = json.loads((self.root / '.codex' / 'hooks.json').read_text(encoding='utf-8'))['hooks']
         for hooks in (claude, codex):
             self.assertIn(' context', hooks['SessionStart'][0]['hooks'][0]['command'])
             end = hooks['SessionEnd'][0]['hooks'][0]

@@ -17,6 +17,7 @@ import time
 from dataclasses import replace
 from urllib.parse import quote, urlsplit
 
+from .background import which
 from .config import SOURCE_ID_RE, SourceConfig, Workspace
 from .errors import CarryError
 from .persistence import writer_lock
@@ -29,7 +30,9 @@ MAX_FILES = 20_000
 def executable():
     candidates = [Path(sys.prefix).parent / 'bin/gh',
                   Path('/opt/homebrew/bin/gh'), Path('/usr/local/bin/gh')]
-    found = shutil.which('gh')
+    if sys.platform == 'win32':
+        candidates = [Path(os.environ.get('ProgramFiles', r'C:\Program Files')) / 'GitHub CLI' / 'gh.exe']
+    found = which('gh')
     if found:
         return found
     for path in candidates:
@@ -111,7 +114,7 @@ class Login:
         self.result = dict(state='starting', verification_uri='https://github.com/login/device')
         self.process = subprocess.Popen([executable(), 'auth', 'login', '--hostname', 'github.com',
             '--git-protocol', 'https', '--web'], env=env, stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, encoding='utf-8')
         threading.Thread(target=self._read, daemon=True).start()
         self.timer = threading.Timer(900, self.cancel)
         self.timer.daemon = True
