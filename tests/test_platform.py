@@ -76,13 +76,13 @@ class NightlyTest(unittest.TestCase):
         # pythonw has no console, so each program it starts would open a visible one.
         child = mock.Mock(**{'wait.return_value': 3})
         with mock.patch.object(nightly.sys, 'platform', 'win32'), \
-                mock.patch.object(nightly.sys, 'executable', r'C:\py\pythonw.exe'), \
+                mock.patch.object(nightly.sys, 'executable', str(Path(self.tmp.name) / 'pythonw.exe')), \
                 mock.patch.object(nightly, 'detached', return_value=child) as start, \
                 mock.patch.object(nightly, 'main') as main:
             self.assertEqual(nightly.run(self.argv), 3)
         main.assert_not_called()
         args = start.call_args[0][0]
-        self.assertEqual(args[0], r'C:\py\python.exe')
+        self.assertEqual(args[0], str(Path(self.tmp.name) / 'python.exe'))
         self.assertEqual(args[-3:], self.argv)
 
     def test_a_crash_is_written_to_the_log(self):
