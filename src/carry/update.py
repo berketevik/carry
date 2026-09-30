@@ -2,12 +2,13 @@
 
 uv tool (the README install): `uv tool upgrade carry`. An editable source checkout
 (`uv pip install -e .`): a fast-forward `git pull`, then a reinstall when pyproject.toml
-changed, since new dependencies or entry points need one. Any other install is reported
+changed, since new dependencies or entry points need one; the extras installed before are kept. Any other install is reported
 with nothing changed. Running MCP servers keep the old code until their client restarts them.
 """
 import json
 from importlib import metadata
 from pathlib import Path
+import re
 import subprocess
 import sys
 from urllib.parse import urlsplit
@@ -31,6 +32,26 @@ def installation():
     if (Path(sys.prefix) / 'uv-receipt.toml').is_file():
         return 'uv_tool', (url if 'vcs_info' in direct else None)
     return 'other', None
+
+
+def installed_extras():
+    """The extras of this install whose packages are all present, e.g. ['embed', 'yaml']."""
+    dist = metadata.distribution('carry')
+    needs = {}
+    for requirement in dist.requires or ():
+        marker = re.search(r'extra\s*==\s*[\'"]([^\'"]+)[\'"]', requirement)
+        if marker:
+            needs.setdefault(marker.group(1), []).append(re.match(r'[A-Za-z0-9._-]+', requirement).group(0))
+    present = []
+    for extra in dist.metadata.get_all('Provides-Extra') or ():
+        try:
+            for name in needs.get(extra, ()):
+                metadata.version(name)
+        except metadata.PackageNotFoundError:
+            continue
+        if needs.get(extra):
+            present.append(extra)
+    return present
 
 
 def _git(checkout, *args):
@@ -77,15 +98,18 @@ def update():
     if kind != 'source':
         raise CarryError('update_unsupported_install')
     old = _git(detail, 'rev-parse', 'HEAD')
+    extras = installed_extras()  # read before the reinstall rewrites the metadata
     _git(detail, 'pull', '--ff-only', '-q')
     new = _git(detail, 'rev-parse', 'HEAD')
     reinstalled = False
     if new != old and _git(detail, 'diff', '--name-only', old, new, '--', 'pyproject.toml'):
         uv = which('uv')
-        command = ([uv, 'pip', 'install', '--python', sys.executable, '-e', str(detail)] if uv
-                   else [sys.executable, '-m', 'pip', 'install', '-e', str(detail)])
+        target = str(detail) + (f"[{','.join(extras)}]" if extras else '')
+        command = ([uv, 'pip', 'install', '--python', sys.executable, '-e', target] if uv
+                   else [sys.executable, '-m', 'pip', 'install', '-e', target])
         proc = subprocess.run(command, capture_output=True, text=True, encoding='utf-8')
         if proc.returncode:
             raise CarryError('update_reinstall_failed: ' + (proc.stderr or proc.stdout).strip()[-300:])
         reinstalled = True
-    return dict(kind=kind, path=str(detail), before=old[:7], after=new[:7], updated=new != old, reinstalled=reinstalled)
+    return dict(kind=kind, path=str(detail), before=old[:7], after=new[:7], updated=new != old, reinstalled=reinstalled,
+                extras=extras if reinstalled else [])
