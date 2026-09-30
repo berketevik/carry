@@ -114,16 +114,15 @@ class DigestTest(unittest.TestCase):
         self.assertFalse((self.root / 'log' / '2026-09-27.md').exists())
 
     def test_state_pack_drops_skipped_items_and_hides_markers(self):
-        today = datetime.date.today().isoformat()
-        rel = f'+/{today} — harvest claude abcd1234.md'
-        (self.root / rel).write_text(DIGEST, encoding='utf-8')
-        items = {it['statement']: it for it in digest.items(self.ws, self.sid, rel)['items']}
-        digest.decide(self.ws, self.sid, rel, items['Invite two colleagues to the repository.']['id'], 'accept')
-        pack = context.pack(self.root)
+        # The pack reads recent digests, so it runs on the digest's own day, not today.
+        day = datetime.date(2026, 9, 28)
+        items = self.ids()
+        digest.decide(self.ws, self.sid, self.rel, items['Invite two colleagues to the repository.']['id'], 'accept')
+        pack = context.pack(self.root, today=day)
         self.assertIn('Invite two colleagues to the repository.', pack)
         self.assertNotIn('<!--', pack)
-        digest.decide(self.ws, self.sid, rel, items['The pilot ships on 15 October.']['id'], 'skip')
-        self.assertNotIn('15 October', context.pack(self.root))
+        digest.decide(self.ws, self.sid, self.rel, items['The pilot ships on 15 October.']['id'], 'skip')
+        self.assertNotIn('15 October', context.pack(self.root, today=day))
 
     def test_a_digest_is_never_approved_wholesale(self):
         with self.assertRaisesRegex(CarryError, 'note_digest'):

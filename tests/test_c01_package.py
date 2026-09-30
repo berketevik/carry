@@ -8,7 +8,7 @@ from pathlib import Path
 from _support import SRC
 
 ROOT = SRC.parent
-SKIP_DIRS = {".git", ".venv", "__pycache__", "build", "dist", "workspaces", ".pytest_cache"}
+SKIP_DIRS = {".git", ".venv", "__pycache__", "build", "dist", "workspaces", ".pytest_cache", ".claude"}
 
 # Extraction is only real if nothing here points back at the vault it came from.
 FORBIDDEN = (
