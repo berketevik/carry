@@ -409,7 +409,8 @@ def cmd_update(args):
     result = update.update()
     lines = [f"carry updated: {result['before']} -> {result['after']}" if result['updated'] else 'carry is up to date']
     if result.get('reinstalled'):
-        lines.append('dependencies reinstalled (pyproject.toml changed)')
+        kept = f" with extras: {', '.join(result['extras'])}" if result.get('extras') else ''
+        lines.append(f'dependencies reinstalled (pyproject.toml changed){kept}')
     if result['updated']:
         lines.append('restart Claude Code / Codex so their Carry servers load the new code')
         from . import app_install

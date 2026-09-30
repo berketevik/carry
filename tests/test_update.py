@@ -99,11 +99,19 @@ class SourceUpdateTest(unittest.TestCase):
         self.assertEqual(calls, [])
         self.assertTrue((self.checkout / 'a.py').is_file())
 
-    def test_a_pyproject_change_reinstalls_the_checkout(self):
+    def test_a_pyproject_change_reinstalls_the_checkout_with_its_extras(self):
         self.commit('pyproject.toml', '[project]\nname = "carry"\ndependencies = ["numpy"]\n')
-        result, calls = self.run_update()
+        with mock.patch.object(update, 'installed_extras', return_value=['embed', 'yaml']):
+            result, calls = self.run_update()
         self.assertTrue(result['reinstalled'])
+        self.assertEqual(result['extras'], ['embed', 'yaml'])
         self.assertEqual(len(calls), 1)
+        self.assertIn(f'{self.checkout}[embed,yaml]', calls[0])
+
+    def test_without_extras_the_plain_checkout_is_reinstalled(self):
+        self.commit('pyproject.toml', '[project]\nname = "carry"\ndependencies = ["numpy"]\n')
+        with mock.patch.object(update, 'installed_extras', return_value=[]):
+            result, calls = self.run_update()
         self.assertIn(str(self.checkout), calls[0])
 
     def test_nothing_new_changes_nothing(self):
@@ -120,6 +128,22 @@ class SourceUpdateTest(unittest.TestCase):
         self.commit('a.py', 'x = 1\n')
         with self.assertRaises(CarryError):
             self.run_update()
+
+
+class ExtrasTest(unittest.TestCase):
+    def test_an_extra_counts_only_when_all_its_packages_are_installed(self):
+        dist = mock.Mock(requires=['numpy<3,>=1.26; extra == "embed"', "PyYAML<7,>=6; extra == 'yaml'",
+                                   'sentence-transformers<6,>=5; extra == "rerank"', 'torch<3,>=2; extra == "rerank"'],
+                         metadata=mock.Mock(get_all=lambda key: ['embed', 'yaml', 'rerank', 'empty']))
+        installed = {'numpy', 'PyYAML', 'torch'}
+
+        def version(name):
+            if name not in installed:
+                raise update.metadata.PackageNotFoundError(name)
+            return '1.0'
+        with mock.patch.object(update.metadata, 'distribution', return_value=dist), \
+                mock.patch.object(update.metadata, 'version', side_effect=version):
+            self.assertEqual(update.installed_extras(), ['embed', 'yaml'])
 
 
 class UvToolUpdateTest(unittest.TestCase):
