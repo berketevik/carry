@@ -23,7 +23,7 @@ Carry does not upload notes anywhere by itself. Passages go to the assistant tha
 
 Search returns candidates; something has to keep only the ones that answer. There are two judges:
 
-- **The owner's own assistant (`--judge assistant`).** No extra account, key or service. In Claude Code a small subagent, `carry-recall` (Claude Haiku), runs the search and keeps only the passages that answer; in Codex the same subagent runs on Codex's small GPT model. It runs on the owner's existing subscription. It is slower and uses more tokens per question than Jev, and it only works if the `carry-recall` subagent file is present in the notes folder (see [Existing folder](#b-an-existing-folder-of-notes)).
+- **The owner's own assistant (`--judge assistant`).** No extra account, key or service. In Claude Code a small subagent, `carry-recall` (Claude Haiku), runs the search and keeps only the passages that answer; in Codex the same subagent runs on Codex's small GPT model. It runs on the owner's existing subscription. It is slower and uses more tokens per question than Jev. It needs the `carry-recall` subagent file in the notes folder; a new vault and `carry connect` both put it there.
 - **TypeSafe Jev (`--judge jev`).** An online model from [TypeSafe](https://docs.typesafe.ai/introduction) that does not write text: it returns typed answers with probabilities (yes/no, a choice among options, a score) in well under a second. Carry sends it the question and up to 32 candidate passages (secrets masked, notes marked `sensitivity: secret` never), gets back which ones answer, and returns only those. Needs a TypeSafe API key; processing happens in the US.
 
 **Why Carry's author uses Jev.** On a 45-question evaluation over his own vault it was the most accurate and by far the fastest judge measured, with no model on the machine:
@@ -81,16 +81,15 @@ This creates the workspace, writes the vault template with `CLAUDE.md`, `AGENTS.
 ```sh
 carry --workspace WS init --embedding hashing --source notes=/path/to/notes
 carry --workspace WS search --semantic off --judge assistant
-carry --workspace WS connect claude /path/to/notes --dry-run
-carry --workspace WS connect claude /path/to/notes
+carry --workspace WS connect claude /path/to/notes --language Turkish --dry-run
+carry --workspace WS connect claude /path/to/notes --language Turkish
 ```
 
 The first `connect` only shows the change. For Codex use `connect codex`.
 
-`connect` writes only the MCP settings (`.mcp.json`, or `.codex/config.toml` for Codex), journaled; `carry connect undo <id>` reverts it. It does **not** add the `carry-recall` subagent or any instruction telling the assistant to use Carry. With `--judge assistant` that matters: without the subagent the assistant gets unfiltered passages. With the owner's agreement, add both to the notes folder:
+`connect` writes the MCP settings (`.mcp.json`, or `.codex/config.toml` for Codex) and the `carry-recall` subagent (`.claude/agents/carry-recall.md`, or `.codex/agents/carry-recall.toml`), journaled; `carry connect undo <id>` reverts both. An existing `carry-recall` file is left as it is. The subagent is told the notes' language: `connect` reads it from a Carry vault, otherwise pass `--language Turkish` (default English).
 
-- Subagent: copy `templates/vault/dot_claude/agents/carry-recall.md` from the installed package to `.claude/agents/carry-recall.md` (Codex: `dot_codex/agents/carry-recall.toml` to `.codex/agents/carry-recall.toml`), replacing `{{RECALL_TOOL}}` with `carry_recall` and `{{LANGUAGE}}` with the notes' language. Find the package with `python -c "import carry, pathlib; print(pathlib.Path(carry.__file__).parent / 'templates/vault')"` using the Python that runs Carry.
-- Instruction: a short "Recall" paragraph in the folder's `CLAUDE.md` / `AGENTS.md`, like the one in `templates/vault/CLAUDE.md`: call `carry_recall` with the question and 2-3 keyword variants; if the search state shows `reranker: jev` the passages are already judged, otherwise delegate to the `carry-recall` subagent.
+It does not edit the folder's `CLAUDE.md` / `AGENTS.md`. The subagent's description and the Carry server's own instructions already tell the assistant when to search. If the owner wants it spelled out, add a short "Recall" paragraph like the one in `templates/vault/CLAUDE.md`: call `carry_recall` with the question and 2-3 keyword variants; if the search state shows `reranker: jev` the passages are already judged, otherwise delegate to the `carry-recall` subagent.
 
 ### Optional steps (either path)
 
@@ -131,7 +130,7 @@ Then restart Claude Code / Codex so their Carry servers load the new code, and o
 
 ## Known pitfalls
 
-- **Existing folder, `assistant` judge, no subagent:** recall returns unfiltered passages. See [B](#b-an-existing-folder-of-notes).
+- **Folder connected with an older Carry, `assistant` judge:** it has no `carry-recall` subagent, so recall returns unfiltered passages. Run `carry connect` again after updating; it adds only the missing subagent.
 - **`setup --yes` installs Ollama** unless `--no-semantic` is given.
 - **Workspace in iCloud Drive or OneDrive:** the index and virtual environments break. Keep it in the home folder.
 - **`gh` missing:** the wizard's team-repo step can fail; install and log in to `gh` first.
