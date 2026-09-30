@@ -1,6 +1,6 @@
 ## <img src="assets/carry-icon.png" width="96" alt="Carry simgesi">
 
-🇬🇧 [English](README.md)
+🇬🇧 [English](README.md) · 🤖 Carry'yi kuran ya da anlatan asistanlar: önce [AGENTS.md](AGENTS.md) dosyasını okusun.
 
 **Claude Code ve Codex her sohbete sıfırdan başlar. Carry onlara kendi notlarınızdan bir hafıza verir.**
 
