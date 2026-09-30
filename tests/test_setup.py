@@ -76,6 +76,18 @@ class SetupTest(unittest.TestCase):
         self.assertEqual(source.root.resolve(), notes)
         self.assertEqual((notes / 'a.md').read_text(encoding='utf-8'), '# Plan\nThe launch is on 15 October.')
 
+    def test_without_gh_the_team_repo_and_backup_steps_are_skipped_not_fatal(self):
+        from carry import github
+        from carry.errors import CarryError
+        answers = io.StringIO('\n'.join([str(self.base / 'ws'), '1', str(self.base / 'Vault'), '1', 'h', '',
+                                         'owner/repo', '', 'h', '', '', '']) + '\n')
+        with redirect_stdout(io.StringIO()) as out, \
+                patch.object(github, 'executable', side_effect=CarryError('github_cli_missing')):
+            code = setup_wizard.run(assume_yes=False, animation=False, stream=answers, semantic_default=False, app=False)
+        self.assertEqual(code, 0)
+        self.assertIn('GitHub CLI (gh) bulunamadı', out.getvalue())
+        self.assertTrue((self.base / 'Vault' / 'LLM-GUIDE.md').exists())
+
     def test_icloud_documents_are_flagged(self):
         home = self.base / 'home'
         (home / 'Library/Mobile Documents/com~apple~CloudDocs/Documents').mkdir(parents=True)
