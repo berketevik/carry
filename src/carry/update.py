@@ -50,8 +50,10 @@ def check():
         return dict(kind=kind, path=str(detail), version=current, commit=_git(detail, 'rev-parse', '--short', 'HEAD'),
                     behind=behind, available=behind > 0)
     if kind == 'uv_tool' and detail:
-        installed = json.loads(metadata.distribution('carry').read_text('direct_url.json'))['vcs_info'].get('commit_id', '')
-        remote = subprocess.run(['git', 'ls-remote', detail.removeprefix('git+'), 'HEAD'], capture_output=True,
+        vcs = json.loads(metadata.distribution('carry').read_text('direct_url.json'))['vcs_info']
+        installed = vcs.get('commit_id', '')
+        # Compare with the branch or tag it was installed from, not the default branch.
+        remote = subprocess.run(['git', 'ls-remote', detail.removeprefix('git+'), vcs.get('requested_revision') or 'HEAD'], capture_output=True,
                                 text=True, encoding='utf-8', timeout=60).stdout.split()
         latest = remote[0] if remote else ''
         return dict(kind=kind, version=current, commit=installed[:7], available=bool(latest) and latest != installed)
