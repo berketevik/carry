@@ -277,7 +277,7 @@ def cmd_connect(args):
         _print(result, args.json, [f"{result['id']} {result['state']}; restart the client"])
         return EXIT_OK
     plan = connections.preview(ws, args.client, args.project, args.source, args.prompts, args.proposals,
-                               args.client_bin or executable_for(args.client))
+                               args.client_bin or executable_for(args.client), language=args.language)
     lines = [("create" if c.get('before') is None else "update") + f"\t{c['path']}" for c in plan.get('changes', [])]
     lines += [plan['summary']] if args.dry_run and plan.get('summary') else []
     lines += [plan.get('trust', '')]
@@ -570,6 +570,7 @@ def build_parser():
         c.add_argument("--proposals", action="store_true", help="allow carry_propose drafts")
         c.add_argument("--client-bin", help="client executable (auto-detected by default)")
         c.add_argument("--dry-run", action="store_true", help="show the exact changes only")
+        c.add_argument("--language", choices=("Turkish", "English"), help="language of the notes, for the carry-recall subagent")
         c.set_defaults(client=client)
     cnsub.add_parser("list", help="applied and rolled-back connections")
     cnsub.add_parser("undo", help="roll back one connection").add_argument("id")

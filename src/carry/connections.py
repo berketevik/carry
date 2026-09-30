@@ -40,7 +40,7 @@ def _json(data):
     return json.dumps(data, ensure_ascii=False, indent=2) + '\n'
 
 
-def preview(workspace, client, project, source_id=None, prompts=False, proposals=False, executable=None):
+def preview(workspace, client, project, source_id=None, prompts=False, proposals=False, executable=None, language=None):
     capture._client(client)
     if type(prompts) is not bool or type(proposals) is not bool:
         raise CarryError('invalid_opt_in')
@@ -90,6 +90,12 @@ def preview(workspace, client, project, source_id=None, prompts=False, proposals
             tomllib.loads(new)
             change(path, new)
         hook_path = project / '.codex' / 'hooks.json'
+    # The carry-recall subagent judges recall passages whenever Jev is not the judge. A Carry
+    # vault already has it; an existing one, customised or not, is left alone.
+    from . import vault  # vault imports this module
+    rel = '.claude/agents/carry-recall.md' if client == 'claude' else '.codex/agents/carry-recall.toml'
+    if _read(project / rel) is None:
+        change(project / rel, vault.render(language or _language(project))[rel])
     if prompts:
         data = _object(_read(hook_path))
         handlers = data.setdefault('hooks', {}).setdefault('UserPromptSubmit', [])
@@ -119,6 +125,15 @@ def preview(workspace, client, project, source_id=None, prompts=False, proposals
         trust='Restart the client in this project. Review its project/MCP approval. ' +
               ('Use /hooks to trust the exact hook definition. ' if client == 'codex' and prompts else '') +
               'Submit a labelled synthetic prompt, then refresh Carry to inspect its capture receipt.')
+
+
+def _language(project):
+    """The notes' language from a Carry vault's stamp, else English."""
+    from . import vault
+    try:
+        return json.loads((project / vault.STAMP).read_text(encoding='utf-8')).get('language') or 'English'
+    except (OSError, ValueError, AttributeError):
+        return 'English'
 
 
 def _journal_path(workspace, identifier):

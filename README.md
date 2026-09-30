@@ -1,6 +1,6 @@
 ## <img src="assets/carry-icon.png" width="96" alt="Carry icon">
 
-🇹🇷 [Türkçe](README.tr.md)
+🇹🇷 [Türkçe](README.tr.md) · 🤖 Assistants installing or explaining Carry: read [AGENTS.md](AGENTS.md) first.
 
 **Claude Code and Codex start every chat from zero. Carry gives them a memory made of your own notes.**
 

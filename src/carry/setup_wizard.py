@@ -341,7 +341,7 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
         for client, path in found.items():
             if path and p.yes(f'{client} bu klasörde Carry\'ye bağlansın mı? ({project})'):
                 try:
-                    connections.apply(ws, connections.preview(ws, client, project, executable=path))
+                    connections.apply(ws, connections.preview(ws, client, project, executable=path, language=language))
                     ok(f'{client} bağlandı.')
                 except CarryError as exc:
                     warn(f'{client} bağlanamadı ({exc}).')

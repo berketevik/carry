@@ -259,9 +259,36 @@ class ConnectionTest(WorkspaceCase):
     def test_mcp_only_requires_no_prompt_consent_and_never_configures_capture(self):
         plan = self.plan()
         connections.apply(self.workspace, plan)
-        self.assertFalse((self.project / '.claude').exists())
+        self.assertFalse((self.project / '.claude' / 'settings.local.json').exists())
         self.assertFalse(lifecycle.client_enabled(self.workspace, 'claude'))
         self.assertEqual(capture.capture_status(self.workspace)['state'], 'not_configured')
+
+    def test_the_recall_subagent_is_installed_in_the_notes_language_and_undone(self):
+        (self.project / '.carry').mkdir()
+        (self.project / '.carry/vault.json').write_text('{"language": "Turkish"}', encoding='utf-8')
+        plan = self.plan()
+        connections.apply(self.workspace, plan)
+        agent = (self.project / '.claude/agents/carry-recall.md').read_text(encoding='utf-8')
+        self.assertIn('tools: mcp__carry__carry_recall, mcp__carry__carry_catalog', agent)
+        self.assertIn('Notes are in Turkish or English', agent)
+        self.assertNotIn('{{', agent)
+        connections.rollback(self.workspace, plan['id'])
+        self.assertFalse((self.project / '.claude/agents/carry-recall.md').exists())
+
+    def test_codex_gets_its_own_subagent_and_the_language_can_be_given(self):
+        connections.apply(self.workspace, self.plan('codex', language='English'))
+        agent = tomllib.loads((self.project / '.codex/agents/carry-recall.toml').read_text(encoding='utf-8'))
+        self.assertEqual(agent['name'], 'carry-recall')
+        self.assertIn('Notes are in English or English', agent['developer_instructions'])
+
+    def test_an_existing_subagent_is_left_alone(self):
+        agent = self.project / '.claude/agents/carry-recall.md'
+        agent.parent.mkdir(parents=True)
+        agent.write_text('my own version\n', encoding='utf-8')
+        plan = self.plan()
+        self.assertNotIn(str(agent), [c['path'] for c in plan['changes']])
+        connections.apply(self.workspace, plan)
+        self.assertEqual(agent.read_text(encoding='utf-8'), 'my own version\n')
 
     def test_unsupported_client_does_not_write(self):
         with patch('carry.capture.probe_client', return_value=dict(state='unsupported_version')):
