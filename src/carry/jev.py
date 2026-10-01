@@ -98,7 +98,7 @@ def is_question(query):
     if text.endswith('?'):
         return True
     words = re.findall(r'\w+', text, flags=re.UNICODE)
-    return len(words) > 6 or any(w in QUESTION_WORDS for w in words)
+    return any(w in QUESTION_WORDS for w in words)
 
 
 def request(query, rows, model=DEFAULT_MODEL):
