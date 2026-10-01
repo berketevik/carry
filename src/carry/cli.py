@@ -90,6 +90,22 @@ def cmd_status(args):
     return EXIT_OK if payload["ok"] else EXIT_FAILED
 
 
+def cmd_eval(args):
+    from . import evaluate
+    questions = evaluate.load_set(args.question_set)
+    if not questions:
+        raise CarryError("no question rows found in " + args.question_set)
+    if args.replay:
+        report = evaluate.replay(questions, args.replay)
+    else:
+        budget = {k: v for k, v in (("top_k", args.top_k), ("max_chars", args.max_chars)) if v is not None}
+        report = evaluate.run(open_workspace(args.workspace), questions, budget=budget or None, save=args.save)
+    if args.out:
+        Path(args.out).write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
+    print(json.dumps(report["summary"], ensure_ascii=False, indent=1))
+    return 0
+
+
 def cmd_recall(args):
     workspace = open_workspace(args.workspace)
     budget = {}
@@ -489,6 +505,15 @@ def build_parser():
     rc.add_argument("--history", action="store_true", help="include superseded revisions")
     rc.add_argument("--drafts", action="store_true", help="explicitly include unaccepted proposals")
     rc.set_defaults(func=cmd_recall)
+
+    ev = sub.add_parser("eval", help="measure recall against a labelled question set (a Markdown table)")
+    ev.add_argument("--set", required=True, dest="question_set", help="Markdown file holding the question table")
+    ev.add_argument("--save", help="also write the raw results here, for --replay")
+    ev.add_argument("--replay", help="score saved raw results with the current code instead of searching")
+    ev.add_argument("--out", help="write the full report (summary and per-question rows) as JSON")
+    ev.add_argument("--top-k", type=int)
+    ev.add_argument("--max-chars", type=int)
+    ev.set_defaults(func=cmd_eval)
 
     sub.add_parser('maintain', help='synchronize GitHub and refresh the index').set_defaults(func=cmd_maintain)
     gh = sub.add_parser('github', help='read-only GitHub knowledge sources')

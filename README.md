@@ -62,6 +62,7 @@ Commands that read notes need your settings folder: `export CARRY_WORKSPACE="$HO
 | `carry update` | Update Carry; `--check` only reports. |
 | `carry app install` / `open` / `remove` | Build, open or remove the Mac app. |
 | `carry recall "question"` | Search your notes. |
+| `carry eval --set <file.md>` | Score search against your own labelled questions (a Markdown table kept with your notes); `--save` / `--replay` re-score without searching again. |
 | `carry status --probe` | Check the index and search provider. |
 | `carry search --semantic on --judge jev` | Change search mode: `--semantic on/off`, `--judge assistant/jev`. |
 | `carry connect claude <folder>` | Connect a project (`codex` for Codex); `--dry-run` previews. |
