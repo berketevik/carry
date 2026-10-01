@@ -4,19 +4,20 @@
 
 **Claude Code and Codex start every chat from zero. Carry gives them a memory made of your own notes.**
 
-Ask “what did we decide about pricing?” and your assistant finds the answer in your notes, with a link to where it's written. When a chat ends, Carry lists the new decisions and open tasks, and you keep the ones that are right. Next time, you explain less.
+In September you find that a client's user IDs are broken. In November you sit down to stitch them, and your assistant checks your notes first: it reminds you what you found, with a link to where it's written. When a chat ends, Carry lists the new decisions and open tasks, and you keep the ones that are right.
 
-Your notes stay on your Mac as plain Markdown (`.md`) files in a folder you choose.
+It pays off most when you juggle several clients or projects over months, or move between assistants and machines. Your notes stay on your Mac as plain Markdown (`.md`) files in a folder you choose.
 
 **Version 0.7.1 · macOS 14+ · pilot**
 
 ## How it works
 
-1. **Ask.** In Claude Code or Codex, ask about anything you've written down. Carry searches your notes and hands back the matching passages with their source and date, so you can check the answer. “Last week” or “in September” narrows the search to that period.
-2. **Chat.** Work as usual in your notes folder. When the chat ends (and every evening, if you turn that on), Carry pulls out the decisions, facts and unfinished work into a draft in your Inbox. It also compares them with your notes (through TypeSafe Jev if you chose it as the checker, otherwise through your assistant): what your notes already say is folded, and a real conflict shows both sides, what the chat said and what your note says. With Jev, what looks done or dropped is folded too.
-3. **Review.** On the app's **Review** page, go through the draft item by item: **Accept**, **Fix** or **Skip**. Accepted items are saved to the log of the day they were said. Nothing from a chat becomes a note without you; the chat itself, secret-masked, is kept as raw material in `sources/carry/harvest/`.
+1. **Start.** Every chat you open in the notes folder Carry sets up begins with a short brief: recent decisions, unfinished work from recent chats and what waits for your review. You don't recap.
+2. **Ask.** In Claude Code or Codex, ask about anything you've written down. Carry searches your notes and hands back the matching passages with their source and date, so you can check the answer. “Last week” or “in September” narrows the search to that period.
+3. **Chat.** Work as usual. When the chat ends (and every evening, if you turn that on), Carry drafts the decisions, facts and unfinished work into your Inbox and marks what your notes already say or contradict.
+4. **Review.** On the app's **Review** page, go through the draft item by item: **Accept**, **Fix** or **Skip**. Accepted items are saved to the log of the day they were said. Nothing from a chat becomes a note without you; the chat itself, secret-masked, is kept as raw material in `sources/carry/harvest/`.
 
-**Why not just let the assistant read the folder?** It can open files it already knows about. Carry keeps an index of your whole notes folder, searches it by words and (with Ollama) by meaning, can check which passages actually answer the question, and keeps track of your chats for you.
+**Why not just ask the assistant to read my old chats?** You would have to remember there was something to find, name it and wait while it sifts, every time. With Carry your assistant checks your notes before it answers, and each chat opens with what the last ones decided. Carry indexes your whole notes folder, searches it by words and (with Ollama) by meaning, and can check which passages actually answer the question. Your notes are plain files you own, the same memory works in Claude Code and Codex, and every answer links its source.
 
 ## Get started
 
@@ -32,9 +33,11 @@ carry app open
 
 Pick a new notes folder or an existing folder of `.md` files. Then go to **Settings → Assistants → Start with my notes** and ask: “Use Carry to find my notes about this project.”
 
+Working in a team? Setup can also connect a shared GitHub repo of Markdown notes (needs the GitHub CLI, `gh`; or later: `carry github add --id team --repository owner/name`). It is read-only and refreshed every five minutes, and your teammates' notes show up in the same search, each with a link to the file and commit.
+
 ## Your data
 
-- Carry doesn't upload your notes anywhere. Passages your assistant finds go to that assistant, and chat drafts are made through it too (Claude Code or Codex, with your existing account); without Jev, the passages drafts are compared with go to it as well.
+- Carry doesn't upload your notes anywhere. Passages your assistant finds go to that assistant, and chat drafts are made through it too (Claude Code or Codex, with your existing account); if you don't use TypeSafe Jev (below), the passages drafts are compared with go to it as well.
 - If you turn on **TypeSafe Jev** as the relevance checker, questions and passages go to TypeSafe, and so do secret-masked excerpts of your chats while chat drafts are checked and compared with your notes. Notes marked `sensitivity: secret` are never sent.
 
 <details>
@@ -44,7 +47,7 @@ Pick a new notes folder or an existing folder of `.md` files. Then go to **Setti
 
 To update: `carry update` (`--check` only reports), then `carry app install` if you use the app. It runs `uv tool upgrade carry`, or `git pull` for a source checkout.
 
-Chat drafts land in the `+/` folder. Accepting an item never edits a note it contradicts; the log line links that note so you can settle it. When no item is left, the draft leaves the Review page. Notes your assistant writes elsewhere carry `draft: true` until you check them, but they are searchable right away and never wait on the Review page. The app's guide (**Settings → General → Help**) explains every setting.
+Chat drafts land in the `+/` folder. They are compared with your notes through TypeSafe Jev if you chose it as the checker, otherwise through your assistant: what your notes already say is folded, and a real conflict shows both sides, what the chat said and what your note says. With Jev, what looks done or dropped is folded too. Accepting an item never edits a note it contradicts; the log line links that note so you can settle it. When no item is left, the draft leaves the Review page. Notes your assistant writes elsewhere carry `draft: true` until you check them, but they are searchable right away and never wait on the Review page. The app's guide (**Settings → General → Help**) explains every setting.
 
 </details>
 
@@ -98,4 +101,4 @@ The core needs Python 3.11+ and no packages. Extras: `.[embed]` (NumPy), `.[yaml
 
 </details>
 
-<sub>Made by **Berke Tevik**.</sub>
+<sub>Made by **Berke Tevik**. Team knowledge base conventions by **İsmail Aykut**.</sub>
