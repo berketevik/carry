@@ -117,6 +117,8 @@ class JevTest(WorkspaceCase):
         self.assertTrue(jev.is_question('Evdeki varlık sensörü nasıl çalışıyor?'))
         self.assertTrue(jev.is_question('Ajan hangi modeli kullanıyor'))
         self.assertTrue(jev.is_question('Which ad network was caught spoofing events'))
+        # An assistant's keyword list is a topic however long it is.
+        self.assertFalse(jev.is_question('star schema tables fct_sessions fct_transactions dim_categories funnel columns'))
         _, topic = jev.request('Home Assistant', [dict(path='a.md', heading='h', text='t')])
         _, question = jev.request('Which runtime hosts Home Assistant?', [dict(path='a.md', heading='h', text='t')])
         self.assertIn('about the topic', topic['questions']['p1_answers']['instructions'])
