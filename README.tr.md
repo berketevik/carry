@@ -13,7 +13,7 @@ En çok, aylara yayılan birden fazla müşteri ya da projeyle uğraşırken vey
 ## Nasıl çalışır?
 
 1. **Açın.** Carry'nin kurduğu not klasöründe her sohbet kısa bir özetle başlar: son kararlar, son sohbetlerden kalan açık işler ve incelemenizi bekleyenler. Baştan anlatmanız gerekmez.
-2. **Sorun.** Claude Code veya Codex'te not aldığınız herhangi bir şeyi sorun. Carry notlarınızda arar ve eşleşen bölümleri kaynağı ve tarihiyle verir; cevabı kontrol edebilirsiniz. “Geçen hafta” veya “eylülde” gibi ifadeler aramayı o döneme daraltır.
+2. **Sorun.** Claude Code veya Codex'te not aldığınız herhangi bir şeyi sorun. Carry notlarınızda arar ve eşleşen pasajları (notlarınızdan alınan kısa metin bölümlerini) kaynağı ve tarihiyle verir; cevabı kontrol edebilirsiniz. “Geçen hafta” veya “eylülde” gibi ifadeler aramayı o döneme daraltır.
 3. **Çalışın.** Her zamanki gibi sohbet edin. Sohbet bitince (ve açarsanız her akşam) Carry kararları, bilgileri ve açık işleri Gelen kutunuzdaki bir taslağa çıkarır; notlarınızda zaten yazanları ve onlarla çelişenleri işaretler.
 4. **İnceleyin.** Uygulamanın **İncele** sayfasında taslağı madde madde geçin: **Kabul et**, **Düzelt** ya da **Atla**. Kabul edilen maddeler, söylendikleri günün log'una kaydedilir. Sohbetten hiçbir şey siz olmadan nota dönüşmez; sohbetin kendisi, gizli bilgileri maskelenmiş olarak, ham malzeme olarak `sources/carry/harvest/` altında saklanır.
 

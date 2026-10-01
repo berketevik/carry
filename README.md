@@ -13,7 +13,7 @@ It pays off most when you juggle several clients or projects over months, or mov
 ## How it works
 
 1. **Start.** Every chat you open in the notes folder Carry sets up begins with a short brief: recent decisions, unfinished work from recent chats and what waits for your review. You don't recap.
-2. **Ask.** In Claude Code or Codex, ask about anything you've written down. Carry searches your notes and hands back the matching passages with their source and date, so you can check the answer. “Last week” or “in September” narrows the search to that period.
+2. **Ask.** In Claude Code or Codex, ask about anything you've written down. Carry searches your notes and hands back the matching passages (short sections of text from your notes) with their source and date, so you can check the answer. “Last week” or “in September” narrows the search to that period.
 3. **Chat.** Work as usual. When the chat ends (and every evening, if you turn that on), Carry drafts the decisions, facts and unfinished work into your Inbox and marks what your notes already say or contradict.
 4. **Review.** On the app's **Review** page, go through the draft item by item: **Accept**, **Fix** or **Skip**. Accepted items are saved to the log of the day they were said. Nothing from a chat becomes a note without you; the chat itself, secret-masked, is kept as raw material in `sources/carry/harvest/`.
 
