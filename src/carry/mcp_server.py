@@ -124,10 +124,31 @@ def _workspace(state_dir=None):
     return open_workspace(state_dir or os.environ.get("CARRY_WORKSPACE"))
 
 
+# What an assistant acts on. The judge's internals and the index's build record stay in
+# `carry status` and the core result; every character here is paid for on every recall.
+STATE_KEYS = ("warnings", "pending_proposals", "unmatched_terms", "semantic", "answerability",
+              "relevance_gate", "reranker", "mode", "timeframe", "best_confidence", "candidates", "budget")
+# Front matter worth reading next to a passage. `sources` is left out: a long provenance
+# list the assistant can open in the note itself.
+PASSAGE_METADATA = ("type", "summary", "created", "date", "updated", "provenance", "confidence",
+                    "sensitivity", "draft", "valid_until", "review_by")
+
+
+def _state(result):
+    diagnostics = result.get("diagnostics", {})
+    state = dict(status=result.get("status"))
+    state.update({k: diagnostics[k] for k in STATE_KEYS if k in diagnostics})
+    if "index" in diagnostics:
+        state["index"] = (diagnostics["index"] or {}).get("state")
+    if diagnostics.get("github_sync"):
+        state["github_sync"] = {k: v.get("status") for k, v in diagnostics["github_sync"].items()}
+    return state
+
+
 def _format_recall(result):
     # The state goes in machine-readable form next to the prose: a client should
     # not have to parse English to tell evidence from no evidence.
-    state = dict(status=result.get("status"), **result.get("diagnostics", {}))
+    state = _state(result)
     parts = [GROUNDING, "Search state: " + json.dumps(state, ensure_ascii=False, default=str)]
     if not result.get("ok"):
         parts.insert(1, "Recall failed: " + str(result.get("error")) +
@@ -137,11 +158,18 @@ def _format_recall(result):
     if result["status"] == "no_evidence":
         parts.append("No passage matched this search. Report insufficient evidence, "
                      "or narrow the query.")
+    described = set()
     for number, item in enumerate(result.get("evidence", []), 1):
         header = (f"[{number}] {item['citation']} > {item['heading']} "
                   f"[record {item['record_id']} rev {item['revision']} state {item['state']}]")
-        parts.append(header + ("\nSource URL: " + item["url"] if item.get("url") else "") + "\n" + json.dumps(item.get("metadata", {}), ensure_ascii=False,
-                                                default=str) + "\n" + item["text"])
+        body = header + ("\nSource URL: " + item["url"] if item.get("url") else "")
+        # A document's front matter once, with its first passage.
+        key = (item["source_id"], item["path"])
+        metadata = {k: v for k, v in (item.get("metadata") or {}).items() if k in PASSAGE_METADATA}
+        if metadata and key not in described:
+            body += "\n" + json.dumps(metadata, ensure_ascii=False, default=str)
+        described.add(key)
+        parts.append(body + "\n" + item["text"])
     return "\n\n".join(parts), False
 
 

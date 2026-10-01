@@ -11,5 +11,8 @@ workspaces/
 *.db.lock
 *.status.json
 
+# Assistant worktrees
+.claude/
+
 # macOS Finder metadata
 .DS_Store

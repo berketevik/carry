@@ -62,6 +62,7 @@ Notları okuyan komutlar ayar klasörünüzü ister: `export CARRY_WORKSPACE="$H
 | `carry update` | Carry'yi güncelle; `--check` yalnızca bakar. |
 | `carry app install` / `open` / `remove` | Mac uygulamasını derler, açar veya kaldırır. |
 | `carry recall "soru"` | Notlarda arar. |
+| `carry eval --set <dosya.md>` | Aramayı kendi etiketlediğin sorularla ölçer (notlarının yanında tutulan bir Markdown tablosu); `--save` / `--replay` yeniden aramadan tekrar puanlar. |
 | `carry status --probe` | Index'i ve arama sağlayıcısını denetler. |
 | `carry search --semantic on --judge jev` | Arama kipini değiştirir: `--semantic on/off`, `--judge assistant/jev`. |
 | `carry connect claude <klasör>` | Bir projeyi bağlar (Codex için `codex`); `--dry-run` önizler. |
