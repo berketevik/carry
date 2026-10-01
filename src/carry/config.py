@@ -37,6 +37,8 @@ class SourceConfig:
     extensions: tuple = (".md",)
     github: dict = field(default_factory=dict)
     exclude: tuple = ()
+    # Opt-in to sharing approved items into this GitHub source's inbox (share.py); off when empty.
+    share: dict = field(default_factory=dict)
     # No longer used: Jev, when chosen, judges every source (secret notes excepted).
     # Kept so older workspace files still load.
     external_judge: bool = True
@@ -50,6 +52,11 @@ class SourceConfig:
             raise WorkspaceError("github_source_must_be_read_only")
         if not isinstance(self.exclude, (list, tuple)) or not all(isinstance(p, str) for p in self.exclude):
             raise WorkspaceError("invalid_source_exclusions")
+        if self.share:
+            if not self.github:
+                raise WorkspaceError("share_requires_github_source")
+            if self.share.get("mode", "direct") not in ("direct", "pr"):
+                raise WorkspaceError("invalid_share_mode")
         resolve_root(self.root)
         if self.writable and not os.access(self.root, os.W_OK):
             raise WorkspaceError("source_not_writable")
@@ -59,7 +66,7 @@ class SourceConfig:
         return dict(source_id=self.source_id, root=str(self.root), writable=self.writable,
                     scope=self.scope, records_dir=self.records_dir,
                     extensions=list(self.extensions), github=self.github, exclude=list(self.exclude),
-                    external_judge=self.external_judge)
+                    share=self.share, external_judge=self.external_judge)
 
     @staticmethod
     def from_json(data):
@@ -69,7 +76,7 @@ class SourceConfig:
             records_dir=data.get("records_dir", "carry"),
             extensions=tuple(data.get("extensions", (".md",))),
             github=dict(data.get("github", {})), exclude=tuple(data.get("exclude", ())),
-            external_judge=bool(data.get("external_judge", True)))
+            share=dict(data.get("share", {})), external_judge=bool(data.get("external_judge", True)))
 
 
 @dataclass(frozen=True)

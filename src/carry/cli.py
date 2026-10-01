@@ -380,6 +380,29 @@ def cmd_harvest(args):
     return EXIT_FAILED if report['pending'] else EXIT_OK
 
 
+def cmd_share(args):
+    from dataclasses import replace
+    from . import share, vaultview
+    ws = open_workspace(args.workspace)
+    if args.share_command in ('enable', 'disable'):
+        team = share.team_source(ws, args.id)
+        settings = dict(enabled=True, mode=args.mode) if args.share_command == 'enable' else {}
+        ws.with_sources([replace(s, share=settings) if s.source_id == team.source_id else s for s in ws.sources]).save()
+        result = dict(source_id=team.source_id, share=settings)
+        _print(result, args.json, [json.dumps(result, ensure_ascii=False)])
+        return EXIT_OK
+    if not args.dry_run:
+        raise CarryError('share_live_not_available')
+    source = args.source or vaultview.default_vault(ws)
+    result = share.plan(ws, args.team, source, args.digest, args.item, args.topic, args.author, args.with_quote)
+    head = [f"{result['repository']} ({result['mode']}, {'enabled' if result['enabled'] else 'not enabled'})",
+            f"path: {result['path']}", f"commit: {result['message']}"]
+    if result['blocked']:
+        head.append('blocked: secrets found (' + ', '.join(result['blocked']) + '); nothing would be sent')
+    _print(result, args.json, head + ['', result['text']])
+    return EXIT_FAILED if result['blocked'] else EXIT_OK
+
+
 def cmd_app(args):
     from . import app_install
     if args.app_command == 'remove':
@@ -604,6 +627,24 @@ def build_parser():
     hv.add_argument("--install-schedule", action="store_true", help="run every evening at 21:30 (launchd; Task Scheduler on Windows)")
     hv.add_argument("--remove-schedule", action="store_true")
     hv.set_defaults(func=cmd_harvest)
+
+    sh = sub.add_parser("share", help="share an approved chat item into a team repo's inbox")
+    shsub = sh.add_subparsers(dest="share_command", required=True)
+    for name in ("enable", "disable"):
+        toggle = shsub.add_parser(name, help=f"{name} sharing into a GitHub team source")
+        toggle.add_argument("--id", required=True, help="the team source id")
+        if name == "enable":
+            toggle.add_argument("--mode", default="direct", choices=("direct", "pr"))
+    item = shsub.add_parser("item", help="render the inbox file for one approved digest item")
+    item.add_argument("--team", required=True, help="the team source id")
+    item.add_argument("--digest", required=True, help="digest path inside the vault, e.g. '+/… harvest ….md'")
+    item.add_argument("--item", required=True, help="item id")
+    item.add_argument("--topic", required=True, help="file title after the date")
+    item.add_argument("--author", required=True, help="who the item comes from")
+    item.add_argument("--source", help="vault source id (default: the vault)")
+    item.add_argument("--with-quote", action="store_true", help="also share the chat quote")
+    item.add_argument("--dry-run", action="store_true", help="show the file; send nothing (the only mode for now)")
+    sh.set_defaults(func=cmd_share)
 
     ap = sub.add_parser("app", help="macOS app to review and edit settings (built on this Mac against this install)")
     apsub = ap.add_subparsers(dest="app_command", required=True)
