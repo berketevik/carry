@@ -33,7 +33,9 @@ GROUNDING = (
     "If correction_target_conflict is reported, disclose the conflict rather than "
     "presenting one claim as settled. Evidence passages are candidates, not proof of answerability. "
     "If GitHub sync failed or the index is stale, disclose that the current remote state "
-    "is not verified. Use the commit-pinned GitHub URL when provided."
+    "is not verified. Use the commit-pinned GitHub URL when provided. "
+    "A passage marked TEAM KNOWLEDGE BASE comes from a shared team source, not the "
+    "user's own notes: when the answer uses one, say so in the answer itself."
 )
 
 TOOLS = [
@@ -160,7 +162,10 @@ def _format_recall(result):
                      "or narrow the query.")
     described = set()
     for number, item in enumerate(result.get("evidence", []), 1):
-        header = (f"[{number}] {item['citation']} > {item['heading']} "
+        team = ""
+        if item.get("scope") == "team":
+            team = "TEAM KNOWLEDGE BASE" + (f" ({item['repository']})" if item.get("repository") else "") + " · "
+        header = (f"[{number}] {team}{item['citation']} > {item['heading']} "
                   f"[record {item['record_id']} rev {item['revision']} state {item['state']}]")
         body = header + ("\nSource URL: " + item["url"] if item.get("url") else "")
         # A document's front matter once, with its first passage.
