@@ -490,7 +490,9 @@ def recall(workspace, query, source_ids=None, budget=None, include_history=False
     evidence = []
     for row in hits:
         record = files.get((row["source_id"], row["path"]), {})
+        source = workspace.source(row["source_id"])
         evidence.append(dict(
+            scope=source.scope, repository=(source.github or {}).get("repository"),
             source_id=row["source_id"], path=row["path"], title=row["title"],
             heading=row["heading"], text=row["text"], truncated=row.get("truncated", False),
             citation=citation(row["source_id"], row["path"], row["title"]),
