@@ -25,7 +25,7 @@ Setup asks two things: what to connect (your own notes, your team's knowledge ba
 
 ## How it works
 
-![How Carry works: notes are indexed on your computer; a question is searched by words and by meaning, and your assistant keeps the passages that answer](assets/how-it-works.svg)
+![How Carry works: notes are indexed on your computer; a question is searched by words and by meaning, your assistant keeps the passages that answer; chats become drafts you review](assets/how-it-works.svg)
 
 1. **Your notes become searchable.** Carry splits them into short passages and keeps a search index on your computer, by words and by meaning. The meaning model (about 330 MB) runs inside Carry, on your Mac's GPU; if [Ollama](https://ollama.com) is installed, Carry uses it instead.
 2. **Your assistant checks your notes first.** It searches them, keeps only the passages that really answer the question and replies with the source of each. “Last week” or “in September” narrows the search to that period. Each chat also opens with a short brief of recent decisions and unfinished work.

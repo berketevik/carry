@@ -25,7 +25,7 @@ Kurulum iki şey sorar: neye bağlanacağınızı (kendi notlarınız, ekibinizi
 
 ## Nasıl çalışır?
 
-![Carry nasıl çalışır: notlar bilgisayarınızda dizinlenir; soru kelimeyle ve anlamla aranır, asistanınız cevaplayan parçaları seçer](assets/how-it-works.tr.svg)
+![Carry nasıl çalışır: notlar bilgisayarınızda dizinlenir; soru kelimeyle ve anlamla aranır, asistanınız cevaplayan parçaları seçer; sohbetler onaylayacağınız taslaklara dönüşür](assets/how-it-works.tr.svg)
 
 1. **Notlarınız aranabilir hale gelir.** Carry onları kısa parçalara böler ve bilgisayarınızda bir arama dizini tutar: kelimelere ve anlamına göre. Anlam modeli (yaklaşık 330 MB) Carry'nin içinde, Mac'inizin GPU'sunda çalışır; bilgisayarınızda [Ollama](https://ollama.com) varsa Carry onu kullanır.
 2. **Asistanınız önce notlarınıza bakar.** Notlarda arar, yalnızca soruyu gerçekten cevaplayan parçaları tutar ve her birinin kaynağını göstererek cevap verir. “Geçen hafta” ya da “eylülde” gibi ifadeler aramayı o döneme daraltır. Her sohbet de son kararların ve yarım kalan işlerin kısa bir özetiyle açılır.
