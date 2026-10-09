@@ -42,6 +42,13 @@ class MaintenanceTest(WorkspaceCase):
             self.assertEqual(maintenance.job_status(self.workspace)['state'], 'running')
         self.assertEqual(maintenance.job_status(self.workspace)['state'], 'interrupted')
 
+    def test_progress_written_before_any_job_reads_as_idle(self):
+        # issue #12: `carry search` records model_ready with no state; the app crashed on it
+        maintenance.job_progress(self.workspace, stage='model_ready', model='keyword_assistant')
+        self.assertEqual(maintenance.job_status(self.workspace)['state'], 'idle')
+        with patch.dict(os.environ, {'CARRY_AUTO_INDEX':'1'}):
+            self.assertEqual(maintenance.automatic(self.workspace), 'scheduled')
+
     def test_disabled_refresh_and_failed_job_backoff(self):
         with patch.dict(os.environ, {'CARRY_AUTO_INDEX':'0'}):
             self.assertEqual(maintenance.automatic(self.workspace), 'off')

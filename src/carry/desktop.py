@@ -437,7 +437,7 @@ def serve(stdin=None, stdout=None):
         except CarryError as exc:
             result = dict(ok=False, error=str(exc))
         except Exception as exc:
-            result = dict(ok=False, error=type(exc).__name__)
+            result = dict(ok=False, error=type(exc).__name__, detail=str(exc)[:200])
         stdout.write(json.dumps(dict(result, request_id=identifier), ensure_ascii=False, default=str) + '\n')
         stdout.flush()
         if len(line) > MAX_REQUEST:
