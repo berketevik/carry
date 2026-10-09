@@ -6,7 +6,7 @@
 
 Eylülde bir müşterinizin user ID'lerinin hatalı olduğunu buluyorsunuz. Kasımda onları düzeltmeye oturduğunuzda asistanınız önce notlarınıza bakar: ne bulduğunuzu hatırlatır ve nerede yazdığını gösterir. Notlarınız bilgisayarınızda, düz Markdown (`.md`) dosyaları olarak kalır.
 
-**Sürüm 0.8.0 · macOS 14+ · pilot**
+**Sürüm 0.8.1 · macOS 14+ · pilot**
 
 ## Başlayın
 
@@ -39,6 +39,7 @@ Carry notlarınızı hiçbir yere yüklemez ve kendine ait bir çevrimiçi hizme
 | Ne için | Komut |
 |---|---|
 | Ekibinizin ortak notlarında da aramak (Markdown notlarının durduğu bir GitHub deposu; `gh` gerekir) | `carry github add --id team --repository sahip/ad` |
+| Ekip deposunun arama dizinini depoyla birlikte göndermek, böylece ekip arkadaşları hemen arar (deponun klonunda çalıştırıp commit ve push edin) | `carry github pack --id team --out <klon>/.carry/index.db` |
 | Sohbet taslaklarını her akşam 21:30'da almak | `carry harvest --install-schedule` |
 | Anlamına göre aramayı sonradan açmak | `carry search --semantic on --install-ollama` |
 | Carry'yi güncellemek | `carry update`, ardından `carry app install` |

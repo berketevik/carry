@@ -6,7 +6,7 @@
 
 In September you find that a client's user IDs are broken. In November you sit down to fix them, and your assistant checks your notes first: it reminds you what you found, with a link to where it's written. Your notes stay on your computer as plain Markdown (`.md`) files.
 
-**Version 0.8.0 · macOS 14+ · pilot**
+**Version 0.8.1 · macOS 14+ · pilot**
 
 ## Get started
 
@@ -39,6 +39,7 @@ Carry doesn't upload your notes anywhere and uses no online service of its own. 
 | To | Run |
 |---|---|
 | Search your team's shared notes too (a GitHub repo of Markdown notes; needs `gh`) | `carry github add --id team --repository owner/name` |
+| Ship the team repo's search index with it, so teammates search at once (run where the repo is cloned, then commit and push) | `carry github pack --id team --out <clone>/.carry/index.db` |
 | Get chat drafts every evening at 21:30 | `carry harvest --install-schedule` |
 | Turn on search by meaning later | `carry search --semantic on --install-ollama` |
 | Update Carry | `carry update`, then `carry app install` |
