@@ -472,7 +472,7 @@ def cmd_setup(args):
     from . import setup_wizard
     return setup_wizard.run(state_dir=args.workspace, assume_yes=args.yes, vault_path=args.vault,
                             language=args.language, animation=not args.no_animation,
-                            semantic_default=not args.no_semantic, app=not args.no_app)
+                            semantic_default=not args.no_semantic, app=not args.no_app, team=args.team, connect=args.connect)
 
 
 def build_parser():
@@ -695,6 +695,8 @@ def build_parser():
     setup.add_argument("--yes", action="store_true", help="take every default without asking")
     setup.add_argument("--vault", help="create the vault here")
     setup.add_argument("--language", choices=("Turkish", "English"))
+    setup.add_argument("--team", metavar="OWNER/REPO", help="the team knowledge base on GitHub (your team lead gives it)")
+    setup.add_argument("--connect", choices=("own", "team", "both"), help="what to connect, instead of asking: your notes, the team's, or both")
     setup.add_argument("--no-animation", action="store_true")
     setup.add_argument("--no-semantic", action="store_true", help="keyword search only: no Ollama, no model on this Mac")
     setup.add_argument("--no-app", action="store_true", help="do not build the macOS app")

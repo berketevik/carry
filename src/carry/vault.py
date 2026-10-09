@@ -24,7 +24,7 @@ from .errors import CarryError
 from .paths import is_contained, resolve_root
 from .persistence import atomic_text, writer_lock
 
-TEMPLATE_VERSION = '2'
+TEMPLATE_VERSION = '3'
 GUIDE_BASE = '3.7'
 RECALL_TOOL = 'carry_recall'
 STAMP = '.carry/vault.json'

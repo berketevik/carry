@@ -218,8 +218,49 @@ def marquee(text=BANNER, passes=1, delay=0.018, out=None):
         out.flush()
 
 
+def _gh_signed_in(gh):
+    import subprocess
+    return subprocess.run([gh, 'auth', 'status', '--hostname', 'github.com'], capture_output=True).returncode == 0
+
+
+def _team_clone(p, repository, interactive):
+    """A local clone of the team repository, cloned now when missing; None when that is not possible."""
+    import subprocess
+    gh = _gh()
+    if not gh:
+        install = '`winget install GitHub.cli`' if sys.platform == 'win32' else '`brew install gh`'
+        warn(f'Ekip bilgi bankasını indirmek için GitHub\'ın aracı (gh) gerekiyor ve bu bilgisayarda yok. '
+             f'Kurup ({install}) kurulumu yeniden çalıştır.')
+        return None
+    if not _gh_signed_in(gh):
+        if not interactive:
+            warn('GitHub\'a giriş yapılmamış: önce `gh auth login --web`, sonra kurulumu yeniden çalıştır.')
+            return None
+        hint('GitHub\'a bir kez giriş yapman gerekiyor. Ekranda XXXX-XXXX gibi bir kod çıkacak; açılan sayfada')
+        hint('bu kodu gir ve onayla.')
+        subprocess.run([gh, 'auth', 'login', '--hostname', 'github.com', '--git-protocol', 'https', '--web'])
+        if not _gh_signed_in(gh):
+            warn('GitHub girişi tamamlanmadı; ekip bilgi bankası şimdilik bağlanmadı.')
+            return None
+    subprocess.run([gh, 'auth', 'setup-git'], capture_output=True)
+    target = Path(p.ask('Nereye indirilsin?', f'~/{repository.split("/")[-1]}')).expanduser().resolve()
+    if (target / '.git').is_dir():
+        ok(f'Bu klasörde zaten bir kopya var, o kullanılacak: {target}')
+        return target
+    if target.exists() and any(target.iterdir()):
+        warn(f'{target} boş değil; ekip bilgi bankası oraya indirilmedi.')
+        return None
+    with Spinner(f'{repository} indiriliyor'):
+        done = subprocess.run([gh, 'repo', 'clone', repository, str(target)], capture_output=True, text=True, encoding='utf-8')
+    if done.returncode != 0:
+        warn('Ekip bilgi bankası indirilemedi: ' + (done.stderr or done.stdout).strip()[:160] +
+             '. Depoya erişimin olduğundan emin ol.')
+        return None
+    return target
+
+
 def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animation=True, stream=None,
-        semantic_default=True, app=True):
+        semantic_default=True, app=True, team=None, connect=None):
     p = Prompter(assume_yes, stream)
     total = 5
     say(paint('\n  CARRY', BOLD + ';' + MAGENTA) + paint('  · kurulum', DIM))
@@ -237,25 +278,68 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
         ws = Workspace.create(state, embedding=EmbeddingConfig(provider='hashing'),
                               retrieval=RetrievalConfig(**models.KEYWORD_ASSISTANT))
 
-    # 1. Notes
-    step(1, total, 'Notların')
-    kind = 'new' if vault_path or assume_yes else p.choose('Notların nerede dursun?', [
-        ('new', 'Yeni bir not klasörü kur (önerilen)'),
-        ('existing', 'Notlarım (.md dosyaları) zaten bir klasörde, onu kullan (dosyalarına dokunulmaz)')])
-    if kind == 'new':
-        target = Path(vault_path or p.ask('Yeni not klasörü nerede olsun?', '~/Vault')).expanduser()
-        if cloud_synced(target):
-            warn(f'Bu klasör {cloud_synced(target)} ile eşitleniyor. Çalışır, ama notları yedeklemenin daha güvenli yolu git.')
-        lang = language or p.choose('Notlarını hangi dilde yazacaksın?', [('Turkish', 'Türkçe'), ('English', 'English')], 1)
-        plan = vault_module.plan(target, language=lang, workspace=ws.state_dir, capture=False, attach=True)
-        result = vault_module.apply(plan, git=True)
-        project = Path(result['target'])
-        ok(f'Not klasörün hazır: {project}')
+    # 1. What to connect: the owner's own notes, the team's knowledge base, or both.
+    step(1, total, 'Bilgi bankası')
+    if connect:
+        scope = connect
+    elif vault_path or assume_yes:
+        scope = 'both' if team else 'own'
     else:
-        project = Path(p.ask('Notlarının durduğu klasör:', '~/Notes')).expanduser().resolve()
-        current = Workspace.load(ws.state_dir)
-        current.with_sources([*current.sources, SourceConfig('notes', project)]).save()
-        ok(f'Klasör eklendi, yalnızca okunacak: {project}')
+        scope = p.choose('Carry neye bağlansın?', [
+            ('own', 'Kendi notlarıma'),
+            ('team', 'Ekibin bilgi bankasına'),
+            ('both', 'İkisine de')], 3 if team else 1)
+    own = team_root = None
+    kind = None
+    if scope in ('own', 'both'):
+        kind = 'new' if vault_path or assume_yes else p.choose('Kendi notların:', [
+            ('new', 'Sıfırdan yeni bir not klasörü kur'),
+            ('existing', 'Hazırdaki klasörümü bağla (.md dosyaları; dosyalarına dokunulmaz)')])
+        if kind == 'new':
+            target = Path(vault_path or p.ask('Yeni not klasörü nerede olsun?', '~/Vault')).expanduser()
+            if cloud_synced(target):
+                warn(f'Bu klasör {cloud_synced(target)} ile eşitleniyor. Çalışır, ama notları yedeklemenin daha güvenli yolu git.')
+            lang = language or p.choose('Notlarını hangi dilde yazacaksın?', [('Turkish', 'Türkçe'), ('English', 'English')], 1)
+            plan = vault_module.plan(target, language=lang, workspace=ws.state_dir, capture=False, attach=True)
+            own = Path(vault_module.apply(plan, git=True)['target'])
+            ok(f'Not klasörün hazır: {own}')
+        else:
+            own = Path(p.ask('Notlarının durduğu klasör:', '~/Notes')).expanduser().resolve()
+            current = Workspace.load(ws.state_dir)
+            current.with_sources([*current.sources, SourceConfig('notes', own)]).save()
+            ok(f'Klasör eklendi, yalnızca okunacak: {own}')
+    if scope in ('team', 'both'):
+        where = 'download' if assume_yes else p.choose('Ekip bilgi bankası:', [
+            ('download', 'İndir (bu bilgisayarda yoksa)'),
+            ('existing', 'Bu bilgisayardaki kopyasını bağla')])
+        repository = team or ''
+        if where == 'download' and not repository:
+            repository = p.ask('Ekip bilgi bankasının GitHub adresi (ekip liderin verir, örnek: sirket/notlar):', '')
+        try:
+            repository = github.repository_name(repository) if repository else ''
+        except CarryError:
+            warn(f'"{repository}" bir GitHub deposu adına benzemiyor.')
+            repository = ''
+        if where == 'existing':
+            answer = p.ask('Kopyanın durduğu klasör:', f'~/{repository.split("/")[-1]}' if repository else '~/team-knowledgebase')
+            team_root = Path(answer).expanduser().resolve() if answer else None
+            if team_root is None or not team_root.is_dir():
+                warn(f'{answer or "Klasör"} bulunamadı; ekip bilgi bankası şimdilik bağlanmadı.')
+                team_root = None
+        elif repository:
+            team_root = _team_clone(p, repository, interactive=stream is None and not assume_yes and TTY)
+        else:
+            warn('Ekip deposunun adı olmadan indirilemez; ekip liderinden `carry setup --team sahip/depo` komutunu iste.')
+        if team_root:
+            current = Workspace.load(ws.state_dir)
+            taken = {source.source_id for source in current.sources}
+            source_id = next(name for name in ('team', 'team-2', 'team-3', 'team-4') if name not in taken)
+            current.with_sources([*current.sources, SourceConfig(source_id, team_root, scope='team')]).save()
+            ok(f'Ekip bilgi bankası bağlandı, Carry yalnızca okur: {team_root}')
+    project = own or team_root
+    if project is None:
+        warn('Bağlanacak bir klasör kalmadı; kurulumu yeniden çalıştırabilirsin.')
+        return 1
     ws = Workspace.load(ws.state_dir)
 
     # 2. Search: by meaning, through Ollama when it is installed, otherwise with the model
@@ -292,16 +376,20 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
     names = {'claude': 'Claude Code', 'codex': 'Codex'}
     if kind == 'new':
         ok('Claude Code ya da Codex\'i not klasöründe açtığında Carry\'yi kullanır.')
-    else:
-        from . import connections
+    # An existing folder and the team copy get the Carry tool for every assistant found.
+    from . import connections
+    for folder in [f for f in (own if kind == 'existing' else None, team_root) if f]:
         for client, path in found.items():
             if not path:
                 continue
             try:
-                connections.apply(ws, connections.preview(ws, client, project, executable=path, language=language))
-                ok(f'{names[client]} bağlandı.')
+                connections.apply(ws, connections.preview(ws, client, folder, executable=path, language=language))
+                ok(f'{names[client]} bağlandı: {folder}')
             except CarryError as exc:
-                warn(f'{names[client]} bağlanamadı ({exc}).')
+                if str(exc) == 'existing_carry_connection_conflict':
+                    warn(f'{names[client]}: {folder} daha önce başka bir Carry kurulumuna bağlanmış, ona dokunulmadı.')
+                else:
+                    warn(f'{names[client]} bağlanamadı ({exc}).')
     if not any(found.values()):
         warn('Bu bilgisayarda Claude Code da Codex de bulunamadı; birini kurduktan sonra not klasöründe aç.')
 
@@ -326,7 +414,7 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
 
     # 5. Index
     step(5, total, 'Notlar aranabilir hale getiriliyor')
-    count = sum(1 for _ in walk_markdown(project)) if project and project.is_dir() else 0
+    count = sum(1 for source in ws.sources if Path(source.root).is_dir() for _ in walk_markdown(Path(source.root)))
     if ws.embedding.provider == 'onnx' and count > BACKGROUND_FILES:
         # The built-in model reads about six passages a second: a large folder takes a while.
         from . import maintenance
@@ -349,7 +437,11 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
     say(paint('  İlk açılışta "carry" aracını kullanmak için izin ister; onayla.', DIM))
     say(paint('  Sonra sor: ', DIM) + '"Notlarımda ne var, kısaca özetle."')
     say()
+    if own and team_root:
+        say(paint(f'  Ekip bilgi bankası her iki klasörde de aranır; ona yazmak için Claude\'u {team_root} içinde aç.', DIM))
+    say()
     say(paint('  İstersen sonra:', DIM))
-    say(paint('    ekibin GitHub\'daki ortak notları   carry github add --id team --repository sahip/depo', DIM))
-    say(paint('    her akşam sohbetlerden taslak not   carry harvest --install-schedule', DIM))
+    if own:
+        say(paint('    her akşam sohbetlerden taslak not   carry harvest --install-schedule', DIM))
+    say(paint('    Carry\'yi başka bir klasörde de kullan   carry connect claude <klasör>', DIM))
     return 0

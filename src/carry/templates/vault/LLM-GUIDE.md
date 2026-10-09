@@ -42,6 +42,14 @@ vault/
 1. Fallback: list the relevant folder and open notes by title.
 2. Open `sources/` raws only when exact evidence is needed.
 
+## Team knowledge base
+
+Carry may also search a team's shared knowledge base. Its passages come marked **TEAM KNOWLEDGE BASE**:
+
+- They are the team's notes, not the owner's. When an answer rests on one, say so.
+- Writing to the team knowledge base follows that repository's own guide (its root `LLM-*.md`, for example `LLM-OKB.md`), in that repository's folder. This guide does not apply there.
+- Personal notes never move into the team knowledge base unasked, and team notes are not copied into this vault: link or cite them.
+
 ## Continuity between threads
 
 Threads do not see each other. The vault is the bridge, so work must not stay only in chat:

@@ -42,7 +42,7 @@ class SetupTest(unittest.TestCase):
                 patch.object(ollama_setup, 'install') as install, \
                 patch.object(onnx_model, 'runtime_available', return_value=True), \
                 patch.object(models, 'setup', side_effect=lambda ws, preset: calls.append(preset)):
-            answers = io.StringIO('\n'.join(['1', str(self.base / 'Vault'), '1']) + '\n')
+            answers = io.StringIO('\n'.join(['1', '1', str(self.base / 'Vault'), '1']) + '\n')
             code = setup_wizard.run(state_dir=str(self.base / 'ws'), animation=False, stream=answers, app=False)
         self.assertEqual(code, 0)
         install.assert_not_called()
@@ -66,7 +66,7 @@ class SetupTest(unittest.TestCase):
     def test_two_answers_connect_an_existing_folder_read_only(self):
         notes = self.base / 'notes'; notes.mkdir()
         (notes / 'a.md').write_text('# Plan\nThe launch is on 15 October.', encoding='utf-8')
-        answers = io.StringIO('\n'.join(['2', str(notes)]) + '\n')
+        answers = io.StringIO('\n'.join(['1', '2', str(notes)]) + '\n')
         with redirect_stdout(io.StringIO()), patch('shutil.which', return_value='/usr/bin/true'), \
                 patch('carry.capture.probe_client', return_value=dict(state='supported', version='9')):
             code = setup_wizard.run(state_dir=str(self.base / 'ws'), assume_yes=False, animation=False, stream=answers,
@@ -81,14 +81,56 @@ class SetupTest(unittest.TestCase):
         self.assertEqual((notes / 'a.md').read_text(encoding='utf-8'), '# Plan\nThe launch is on 15 October.')
 
     def test_new_vault_asks_only_where_and_which_language(self):
-        answers = io.StringIO('\n'.join(['1', str(self.base / 'Vault'), '1']) + '\n')
+        answers = io.StringIO('\n'.join(['1', '1', str(self.base / 'Vault'), '1']) + '\n')
         with redirect_stdout(io.StringIO()) as out:
             code = setup_wizard.run(state_dir=str(self.base / 'ws'), assume_yes=False, animation=False, stream=answers,
                                     semantic_default=False, app=False)
         self.assertEqual(code, 0)
         self.assertTrue((self.base / 'Vault' / 'LLM-GUIDE.md').exists())
-        self.assertIn('carry github add', out.getvalue())
+        self.assertIn('carry connect claude', out.getvalue())
         self.assertIn('carry harvest --install-schedule', out.getvalue())
+
+    def team_copy(self):
+        clone = self.base / 'okb'; clone.mkdir()
+        (clone / 'LLM-OKB.md').write_text('# Rules\nThe inbox is open to everyone.', encoding='utf-8')
+        return clone
+
+    def run_team(self, answers, **options):
+        with redirect_stdout(io.StringIO()) as out, patch('shutil.which', return_value='/usr/bin/true'), \
+                patch('carry.capture.probe_client', return_value=dict(state='supported', version='9')):
+            code = setup_wizard.run(state_dir=str(self.base / 'ws'), animation=False, stream=io.StringIO('\n'.join(answers) + '\n'),
+                                    semantic_default=False, app=False, **options)
+        return code, out.getvalue(), Workspace.load(self.base / 'ws')
+
+    def test_team_only_connects_the_existing_copy_read_only_as_team_knowledge(self):
+        clone = self.team_copy()
+        code, out, ws = self.run_team(['2', '2', str(clone)])
+        self.assertEqual(code, 0)
+        self.assertEqual([(s.source_id, s.scope, s.writable) for s in ws.sources], [('team', 'team', False)])
+        self.assertTrue((clone / '.mcp.json').exists())
+        self.assertIn(f'cd "{clone}"', out)
+
+    def test_both_keep_the_personal_vault_as_the_place_to_start(self):
+        clone = self.team_copy()
+        code, out, ws = self.run_team(['', '1', str(self.base / 'Vault'), '1', '2', str(clone)], team='acme/okb')
+        self.assertEqual(code, 0)
+        self.assertEqual(sorted(s.source_id for s in ws.sources), ['team', 'vault'])
+        self.assertIn(f'cd "{self.base / "Vault"}"', out)
+
+    def test_team_download_uses_the_repository_from_the_flag(self):
+        clone = self.team_copy()
+        with patch.object(setup_wizard, '_team_clone', return_value=clone) as fetch:
+            code, out, ws = self.run_team(['2', '1'], team='https://github.com/acme/okb')
+        fetch.assert_called_once()
+        self.assertEqual(fetch.call_args.args[1], 'acme/okb')
+        self.assertEqual(ws.source('team').root.resolve(), clone.resolve())
+
+    def test_download_without_github_sign_in_stops_with_a_clear_line(self):
+        with patch.object(setup_wizard, '_gh', return_value='/usr/bin/gh'), \
+                patch.object(setup_wizard, '_gh_signed_in', return_value=False):
+            code, out, ws = self.run_team(['2', '1'], team='acme/okb')
+        self.assertEqual(code, 1)
+        self.assertIn('gh auth login', out)
 
     def test_a_stored_jev_key_does_not_change_who_checks_results(self):
         with redirect_stdout(io.StringIO()), patch.object(jev, 'api_key', return_value='stored'):
