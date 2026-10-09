@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "carry"
-version = "0.7.1"
+version = "0.8.0"
 authors = [{ name = "Berke Tevik" }]
 description = "Portable local memory for coding agents: Markdown sources, a derived index and an MCP interface."
 requires-python = ">=3.11"

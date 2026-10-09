@@ -20,7 +20,8 @@ def job_status(workspace):
         return dict(state='idle')
     if data.get('state') == 'running' and not is_running(workspace):
         return dict(data, state='interrupted')
-    return data
+    # models.setup records progress from the CLI too, before any job ran: no state yet.
+    return {'state': 'idle', **data}
 
 
 def is_running(workspace):

@@ -63,30 +63,38 @@ class SetupTest(unittest.TestCase):
         self.assertEqual(models.search_preset(True, 'jev'), 'semantic_jev')
         self.assertEqual(models.search_preset(False, 'assistant'), 'keyword_assistant')
 
-    def test_scripted_answers_connect_an_existing_folder_read_only(self):
+    def test_two_answers_connect_an_existing_folder_read_only(self):
         notes = self.base / 'notes'; notes.mkdir()
         (notes / 'a.md').write_text('# Plan\nThe launch is on 15 October.', encoding='utf-8')
-        answers = io.StringIO('\n'.join([str(self.base / 'ws'), '2', str(notes), 'mine', '', 'h', '1', 'h', 'h', 'h', '']) + '\n')
-        with redirect_stdout(io.StringIO()), patch('shutil.which', return_value='/usr/bin/true'):
-            code = setup_wizard.run(assume_yes=False, animation=False, stream=answers)
+        answers = io.StringIO('\n'.join(['2', str(notes)]) + '\n')
+        with redirect_stdout(io.StringIO()), patch('shutil.which', return_value='/usr/bin/true'), \
+                patch('carry.capture.probe_client', return_value=dict(state='supported', version='9')):
+            code = setup_wizard.run(state_dir=str(self.base / 'ws'), assume_yes=False, animation=False, stream=answers,
+                                    semantic_default=False, app=False)
         self.assertEqual(code, 0)
         ws = Workspace.load(self.base / 'ws')
-        source = ws.source('mine')
+        source = ws.source('notes')
         self.assertFalse(source.writable)
         self.assertEqual(source.root.resolve(), notes)
+        self.assertEqual(ws.retrieval.reranker, 'off')
+        self.assertTrue((notes / '.mcp.json').exists())
         self.assertEqual((notes / 'a.md').read_text(encoding='utf-8'), '# Plan\nThe launch is on 15 October.')
 
-    def test_without_gh_the_team_repo_and_backup_steps_are_skipped_not_fatal(self):
-        from carry import github
-        from carry.errors import CarryError
-        answers = io.StringIO('\n'.join([str(self.base / 'ws'), '1', str(self.base / 'Vault'), '1', 'h', '',
-                                         'owner/repo', '', 'h', '', '', '']) + '\n')
-        with redirect_stdout(io.StringIO()) as out, \
-                patch.object(github, 'executable', side_effect=CarryError('github_cli_missing')):
-            code = setup_wizard.run(assume_yes=False, animation=False, stream=answers, semantic_default=False, app=False)
+    def test_new_vault_asks_only_where_and_which_language(self):
+        answers = io.StringIO('\n'.join(['1', str(self.base / 'Vault'), '1']) + '\n')
+        with redirect_stdout(io.StringIO()) as out:
+            code = setup_wizard.run(state_dir=str(self.base / 'ws'), assume_yes=False, animation=False, stream=answers,
+                                    semantic_default=False, app=False)
         self.assertEqual(code, 0)
-        self.assertIn('komut satırı aracı (gh)', out.getvalue())
         self.assertTrue((self.base / 'Vault' / 'LLM-GUIDE.md').exists())
+        self.assertIn('carry github add', out.getvalue())
+        self.assertIn('carry harvest --install-schedule', out.getvalue())
+
+    def test_a_stored_jev_key_does_not_change_who_checks_results(self):
+        with redirect_stdout(io.StringIO()), patch.object(jev, 'api_key', return_value='stored'):
+            setup_wizard.run(state_dir=str(self.base / 'ws'), assume_yes=True, vault_path=str(self.base / 'Vault'),
+                             animation=False, semantic_default=False, app=False)
+        self.assertEqual(Workspace.load(self.base / 'ws').retrieval.reranker, 'off')
 
     def test_icloud_documents_are_flagged(self):
         home = self.base / 'home'

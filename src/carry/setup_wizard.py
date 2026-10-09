@@ -1,5 +1,6 @@
 """`carry setup`: a terminal wizard that creates the workspace, a vault or source,
-the search setting and client wiring, builds the index and says so in large letters.
+search, client wiring and the app, builds the index and says so in large letters. It asks only
+where the notes are, their language and, when Ollama is missing, whether to install it.
 
 Standard library only. Every step calls the same functions as the CLI and the app;
 the wizard adds prompts, a spinner and the final banner. --yes takes every default.
@@ -13,7 +14,7 @@ import sys
 import threading
 import time
 
-from . import github, index, jev, models, vault as vault_module
+from . import github, index, models, vault as vault_module
 from .config import EmbeddingConfig, RetrievalConfig, SourceConfig, Workspace, CONFIG_NAME
 from .errors import CarryError
 
@@ -216,206 +217,104 @@ def marquee(text=BANNER, passes=1, delay=0.018, out=None):
 def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animation=True, stream=None,
         semantic_default=True, app=True):
     p = Prompter(assume_yes, stream)
-    total = 8
+    total = 5
     say(paint('\n  CARRY', BOLD + ';' + MAGENTA) + paint('  · kurulum', DIM))
     say(paint('  Carry, Claude ya da Codex\'in senin notlarını okuyup onlara dayanarak cevap vermesini sağlar.', DIM))
-    say(paint(f'  Notların {HERE} kalır. 8 kısa adım var; köşeli parantezdeki cevap önerilendir,', DIM))
+    say(paint(f'  Notların {HERE} kalır. Yalnızca birkaç soru var; köşeli parantezdeki cevap önerilendir,', DIM))
     say(paint('  emin değilsen Enter\'a basman yeterli.', DIM))
 
-    # 1. Workspace
-    step(1, total, 'Carry\'nin kendi klasörü')
-    if not assume_yes:
-        hint('Carry arama dizinini ve ayarlarını burada tutar; notların burada durmaz. Önerilen yer uygundur.')
-    state = Path(p.ask('Klasör:', state_dir or '~/CarryState')).expanduser()
+    # Carry's own folder: no question; --workspace picks another one.
+    state = Path(state_dir or '~/CarryState').expanduser()
     if cloud_synced(state):
-        warn(f'Bu klasör {cloud_synced(state)} ile eşitleniyor. Eşitleme Carry\'nin arama dizinini bozabilir; ev klasöründe bir yer daha güvenli.')
-        if not p.yes('Yine de bu klasör kullanılsın mı?', default=False):
-            state = Path('~/CarryState').expanduser()
+        warn(f'{state} {cloud_synced(state)} ile eşitleniyor; Carry\'nin arama dizini orada bozulabilir. Ev klasöründe bir yer daha güvenli.')
     if (state / CONFIG_NAME).exists():
         ws = Workspace.load(state)
-        ok(f'Daha önce kurulmuş Carry klasörü kullanılıyor: {state}')
     else:
         ws = Workspace.create(state, embedding=EmbeddingConfig(provider='hashing'),
                               retrieval=RetrievalConfig(**models.KEYWORD_ASSISTANT))
-        ok(f'Carry klasörü hazır: {state}')
 
-    # 2. Vault or existing folder
-    step(2, total, 'Notların nerede duracak?')
-    kind = 'new' if vault_path or assume_yes else p.choose('Ne yapalım?', [
-        ('new', 'Yeni bir not klasörü kur (önerilen; hazır klasör düzeni ve rehberle gelir)'),
-        ('existing', 'Notlarım (.md dosyaları) zaten bir klasörde, onu kullan (dosyalarına dokunulmaz)'),
-        ('skip', 'Şimdilik geç')])
-    project = None
+    # 1. Notes
+    step(1, total, 'Notların')
+    kind = 'new' if vault_path or assume_yes else p.choose('Notların nerede dursun?', [
+        ('new', 'Yeni bir not klasörü kur (önerilen)'),
+        ('existing', 'Notlarım (.md dosyaları) zaten bir klasörde, onu kullan (dosyalarına dokunulmaz)')])
     if kind == 'new':
-        target = Path(vault_path or p.ask('Yeni not klasörü nerede olsun? (boş ya da henüz olmayan bir klasör):', '~/Vault')).expanduser()
+        target = Path(vault_path or p.ask('Yeni not klasörü nerede olsun?', '~/Vault')).expanduser()
         if cloud_synced(target):
-            warn(f'Bu klasör {cloud_synced(target)} ile eşitleniyor. Çalışır, ama notları yedeklemenin daha güvenli yolu GitHub (6. adım).')
+            warn(f'Bu klasör {cloud_synced(target)} ile eşitleniyor. Çalışır, ama notları yedeklemenin daha güvenli yolu git.')
         lang = language or p.choose('Notlarını hangi dilde yazacaksın?', [('Turkish', 'Türkçe'), ('English', 'English')], 1)
-        capture = False if assume_yes else p.yes('Asistana yazdığın her mesajın bir kopyası da not klasörüne kaydedilsin mi? (sonradan göz atmak için; çoğu kişi istemez)', default=False)
-        plan = vault_module.plan(target, language=lang, workspace=ws.state_dir, capture=capture, attach=True)
-        say(paint(f'  {len(plan["changes"])} dosya yazılacak, var olan dosyalara dokunulmayacak.', DIM))
-        if p.yes('Not klasörü oluşturulsun mu?'):
-            result = vault_module.apply(plan, git=True)
-            ok(f'Not klasörün hazır: {result["target"]}' + (' · değişiklik geçmişi (git) açıldı' if result['initialised_git'] else ''))
-            project = Path(result['target'])
-    elif kind == 'existing':
-        root = Path(p.ask('Notlarının durduğu klasör:', '~/Notes')).expanduser().resolve()
-        sid = p.ask('Bu klasöre kısa bir ad ver (Carry içinde böyle görünür):', 'notes')
+        plan = vault_module.plan(target, language=lang, workspace=ws.state_dir, capture=False, attach=True)
+        result = vault_module.apply(plan, git=True)
+        project = Path(result['target'])
+        ok(f'Not klasörün hazır: {project}')
+    else:
+        project = Path(p.ask('Notlarının durduğu klasör:', '~/Notes')).expanduser().resolve()
         current = Workspace.load(ws.state_dir)
-        current.with_sources([*current.sources, SourceConfig(sid, root)]).save()
-        ok(f'Klasör eklendi: {sid} → {root}')
-        project = root
+        current.with_sources([*current.sources, SourceConfig('notes', project)]).save()
+        ok(f'Klasör eklendi, yalnızca okunacak: {project}')
     ws = Workspace.load(ws.state_dir)
 
-    # 3. Team repository
-    step(3, total, 'Ekibinin ortak notları (isteğe bağlı)')
-    if not assume_yes:
-        hint('Ekibinin notları GitHub\'da bir depoda duruyorsa Carry onları da arar, ama değiştirmez.')
-        hint('Böyle bir depo yoksa ya da bilmiyorsan boş bırakıp Enter\'a bas.')
-    repo = '' if assume_yes else p.ask('GitHub deposu (örnek: sirket/notlar):', '')
-    if repo:
-        if not _gh():
-            install_gh = '`winget install GitHub.cli`' if sys.platform == 'win32' else '`brew install gh`'
-            warn(f'Bunun için GitHub\'ın komut satırı aracı (gh) gerekiyor ve bu bilgisayarda yok. Kurmak için {install_gh}, '
-                 f'sonra `gh auth login` ile giriş yap ve `carry github add` çalıştır. Kurulum ekip notları olmadan sürüyor.')
-        else:
-            try:
-                with Spinner(f'{repo} indiriliyor ve aranabilir hale getiriliyor'):
-                    github.connect(ws, 'team', repo)
-                ok(f'Ekip notları bağlandı: {repo} (yalnızca okunur, 5 dakikada bir güncellenir)')
-            except CarryError as exc:
-                warn(f'Ekip notlarına bağlanılamadı ({exc}). Depoya erişimin olduğundan ve `gh auth login` ile giriş yaptığından emin ol, '
-                     f'sonra: carry github add --id team --repository {repo}')
-        ws = Workspace.load(ws.state_dir)
-
-    # 4. Search setting: semantic search (on by default) and the judge
-    step(4, total, 'Arama')
+    # 2. Search: by meaning when Ollama is (or can be) there; the owner's assistant checks the results.
+    step(2, total, 'Arama')
     from . import ollama_setup
     semantic = semantic_default
-    if semantic and not assume_yes:
-        hint('Carry notlarını kelimelere göre arar. İstersen anlamına göre de arar: farklı kelimelerle yazılmış')
-        hint('notları ve Türkçe-İngilizce eşleşmeleri de bulur. Bunun için Ollama adlı ücretsiz bir program ve')
-        hint(f'0,6 GB\'lık bir model {HERE} kurulur; notların internete gitmez.')
-        semantic = p.yes('Anlamına göre arama açılsın mı?', default=True)
     if semantic:
         st = ollama_setup.status()
-        if not st['installed']:
-            if sys.platform == 'win32':
-                tool, offer = 'winget', 'Ollama bu bilgisayarda yok. Şimdi kurulsun mu? (winget ile, birkaç dakika sürer)'
-            else:
-                tool, offer = 'brew', 'Ollama bu bilgisayarda yok. Şimdi kurulsun mu? (Homebrew ile, birkaç dakika sürer)'
-            if st['installer'] and (assume_yes or p.yes(offer, default=True)):
-                with Spinner(f'Ollama kuruluyor ({tool})'):
-                    good, how = ollama_setup.install()
-                (ok if good else warn)('Ollama kuruldu; bilgisayar her açıldığında kendiliğinden başlar.' if good
-                                        else f'Ollama kurulamadı ({how}); kelimeye göre aramayla devam ediliyor.')
-                semantic = good
-            else:
-                missing = {'brew': ' ve bu bilgisayarda Homebrew yok', 'winget': ' ve bu bilgisayarda winget yok'}[tool]
-                warn('Ollama kurulmadı' + ('' if st['installer'] else missing) + '. Elle kurmak için https://ollama.com/download, '
-                     'sonra: carry search --semantic on. Şimdilik kelimeye göre arama kullanılacak.')
-                semantic = False
-        else:
+        if st['installed']:
             good, how = ollama_setup.start()
             if not good:
                 warn(f'Ollama başlatılamadı ({how}); kelimeye göre aramayla devam ediliyor.')
                 semantic = False
-    has_key = bool(jev.api_key())
-    # The key store's name with its Turkish suffixes: (in it, into it).
-    keychain = {'Keychain': ("Keychain'de", "Keychain'e"),
-                'Windows Credential Manager': ("Kimlik Bilgisi Yöneticisi'nde", "Kimlik Bilgisi Yöneticisi'ne")
-                }.get(jev.key_store())
-    judge = 'jev' if has_key else 'assistant'
-    if not assume_yes:
-        hint('Aramadan birkaç not parçası çıkar; soruna gerçekten cevap verenleri seçmek için bir kontrol daha yapılır.')
-        judge = p.choose('Bu kontrolü kim yapsın?', [
-            ('assistant', 'Kendi asistanım (Claude ya da Codex; ek hesap, anahtar ya da ücret gerekmez)'),
-            ('jev', 'TypeSafe Jev (ayrı bir çevrimiçi hizmet; daha hızlı ve biraz daha isabetli, ücretli bir erişim anahtarı ister'
-                    + (f'; anahtarın {keychain[0]} kayıtlı)' if has_key and keychain else ')'))],
-            2 if has_key else 1)
-    if judge == 'jev' and not has_key:
-        say(paint('  Jev ile soru ve bulunan en fazla 32 not parçası (şifre gibi gizli bilgiler gizlenerek) TypeSafe\'in ABD\'deki sunucularına gider.', DIM))
-        key = p.secret('TypeSafe erişim anahtarını yapıştır (yazarken görünmez; vazgeçmek için boş bırak):') if keychain else ''
-        if not keychain:
-            warn('Bu bilgisayarda anahtarı güvenle saklayacak bir yer yok: anahtarı TYPESAFE_API_KEY ortam değişkeni olarak tanımlayıp kurulumu yeniden çalıştır.')
-        if key:
-            jev.store_key(key)
-            ok(f'Anahtar {keychain[1]} kaydedildi.')
+        elif st['installer']:
+            tool = 'winget' if sys.platform == 'win32' else 'Homebrew'
+            if not assume_yes:
+                hint('Carry notlarını anlamına göre de arar: farklı kelimelerle yazılmış notları da bulur. Bunun için')
+                hint(f'Ollama adlı ücretsiz bir program ve 0,6 GB\'lık bir model {HERE} kurulur; notların internete gitmez.')
+            if p.yes(f'Ollama kurulsun mu? ({tool} ile, birkaç dakika sürer)', default=True):
+                with Spinner('Ollama kuruluyor'):
+                    semantic, how = ollama_setup.install()
+                (ok if semantic else warn)('Ollama kuruldu.' if semantic else f'Ollama kurulamadı ({how}); kelimeye göre aramayla devam ediliyor.')
+            else:
+                semantic = False
         else:
-            judge = 'assistant'
-            warn('Anahtar girilmedi; kontrolü kendi asistanın yapacak.')
-    mode = models.search_preset(semantic, judge)
-    label = ('anlamına göre arama' if semantic else 'kelimeye göre arama') + ' · ' + \
-            ('kontrol: TypeSafe Jev' if judge == 'jev' else 'kontrol: kendi asistanın')
+            semantic = False
     try:
         with Spinner('Arama modeli indiriliyor (0,6 GB, birkaç dakika sürebilir)' if semantic else 'Arama ayarı uygulanıyor'):
-            models.setup(ws, mode)
-        ok(label + (' · kapatmak için: carry search --semantic off' if semantic else ''))
+            models.setup(ws, models.search_preset(semantic, 'assistant'))
     except CarryError as exc:
         warn(f'Anlamına göre arama açılamadı ({exc}); kelimeye göre aramayla devam ediliyor.')
-        models.setup(ws, models.search_preset(False, judge))
+        semantic = False
+        models.setup(ws, models.search_preset(False, 'assistant'))
+    ok('Anlamına göre arama açık.' if semantic else
+       'Kelimeye göre arama açık. Anlamına göre arama sonra eklenebilir: carry search --semantic on --install-ollama')
     ws = Workspace.load(ws.state_dir)
 
-    # 5. Clients
-    step(5, total, 'Asistan bağlantısı')
+    # 3. Assistants: a new notes folder carries its own wiring; an existing one is connected for each assistant found.
+    step(3, total, 'Asistan bağlantısı')
     found = {c: shutil.which(c) for c in ('claude', 'codex')}
     names = {'claude': 'Claude Code', 'codex': 'Codex'}
-    for client, path in found.items():
-        (ok if path else warn)(f'{names[client]}: ' + ('bu bilgisayarda var' if path else 'bu bilgisayarda yok'))
-    if project and kind == 'new':
-        ok('Not klasörüne asistan ayarları yazıldı: Claude ya da Codex\'i bu klasörde açtığında Carry\'yi kullanabilir.')
-    elif project:
+    if kind == 'new':
+        ok('Claude Code ya da Codex\'i not klasöründe açtığında Carry\'yi kullanır.')
+    else:
         from . import connections
         for client, path in found.items():
-            if path and p.yes(f'{names[client]}, bu klasörde açıldığında Carry\'yi kullanabilsin mi? ({project})'):
-                try:
-                    connections.apply(ws, connections.preview(ws, client, project, executable=path, language=language))
-                    ok(f'{names[client]} bağlandı.')
-                except CarryError as exc:
-                    warn(f'{names[client]} bağlanamadı ({exc}).')
-
-    # 6. Backup and harvest
-    step(6, total, 'Yedek ve otomatik notlar')
-    if project and kind == 'new' and not assume_yes and _gh():
-        hint('Notlarının bir kopyası GitHub hesabında, yalnızca senin görebileceğin gizli bir depoda tutulabilir.')
-        if p.yes('Notların GitHub\'da gizli bir depoya yedeklensin mi?', default=False):
-            name = p.ask('Deponun adı:', project.name.lower())
+            if not path:
+                continue
             try:
-                import subprocess
-                subprocess.run(['git', '-C', str(project), 'add', '-A'], check=True, capture_output=True)
-                subprocess.run(['git', '-C', str(project), 'commit', '-q', '-m', 'vault: initial'], check=True, capture_output=True)
-                subprocess.run([_gh(), 'repo', 'create', name, '--private', '--source', str(project),
-                                '--remote', 'origin', '--push'], check=True, capture_output=True, text=True, encoding='utf-8')
-                ok(f'Yedek deposu oluşturuldu ve notların ilk kez yedeklendi: {name}')
-            except (OSError, subprocess.CalledProcessError) as exc:
-                warn('Yedek deposu oluşturulamadı: ' + (getattr(exc, 'stderr', '') or str(exc)).strip()[:160])
-    nightly = project and kind == 'new' and not assume_yes and sys.platform in ('darwin', 'win32')
-    if nightly:
-        hint('Carry her akşam o günün sohbetlerini okuyup verilen kararları ve yarım kalan işleri taslak not olarak')
-        hint('not klasöründeki "+" klasörüne koyabilir. Taslaklar sen onaylamadan nota dönüşmez.')
-    if nightly and p.yes('Bu her akşam 21:30\'da yapılsın mı?', default=False):
-        from . import harvest
-        import subprocess
-        if sys.platform == 'win32':
-            try:
-                harvest.install_schedule(None, ws.state_dir)  # Task Scheduler runs this Python, not a binary
-                ok('Akşam taslakları açıldı (Görev Zamanlayıcı); kapatmak için: carry harvest --remove-schedule')
+                connections.apply(ws, connections.preview(ws, client, project, executable=path, language=language))
+                ok(f'{names[client]} bağlandı.')
             except CarryError as exc:
-                warn(f'Akşam taslakları kurulamadı ({exc}); sonra: carry harvest --install-schedule')
-        else:
-            plist = Path.home() / 'Library' / 'LaunchAgents' / (harvest.LAUNCH_LABEL + '.plist')
-            plist.parent.mkdir(parents=True, exist_ok=True)
-            plist.write_text(harvest.schedule_plist(shutil.which('carry') or sys.argv[0], ws.state_dir), encoding='utf-8', newline='\n')
-            subprocess.run(['launchctl', 'bootstrap', f'gui/{os.getuid()}', str(plist)], capture_output=True)
-            ok('Akşam taslakları açıldı; kapatmak için: carry harvest --remove-schedule')
-    else:
-        say(paint('  İstediğin zaman elle: carry harvest   (sohbetlerden taslak notlar, "+" klasörüne)', DIM))
+                warn(f'{names[client]} bağlanamadı ({exc}).')
+    if not any(found.values()):
+        warn('Bu bilgisayarda Claude Code da Codex de bulunamadı; birini kurduktan sonra not klasöründe aç.')
 
-    # 7. App
-    step(7, total, 'Carry uygulaması (isteğe bağlı)')
-    if app and sys.platform == 'darwin' and not assume_yes:
-        hint('Uygulamada akşam taslaklarını onaylar, ayarları değiştirir ve notlarına göz atarsın.')
-    if app and sys.platform == 'darwin' and (assume_yes or p.yes('Carry uygulaması da kurulsun mu?')):
+    # 4. App (macOS)
+    step(4, total, 'Carry uygulaması')
+    if not app:
+        say(paint('  Sonra istersen: carry app install', DIM))
+    elif sys.platform != 'darwin':
+        say(paint('  Carry uygulaması şimdilik yalnızca macOS\'ta; burada komut satırı ve asistan üzerinden çalışır.', DIM))
+    else:
         from . import app_install
         if not app_install.swiftc():
             warn('Uygulama için Apple\'ın ücretsiz geliştirici araçları gerekiyor: xcode-select --install '
@@ -424,24 +323,15 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
             try:
                 with Spinner('Carry uygulaması bu Mac\'te hazırlanıyor (bir dakika kadar)'):
                     path = app_install.install(workspace=ws.state_dir)
-                ok(f'Uygulama kuruldu: {path} · açmak için: carry app open')
+                ok(f'Uygulama kuruldu: {path}')
             except CarryError as exc:
                 warn(f'Uygulama kurulamadı ({exc}); sonra: carry app install')
-    elif sys.platform != 'darwin':
-        say(paint('  Carry uygulaması şimdilik yalnızca macOS\'ta; burada komut satırı ve asistan üzerinden çalışır.', DIM))
-    else:
-        say(paint('  Sonra istersen: carry app install', DIM))
 
-    # 8. Index
-    step(8, total, 'Notlar aranabilir hale getiriliyor')
+    # 5. Index
+    step(5, total, 'Notlar aranabilir hale getiriliyor')
     with Spinner('Notlar taranıyor'):
         result = index.build(ws)
-    judge = {'jev': 'kontrol: TypeSafe Jev', 'cross': 'kontrol: bu bilgisayardaki model'}.get(ws.retrieval.reranker, 'kontrol: kendi asistanın')
-    search = 'anlamına göre arama' if result.get('semantic') else 'kelimeye göre arama'
-    if result.get('files'):
-        ok(f'{result["files"]} not tarandı · {search} · {judge}')
-    else:
-        ok(f'Henüz not yok; ilk notunu eklediğinde kendiliğinden taranır · {search} · {judge}')
+    ok(f'{result["files"]} not tarandı.' if result.get('files') else 'Henüz not yok; ilk notunu eklediğinde kendiliğinden taranır.')
 
     say()
     if animation:
@@ -449,10 +339,12 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
     else:
         say(paint(BANNER.strip(), BOLD))
     say()
-    where = project or ws.state_dir
     say(paint('  Sıradaki adım:', BOLD) + ' Claude Code\'u (ya da Codex\'i) not klasöründe aç:')
-    say(f'    cd "{where}" && claude')
-    say(paint('  İlk açılışta bu klasördeki "carry" aracını kullanmak için izin ister; onayla.', DIM))
+    say(f'    cd "{project}" && claude')
+    say(paint('  İlk açılışta "carry" aracını kullanmak için izin ister; onayla.', DIM))
     say(paint('  Sonra sor: ', DIM) + '"Notlarımda ne var, kısaca özetle."')
-    say(paint(f'  Ayarlar: {ws.state_dir} · durum: carry --workspace "{ws.state_dir}" status', DIM))
+    say()
+    say(paint('  İstersen sonra:', DIM))
+    say(paint('    ekibin GitHub\'daki ortak notları   carry github add --id team --repository sahip/depo', DIM))
+    say(paint('    her akşam sohbetlerden taslak not   carry harvest --install-schedule', DIM))
     return 0
