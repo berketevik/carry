@@ -25,6 +25,7 @@ from .persistence import writer_lock
 MAX_ARCHIVE = 200_000_000
 MAX_CONTENT = 100_000_000
 MAX_FILES = 20_000
+MAX_PACK = 100_000_000
 
 
 def executable():
@@ -171,21 +172,28 @@ def extract_markdown(archive, destination, folder=''):
             if path.is_absolute() or '..' in path.parts or '\\' in item.name:
                 raise CarryError('github_unsafe_archive')
             relative = PurePosixPath(*path.parts[1:])  # GitHub archive root prefix
-            if not item.isfile() or relative.suffix.lower() != '.md':
-                continue
-            if any(p.startswith('.') or p in ('node_modules', '__pycache__') for p in relative.parts):
+            if not item.isfile():
                 continue
             if folder:
                 try:
                     relative = relative.relative_to(folder)
                 except ValueError:
                     continue
-            if not relative.parts or item.size > 2_000_000:
-                continue
-            count += 1
-            total += item.size
-            if count > MAX_FILES or total > MAX_CONTENT:
-                raise CarryError('github_content_limit')
+            # The shared index pack (index.PACK_PATH) is the one non-Markdown file kept.
+            if relative == PurePosixPath('.carry/index.db'):
+                if item.size > MAX_PACK:
+                    continue
+            else:
+                if relative.suffix.lower() != '.md':
+                    continue
+                if any(p.startswith('.') or p in ('node_modules', '__pycache__') for p in relative.parts):
+                    continue
+                if not relative.parts or item.size > 2_000_000:
+                    continue
+                count += 1
+                total += item.size
+                if count > MAX_FILES or total > MAX_CONTENT:
+                    raise CarryError('github_content_limit')
             if relative in names:
                 raise CarryError('github_duplicate_archive_path')
             names.add(relative)

@@ -239,6 +239,13 @@ def cmd_github(args):
     elif args.github_command == 'sync':
         fields = dict(source_id=args.id)
         result = run(ws, 'github_sync', fields) if args.wait else start(ws, 'github_sync', **fields)
+    elif args.github_command == 'pack':
+        from . import index
+        source = ws.source(args.id)
+        try:
+            result = index.write_pack(ws, args.id, args.out, commit=source.github.get('commit', ''))
+        except ValueError as exc:
+            result = dict(status='failed', error=str(exc))
     else:
         result = job_status(ws)
     _print(result, args.json, [json.dumps(result, ensure_ascii=False)])
@@ -530,6 +537,10 @@ def build_parser():
     sync = ghsub.add_parser('sync')
     sync.add_argument('--id', required=True)
     sync.add_argument('--wait', action='store_true')
+    pk = ghsub.add_parser('pack', help="write the source's search index to <repo clone>/.carry/index.db, "
+                                       "so whoever connects the repo searches without embedding it again")
+    pk.add_argument('--id', required=True)
+    pk.add_argument('--out', required=True, help='usually <local clone of the repo>/.carry/index.db')
     gh.set_defaults(func=cmd_github)
     model = sub.add_parser('model', help='download and activate a local embedding model')
     model.add_argument('model', choices=('semantic_jev', 'semantic_assistant', 'keyword_jev', 'keyword_assistant', 'assistant_ranked', 'accurate_multilingual', 'embeddinggemma', 'qwen3-embedding:0.6b', 'nomic-embed-text'))

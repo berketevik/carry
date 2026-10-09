@@ -124,7 +124,7 @@ carry --workspace WS harvest --install-schedule --vault /path/to/vault
 The first searches a team's shared GitHub repo of Markdown notes too (read-only, refreshed every five minutes). It needs a GitHub account with access, GitHub's `gh` tool (`brew install gh`, `winget install GitHub.cli`, or the macOS installer from https://cli.github.com) and one sign-in, which the owner runs from the chat with a leading `!`:
 > GitHub'a bir kez giriş yapman gerekiyor. Sohbete şunu yapıştır: `! gh auth login --hostname github.com --git-protocol https --web`. Ekranda XXXX-XXXX gibi bir kod çıkacak; https://github.com/login/device sayfasını açıp bu kodu gir ve onayla. Bitince haber ver.
 
-Afterwards run `gh auth setup-git` yourself. The second makes chat drafts every evening at 21:30; chat drafts are also made when each chat ends.
+Afterwards run `gh auth setup-git` yourself. A team repo may ship its own search index as `.carry/index.db` (written by `carry github pack --id team --out <clone>/.carry/index.db` on a machine where the index is fresh, then committed). Carry uses it when it was built with the same search settings, so teammates on the default setup search the team notes without scanning them; otherwise it is ignored. The second makes chat drafts every evening at 21:30; chat drafts are also made when each chat ends.
 
 ### Check the result
 

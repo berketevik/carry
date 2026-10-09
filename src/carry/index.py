@@ -40,6 +40,60 @@ def open_readonly(path):
     return sqlite3.connect(f"{Path(path).resolve().as_uri()}?mode=ro", uri=True)
 
 
+# A shared folder (a team repo) may ship the vectors of its own notes, so whoever
+# connects it searches at once instead of embedding every note again.
+PACK_PATH = Path(".carry") / "index.db"
+
+
+def load_pack(root, expected):
+    """Vectors from `<root>/.carry/index.db`, keyed by chunk text. Empty unless the
+    pack was built with the same embedding model and chunking (`expected`)."""
+    path = Path(root).expanduser().resolve() / PACK_PATH
+    if not path.is_file():
+        return {}
+    try:
+        with closing(open_readonly(path)) as con:
+            if dict(con.execute("SELECT key,value FROM meta")).get("fingerprint") != expected:
+                return {}
+            return {text: (dim, vec) for text, dim, vec in con.execute("SELECT text,dim,vec FROM chunks")
+                    if isinstance(vec, bytes) and isinstance(dim, int) and dim > 0 and len(vec) == dim * 4}
+    except sqlite3.Error:
+        return {}
+
+
+def write_pack(workspace, source_id, out, commit=""):
+    """Writes one source's chunks from the published index as a pack at `out`."""
+    with closing(open_readonly(workspace.db_path)) as con:
+        config, manifest = read_manifest(con)
+        if config.get("fingerprint") != fingerprint(workspace, build_provider(workspace.embedding)):
+            raise ValueError("index_not_fresh:settings_changed")
+        # Only this source has to be current; other sources may change meanwhile.
+        current = {k: v for k, v in corpus_snapshot(workspace).items() if k[0] == source_id}
+        if current != {k: v for k, v in manifest.items() if k[0] == source_id}:
+            raise ValueError("index_not_fresh:" + source_id)
+        rows = {}
+        for text, dim, vec in con.execute(
+                "SELECT text,dim,vec FROM chunks WHERE source_id=? ORDER BY path,id", (source_id,)):
+            rows.setdefault(text, (dim, vec))
+    if not rows:
+        raise ValueError("source_has_no_chunks")
+    out = Path(out).expanduser()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    temp = out.with_name(out.name + ".building")
+    if temp.exists():
+        temp.unlink()
+    with closing(sqlite3.connect(temp)) as pack_db:
+        pack_db.executescript("CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT);"
+                              "CREATE TABLE chunks(text TEXT PRIMARY KEY, dim INTEGER, vec BLOB);")
+        pack_db.executemany("INSERT INTO meta VALUES(?,?)", [
+            ("fingerprint", config.get("fingerprint", "")), ("source_commit", commit),
+            ("built_at", str(time.time())), ("chunks", str(len(rows)))])
+        pack_db.executemany("INSERT INTO chunks VALUES(?,?,?)", [(t, d, v) for t, (d, v) in rows.items()])
+        pack_db.commit()
+    os.replace(temp, out)
+    return dict(path=str(out), chunks=len(rows), commit=commit, bytes=out.stat().st_size)
+
+
 def db_is_usable(path):
     """True when the published index can serve a query.
 
@@ -221,8 +275,9 @@ def _build_locked(workspace):
 
         changed = [key for key, digest in snapshot.items() if previous.get(key) != digest]
         removed = previous.keys() - snapshot.keys()
-        embedded = reused = 0
+        embedded = reused = packed = 0
         by_id = {s.source_id: s for s in workspace.sources}
+        packs = {}
         for source_id, relative in [*sorted(removed), *sorted(changed)]:
             # Reuse unchanged windows of an appended file instead of re-embedding it.
             cache = {text: (dim, vec) for text, dim, vec in con.execute(
@@ -243,9 +298,14 @@ def _build_locked(workspace):
             for heading, text in chunk_body(title, frontmatter.get("summary", ""), body,
                                             chunk_chars=workspace.retrieval.chunk_chars,
                                             overlap=workspace.retrieval.chunk_overlap):
+                if source_id not in packs:
+                    packs[source_id] = load_pack(by_id[source_id].root, expected)
                 if text in cache:
                     dim, blob = cache[text]
                     reused += 1
+                elif text in packs[source_id]:
+                    dim, blob = packs[source_id][text]
+                    packed += 1
                 else:
                     stage = "embed"
                     vector = provider.embed_document(text)
@@ -284,7 +344,7 @@ def _build_locked(workspace):
         sidecar_map.save(workspace.sidecar_path, sidecar)
         return write_status(workspace, "built", changed_files=len(changed),
                             removed_files=len(removed), embedded_chunks=embedded,
-                            reused_chunks=reused, files=len(snapshot), chunks=chunks,
+                            reused_chunks=reused, packed_chunks=packed, files=len(snapshot), chunks=chunks,
                             provider=provider.name, semantic=provider.semantic,
                             needs_reconciliation=len(sidecar.get("reconcile", [])))
     except Exception as exc:
