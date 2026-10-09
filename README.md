@@ -6,7 +6,7 @@
 
 In September you find that a client's user IDs are broken. In November you sit down to fix them, and your assistant checks your notes first: it reminds you what you found, with a link to where it's written. Your notes stay on your computer as plain Markdown (`.md`) files.
 
-**Version 0.9.0 · macOS 14+ · pilot**
+**Version 0.9.1 · macOS 14+ · pilot**
 
 ## Get started
 
