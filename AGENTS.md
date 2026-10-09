@@ -53,13 +53,21 @@ Assume the person who asked for Carry is not technical. They should understand e
 
 ### The questions
 
-**1. New folder or existing notes**
+**1. What to connect**
+> Carry'yi neye bağlayalım: kendi notlarına mı, ekibinin bilgi bankasına mı, ikisine de mi? Bilmiyorsan kendi notlarınla başlayalım.
+
+Ask about the team only when the owner works in a team that keeps its knowledge base on GitHub. The team lead gives the repository as `owner/repo` (often as a `carry setup --team owner/repo` command); never guess it.
+
+**2. For their own notes: new or existing**
 > Notlarını tutacağın yeni bir klasör mü kuralım, yoksa bilgisayarında notlarının zaten durduğu bir klasör var mı? Bilmiyorsan yeni bir klasör kuralım.
 
-Recommended: a new folder at `~/Vault`; tell them where it will be in plain words ("Finder'da, ev simgeli ana klasörünün içinde 'Vault' adıyla"). For an existing folder, ask where it is and tell them Carry only reads it and never changes their notes. Carry reads `.md` files only; if their notes are in Word, Apple Notes or elsewhere, say so plainly and suggest a new folder.
-
-**2. Language** (new folder only)
+Recommended: a new folder at `~/Vault`; tell them where it will be in plain words ("Finder'da, ev simgeli ana klasörünün içinde 'Vault' adıyla"). For an existing folder, ask where it is and tell them Carry only reads it and never changes their notes. Carry reads `.md` files only; if their notes are in Word, Apple Notes or elsewhere, say so plainly and suggest a new folder. For a new folder also ask the language:
 > Notlarını çoğunlukla hangi dilde yazıyorsun, Türkçe mi İngilizce mi?
+
+**3. For the team's knowledge base: download or existing copy**
+> Ekibin bilgi bankası bu bilgisayarda var mı? Yoksa senin için indireyim.
+
+Downloading makes a git copy in `~/<repo name>`, which is also where the owner opens Claude to write to it. It needs GitHub's `gh` tool and one sign-in (below).
 
 Search by meaning needs no question: setup downloads Carry's own model (about 200 MB) unless Ollama is already installed.
 
@@ -83,6 +91,8 @@ The repository is public: no GitHub account is needed to install Carry. After th
 
    The current shell will not find `uv` or later `carry` yet: call them as `~/.local/bin/uv` and `~/.local/bin/carry`. Then, with their consent, run `~/.local/bin/uv tool update-shell` so new windows find them:
    > Yeni açacağın pencerelerin de bu aracı tanıması için bilgisayarın bir ayar dosyasına tek satır eklemem gerekiyor. Ekleyeyim mi?
+3. **gh** (only for the team's knowledge base): `brew install gh` (macOS) or `winget install GitHub.cli` (Windows). On a Mac without Homebrew, download the macOS installer from https://cli.github.com and open it. The owner signs in once from the chat with a leading `!`:
+   > GitHub'a bir kez giriş yapman gerekiyor. Sohbete şunu yapıştır: `! gh auth login --hostname github.com --git-protocol https --web`. Ekranda XXXX-XXXX gibi bir kod çıkacak; https://github.com/login/device sayfasını açıp bu kodu gir ve onayla. Bitince haber ver.
 
 ### Install
 
@@ -92,15 +102,17 @@ The repository is public: no GitHub account is needed to install Carry. After th
 
 Below, `carry` means `~/.local/bin/carry` until a new shell finds it, and `WS` is Carry's own folder written out in full, normally `/Users/<name>/CarryState` (`$HOME/CarryState`). Every command needs `--workspace WS` (or the `CARRY_WORKSPACE` environment variable).
 
-**A. A new notes folder**
+Then run the one line that matches the answers. `--team` is the repository the team lead gave.
 
-```sh
-carry --workspace WS setup --yes --vault ~/Vault --language Turkish
-```
+| Answers | Command |
+|---|---|
+| Own notes, new folder | `carry --workspace WS setup --yes --vault ~/Vault --language Turkish` |
+| Own notes, new folder, and the team's | `carry --workspace WS setup --yes --vault ~/Vault --language Turkish --team owner/repo` |
+| Only the team's | `carry --workspace WS setup --yes --connect team --team owner/repo` |
 
-This creates Carry's folder and the notes folder (with `CLAUDE.md`, `AGENTS.md`, the `carry-recall` subagents and the MCP settings), runs `git init`, sets up search by meaning (Ollama if installed, otherwise Carry's own model), builds the macOS app and scans the notes. Building the app takes a minute or two; say so before running it ("Birkaç dakika sürebilir, pencereyi kapatma.").
+Each creates Carry's folder, sets up search by meaning (Ollama if installed, otherwise Carry's own model), builds the macOS app and scans the notes. A new notes folder comes with `CLAUDE.md`, `AGENTS.md`, the `carry-recall` subagents and the MCP settings, and `git init`. The team's knowledge base is downloaded to `~/<repo name>` (an existing git copy there is used as it is), added read-only and marked as team knowledge, and Claude Code and Codex are connected there too. Building the app takes a minute or two; say so before running it ("Birkaç dakika sürebilir, pencereyi kapatma.").
 
-**B. An existing folder of notes**
+**An existing folder of their own notes** (or a team copy elsewhere): run `carry --workspace WS setup` without `--yes` and give the answers, or without the wizard:
 
 ```sh
 carry --workspace WS init --embedding hashing --source notes=/path/to/notes
@@ -114,14 +126,11 @@ For Codex use `connect codex`. `connect` writes the MCP settings (`.mcp.json`, o
 ### Only if the owner asks
 
 ```sh
-carry --workspace WS github add --id team --repository owner/repo --wait
 carry --workspace WS harvest --install-schedule --vault /path/to/vault
+carry --workspace WS github pack --id team --out <team copy>/.carry/index.db
 ```
 
-The first searches a team's shared GitHub repo of Markdown notes too (read-only, refreshed every five minutes). It needs a GitHub account with access, GitHub's `gh` tool (`brew install gh`, `winget install GitHub.cli`, or the macOS installer from https://cli.github.com) and one sign-in, which the owner runs from the chat with a leading `!`:
-> GitHub'a bir kez giriş yapman gerekiyor. Sohbete şunu yapıştır: `! gh auth login --hostname github.com --git-protocol https --web`. Ekranda XXXX-XXXX gibi bir kod çıkacak; https://github.com/login/device sayfasını açıp bu kodu gir ve onayla. Bitince haber ver.
-
-Afterwards run `gh auth setup-git` yourself. A team repo may ship its own search index as `.carry/index.db` (written by `carry github pack --id team --out <clone>/.carry/index.db` on a machine where the index is fresh, then committed). Carry uses it when it was built with the same search settings, so teammates on the default setup search the team notes without scanning them; otherwise it is ignored. The second makes chat drafts every evening at 21:30; chat drafts are also made when each chat ends.
+The first makes chat drafts every evening at 21:30; chat drafts are also made when each chat ends. The second is for whoever maintains the team's knowledge base: it writes the team notes' search index into the repository, so teammates on the default setup search without scanning the notes (commit and push it; a stale one still helps).
 
 ### Check the result
 

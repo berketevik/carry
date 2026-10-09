@@ -6,11 +6,11 @@
 
 Eylülde bir müşterinizin user ID'lerinin hatalı olduğunu buluyorsunuz. Kasımda onları düzeltmeye oturduğunuzda asistanınız önce notlarınıza bakar: ne bulduğunuzu hatırlatır ve nerede yazdığını gösterir. Notlarınız bilgisayarınızda, düz Markdown (`.md`) dosyaları olarak kalır.
 
-**Sürüm 0.9.1 · macOS 14+ · pilot**
+**Sürüm 0.10.0 · macOS 14+ · pilot**
 
 ## Başlayın
 
-Claude Code'a ya da Codex'e bu sayfanın linkini verip "Carry'yi kur" deyin. Notlarınızın nerede durduğunu ve hangi dilde yazdığınızı sorar, gerekenleri kurar ve bitince ne yapacağınızı söyler.
+Claude Code'a ya da Codex'e bu sayfanın linkini verip "Carry'yi kur" deyin. Gerekenleri kurar ve bitince ne yapacağınızı söyler.
 
 Ya da kendiniz kurun (git, [uv](https://docs.astral.sh/uv/) ve `xcode-select --install` gerekir):
 
@@ -19,7 +19,9 @@ uv tool install "git+https://github.com/berketevik/carry"
 carry setup
 ```
 
-Sonra Claude Code'u (ya da Codex'i) not klasörünüzde açıp sorun: "Notlarımda ne var?"
+Kurulum iki şey sorar: neye bağlanacağınızı (kendi notlarınız, ekibinizin bilgi bankası ya da ikisi) ve her biri için sıfırdan mı kurulacağını yoksa hazırdakinin mi bağlanacağını. Sonra Claude Code'u (ya da Codex'i) kurulumun söylediği klasörde açıp sorun: "Notlarımda ne var?"
+
+**Ekip liderleri:** ekip arkadaşlarınıza tek bir komut verin: `carry setup --team sahip/depo` (ekibinizin Markdown notlarını tutan GitHub deposu). Yalnızca ekibin notlarını isteyen kurulumda onu seçer; başka hiçbir şey eklenmez.
 
 ## Nasıl çalışır?
 
@@ -38,7 +40,7 @@ Carry notlarınızı hiçbir yere yüklemez ve kendine ait bir çevrimiçi hizme
 
 | Ne için | Komut |
 |---|---|
-| Ekibinizin ortak notlarında da aramak (Markdown notlarının durduğu bir GitHub deposu; `gh` gerekir) | `carry github add --id team --repository sahip/ad` |
+| Ekibinizin bilgi bankasını sonradan eklemek | `carry setup --team sahip/depo` |
 | Ekip deposunun arama dizinini depoyla birlikte göndermek, böylece ekip arkadaşları hemen arar (deponun klonunda çalıştırıp commit ve push edin) | `carry github pack --id team --out <klon>/.carry/index.db` |
 | Sohbet taslaklarını her akşam 21:30'da almak | `carry harvest --install-schedule` |
 | Anlamına göre aramayı açıp kapatmak | `carry search --semantic on` (ya da `off`) |

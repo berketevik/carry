@@ -6,11 +6,11 @@
 
 In September you find that a client's user IDs are broken. In November you sit down to fix them, and your assistant checks your notes first: it reminds you what you found, with a link to where it's written. Your notes stay on your computer as plain Markdown (`.md`) files.
 
-**Version 0.9.1 · macOS 14+ · pilot**
+**Version 0.10.0 · macOS 14+ · pilot**
 
 ## Get started
 
-Give this page's link to Claude Code or Codex and say "install Carry". It asks where your notes are and which language you write in, installs what is needed and tells you what to do next.
+Give this page's link to Claude Code or Codex and say "install Carry". It installs what is needed and tells you what to do next.
 
 Or install it yourself (needs git, [uv](https://docs.astral.sh/uv/) and `xcode-select --install`):
 
@@ -19,7 +19,9 @@ uv tool install "git+https://github.com/berketevik/carry"
 carry setup
 ```
 
-Then open Claude Code (or Codex) in your notes folder and ask: "What is in my notes?"
+Setup asks two things: what to connect (your own notes, your team's knowledge base, or both) and, for each, whether to start fresh or use what you already have. Then open Claude Code (or Codex) in the folder it names and ask: "What is in my notes?"
+
+**Team leads:** give teammates one command, `carry setup --team owner/repo`, with your team's GitHub repository of Markdown notes. Whoever wants only the team's notes picks that in setup; nothing else is added.
 
 ## How it works
 
@@ -38,7 +40,7 @@ Carry doesn't upload your notes anywhere and uses no online service of its own. 
 
 | To | Run |
 |---|---|
-| Search your team's shared notes too (a GitHub repo of Markdown notes; needs `gh`) | `carry github add --id team --repository owner/name` |
+| Add your team's knowledge base later | `carry setup --team owner/repo` |
 | Ship the team repo's search index with it, so teammates search at once (run where the repo is cloned, then commit and push) | `carry github pack --id team --out <clone>/.carry/index.db` |
 | Get chat drafts every evening at 21:30 | `carry harvest --install-schedule` |
 | Turn search by meaning on or off | `carry search --semantic on` (or `off`) |
