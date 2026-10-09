@@ -669,14 +669,26 @@ def spawn_from_hook(state_dir, payload, root, language=None, python=None):
 LAUNCH_LABEL = 'local.carry.harvest'
 
 
+def schedule_path_env():
+    """launchd starts jobs with PATH=/usr/bin:/bin:/usr/sbin:/sbin, where extractor() finds neither
+    Claude Code (~/.local/bin) nor Codex (Homebrew, npm): the evening job failed every night with
+    no_extraction_client. The job gets the folders they are in now, plus the usual install places."""
+    folders = [str(Path(found).parent) for found in (shutil.which('claude'), shutil.which('codex')) if found]
+    folders += [str(Path.home() / '.local' / 'bin'), '/opt/homebrew/bin', '/usr/local/bin',
+                '/usr/bin', '/bin', '/usr/sbin', '/sbin']
+    return ':'.join(dict.fromkeys(folders))
+
+
 def schedule_plist(carry_bin, state_dir, hour=21, minute=30, extra=()):
     from xml.sax.saxutils import escape
     carry_bin, state_dir, extra = escape(str(carry_bin)), escape(str(state_dir)), [escape(str(a)) for a in extra]
+    path = escape(schedule_path_env())
     return f'''<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>{LAUNCH_LABEL}</string>
   <key>ProgramArguments</key><array><string>{carry_bin}</string><string>--workspace</string><string>{state_dir}</string><string>harvest</string>{''.join(f'<string>{a}</string>' for a in extra)}</array>
+  <key>EnvironmentVariables</key><dict><key>PATH</key><string>{path}</string></dict>
   <key>StartCalendarInterval</key><dict><key>Hour</key><integer>{hour}</integer><key>Minute</key><integer>{minute}</integer></dict>
   <key>StandardOutPath</key><string>{state_dir}/harvest.log</string>
   <key>StandardErrorPath</key><string>{state_dir}/harvest.log</string>

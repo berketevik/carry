@@ -119,6 +119,19 @@ class ScheduleTest(unittest.TestCase):
             self.assertEqual(harvest.remove_schedule(), dict(installed=False, loaded=False))
             self.assertFalse(harvest.schedule_status()['installed'])
 
+    def test_the_job_finds_claude_and_codex_where_they_are_installed(self):
+        # launchd's own PATH holds neither, so the evening job could not draft anything.
+        import plistlib
+        found = {'claude': '/home/o/.local/bin/claude', 'codex': '/opt/tools/bin/codex'}
+        with tempfile.TemporaryDirectory() as home, mock.patch.object(Path, 'home', return_value=Path(home)), \
+                mock.patch.object(harvest.shutil, 'which', side_effect=found.get):
+            plist = plistlib.loads(harvest.schedule_plist('/bin/carry', '/state').encode())
+        folders = plist['EnvironmentVariables']['PATH'].split(':')
+        self.assertEqual(folders[:2], ['/home/o/.local/bin', '/opt/tools/bin'])
+        self.assertIn(str(Path(home) / '.local' / 'bin'), folders)
+        self.assertIn('/usr/bin', folders)
+        self.assertEqual(len(folders), len(set(folders)))
+
     def test_failed_load_restores_the_previous_job(self):
         with tempfile.TemporaryDirectory() as home, mock.patch.object(Path, 'home', return_value=Path(home)):
             with mock.patch.object(harvest.subprocess, 'run', side_effect=self.launchctl()):
