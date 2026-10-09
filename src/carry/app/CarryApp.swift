@@ -1963,10 +1963,10 @@ struct SearchSettings: View {
                 GroupBox(T("How should Carry search?", "Carry nasıl arasın?")) {
                     VStack(alignment: .leading, spacing: 16) {
                         Text(T("1. How should it find notes?", "1. Notları nasıl bulsun?")).font(.headline)
-                        option(isOn: finder == "semantic", title: T("By meaning", "Anlamına göre"), uses: ["Ollama"],
+                        option(isOn: finder == "semantic", title: T("By meaning", "Anlamına göre"), uses: [T("built-in model", "yerleşik model")],
                                short: T("Also finds notes written with other words (“meeting” finds “call”).", "Başka kelimelerle yazılmış notları da bulur (“toplantı” diye sorunca “görüşme”yi de)."),
-                               long: T("The free Ollama app runs a small language model (embeddinggemma) on this Mac: a 0.6 GB download, about 0.7 GB of memory while searching, unloaded when idle. Your notes never leave the Mac for this step.",
-                                       "Ücretsiz Ollama uygulaması bu Mac'te küçük bir dil modeli (embeddinggemma) çalıştırır: 0,6 GB indirme, arama sırasında yaklaşık 0,7 GB bellek, boştayken bellekten çıkar. Bu adımda notlarınız Mac'ten çıkmaz."),
+                               long: T("A small language model (embeddinggemma) runs inside Carry: a one-time 200 MB download, about 0.75 GB of memory while searching, released when idle. If the Ollama app is installed, Carry uses it instead. Your notes never leave the Mac for this step.",
+                                       "Küçük bir dil modeli (embeddinggemma) Carry'nin içinde çalışır: bir kerelik 200 MB indirme, arama sırasında yaklaşık 0,75 GB bellek, boştayken bellekten çıkar. Ollama uygulaması kuruluysa Carry onu kullanır. Bu adımda notlarınız Mac'ten çıkmaz."),
                                badge: T("recommended", "önerilen")) { finder = "semantic" }
                         option(isOn: finder == "keyword", title: T("By words", "Kelimelerine göre"), uses: [T("built in", "yerleşik")],
                                short: T("Finds notes that contain the words of the question. Nothing to install.", "Sorudaki kelimeleri içeren notları bulur. Kurulacak bir şey yok."),

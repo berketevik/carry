@@ -17,6 +17,10 @@ import time
 from . import github, index, models, vault as vault_module
 from .config import EmbeddingConfig, RetrievalConfig, SourceConfig, Workspace, CONFIG_NAME
 from .errors import CarryError
+from .paths import walk_markdown
+
+# A folder larger than this is scanned in the background when the built-in model embeds it.
+BACKGROUND_FILES = 300
 
 TTY = sys.stdout.isatty() and os.environ.get('TERM') != 'dumb'
 COLOR = TTY and not os.environ.get('NO_COLOR')
@@ -254,39 +258,32 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
         ok(f'Klasör eklendi, yalnızca okunacak: {project}')
     ws = Workspace.load(ws.state_dir)
 
-    # 2. Search: by meaning when Ollama is (or can be) there; the owner's assistant checks the results.
+    # 2. Search: by meaning, through Ollama when it is installed, otherwise with the model
+    # built into Carry. No question: the owner's assistant checks the results either way.
     step(2, total, 'Arama')
-    from . import ollama_setup
+    from . import ollama_setup, onnx_model
     semantic = semantic_default
+    with_ollama = False
     if semantic:
-        st = ollama_setup.status()
-        if st['installed']:
-            good, how = ollama_setup.start()
-            if not good:
-                warn(f'Ollama başlatılamadı ({how}); kelimeye göre aramayla devam ediliyor.')
-                semantic = False
-        elif st['installer']:
-            tool = 'winget' if sys.platform == 'win32' else 'Homebrew'
-            if not assume_yes:
-                hint('Carry notlarını anlamına göre de arar: farklı kelimelerle yazılmış notları da bulur. Bunun için')
-                hint(f'Ollama adlı ücretsiz bir program ve 0,6 GB\'lık bir model {HERE} kurulur; notların internete gitmez.')
-            if p.yes(f'Ollama kurulsun mu? ({tool} ile, birkaç dakika sürer)', default=True):
-                with Spinner('Ollama kuruluyor'):
-                    semantic, how = ollama_setup.install()
-                (ok if semantic else warn)('Ollama kuruldu.' if semantic else f'Ollama kurulamadı ({how}); kelimeye göre aramayla devam ediliyor.')
-            else:
-                semantic = False
-        else:
+        if ollama_setup.status()['installed']:
+            with_ollama, how = ollama_setup.start()
+            if not with_ollama:
+                warn(f'Ollama başlatılamadı ({how}); Carry\'nin kendi arama modeli kullanılacak.')
+        if not with_ollama and not onnx_model.runtime_available():
             semantic = False
+    label = ('Arama modeli hazırlanıyor' if with_ollama else
+             f'Arama modeli indiriliyor ({onnx_model.DOWNLOAD_BYTES // 1_000_000} MB, bir iki dakika sürer)') if semantic \
+        else 'Arama ayarı uygulanıyor'
     try:
-        with Spinner('Arama modeli indiriliyor (0,6 GB, birkaç dakika sürebilir)' if semantic else 'Arama ayarı uygulanıyor'):
+        with Spinner(label):
             models.setup(ws, models.search_preset(semantic, 'assistant'))
     except CarryError as exc:
         warn(f'Anlamına göre arama açılamadı ({exc}); kelimeye göre aramayla devam ediliyor.')
         semantic = False
         models.setup(ws, models.search_preset(False, 'assistant'))
     ok('Anlamına göre arama açık.' if semantic else
-       'Kelimeye göre arama açık. Anlamına göre arama sonra eklenebilir: carry search --semantic on --install-ollama')
+       'Kelimeye göre arama açık. Bu bilgisayarda anlamına göre arama için Ollama gerekiyor: '
+       'carry search --semantic on --install-ollama')
     ws = Workspace.load(ws.state_dir)
 
     # 3. Assistants: a new notes folder carries its own wiring; an existing one is connected for each assistant found.
@@ -329,9 +326,17 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
 
     # 5. Index
     step(5, total, 'Notlar aranabilir hale getiriliyor')
-    with Spinner('Notlar taranıyor'):
-        result = index.build(ws)
-    ok(f'{result["files"]} not tarandı.' if result.get('files') else 'Henüz not yok; ilk notunu eklediğinde kendiliğinden taranır.')
+    count = sum(1 for _ in walk_markdown(project)) if project and project.is_dir() else 0
+    if ws.embedding.provider == 'onnx' and count > BACKGROUND_FILES:
+        # The built-in model reads about six passages a second: a large folder takes a while.
+        from . import maintenance
+        maintenance.start(ws, 'index')
+        ok(f'{count} not arka planda taranıyor; büyük bir klasörde bu yarım saati bulabilir. '
+           f'Bu arada kurulum bitti, Carry tarama bitince aramaya başlar.')
+    else:
+        with Spinner('Notlar taranıyor'):
+            result = index.build(ws)
+        ok(f'{result["files"]} not tarandı.' if result.get('files') else 'Henüz not yok; ilk notunu eklediğinde kendiliğinden taranır.')
 
     say()
     if animation:

@@ -96,10 +96,38 @@ def search_preset(semantic, judge):
     return SEARCH_PRESETS[(bool(semantic), 'jev' if judge == 'jev' else 'assistant')]
 
 
+def semantic_engine():
+    """Ollama when it is installed (it runs on the Mac's GPU); otherwise the model built into Carry."""
+    from . import ollama_setup, onnx_model
+    if ollama_setup.status()['installed'] or not onnx_model.runtime_available():
+        return 'embeddinggemma'
+    return 'embeddinggemma_onnx'
+
+
 def setup(workspace, model):
     from .maintenance import job_progress
+    if model == 'embeddinggemma_onnx':
+        from . import onnx_model
+        from .errors import ProviderUnavailable
+        if not onnx_model.runtime_available():
+            raise CarryError('onnx_runtime_missing')
+        job_progress(workspace, stage='downloading_model', model=model)
+        try:
+            onnx_model.download(progress=lambda done, total: job_progress(
+                workspace, stage='downloading_model', completed=done, total=total))
+        except ProviderUnavailable as exc:
+            raise CarryError(str(exc).split(':')[0])
+        config = EmbeddingConfig(provider='onnx', model='embeddinggemma', prefixes=True)
+        available, _ = build_provider(config).probe()
+        if not available:
+            raise CarryError('model_probe_failed')
+        with writer_lock(workspace):
+            current = Workspace.load(workspace.state_dir)
+            replace(current, embedding=config, retrieval=replace(current.retrieval, reranker='off')).save()
+        job_progress(workspace, stage='model_ready', model=model)
+        return dict(model='embeddinggemma', engine='onnx', available=True)
     if model in ('semantic_jev', 'semantic_assistant'):
-        setup(workspace, 'embeddinggemma')
+        setup(workspace, semantic_engine())
         extra = SEMANTIC_JEV if model == 'semantic_jev' else SEMANTIC_ASSISTANT
         with writer_lock(workspace):
             current = Workspace.load(workspace.state_dir)
@@ -120,13 +148,13 @@ def setup(workspace, model):
         job_progress(workspace, stage='model_ready', model=model)
         return dict(model=None, reranker='off', ranking='assistant', available=True)
     if model == 'assistant_ranked':
-        setup(workspace, 'embeddinggemma')
+        setup(workspace, semantic_engine())
         with writer_lock(workspace):
             current = Workspace.load(workspace.state_dir)
             replace(current, retrieval=replace(current.retrieval, **ASSISTANT_RANKED)).save()
         return dict(model='embeddinggemma', reranker='off', ranking='assistant', available=True)
     if model == 'accurate_multilingual':
-        setup(workspace, 'embeddinggemma')
+        setup(workspace, semantic_engine())
         from huggingface_hub import snapshot_download
         job_progress(workspace, stage='downloading_reranker', model='BAAI/bge-reranker-v2-m3')
         try:

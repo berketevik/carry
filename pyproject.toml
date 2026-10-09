@@ -4,13 +4,19 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "carry"
-version = "0.8.1"
+version = "0.9.0"
 authors = [{ name = "Berke Tevik" }]
 description = "Portable local memory for coding agents: Markdown sources, a derived index and an MCP interface."
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
-dependencies = []
+dependencies = [
+    # Search by meaning without Ollama (onnx_model). onnxruntime has no wheel for Intel
+    # Macs; there Carry uses Ollama or searches by words.
+    "numpy>=1.26,<3",
+    "tokenizers>=0.20,<1",
+    "onnxruntime>=1.20,<2; not (sys_platform == 'darwin' and platform_machine == 'x86_64')",
+]
 
 [project.optional-dependencies]
 # Real semantic retrieval quality. Without these the core still runs and reports

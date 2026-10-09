@@ -6,7 +6,7 @@
 
 In September you find that a client's user IDs are broken. In November you sit down to fix them, and your assistant checks your notes first: it reminds you what you found, with a link to where it's written. Your notes stay on your computer as plain Markdown (`.md`) files.
 
-**Version 0.8.1 · macOS 14+ · pilot**
+**Version 0.9.0 · macOS 14+ · pilot**
 
 ## Get started
 
@@ -25,7 +25,7 @@ Then open Claude Code (or Codex) in your notes folder and ask: "What is in my no
 
 ![How Carry works: notes are indexed on your computer; a question is searched by words and by meaning, and your assistant keeps the passages that answer](assets/how-it-works.svg)
 
-1. **Your notes become searchable.** Carry splits them into short passages and keeps a search index on your computer, by words and, with [Ollama](https://ollama.com), by meaning (setup offers it).
+1. **Your notes become searchable.** Carry splits them into short passages and keeps a search index on your computer, by words and by meaning. The meaning model (about 200 MB) runs inside Carry; if [Ollama](https://ollama.com) is installed, Carry uses it instead.
 2. **Your assistant checks your notes first.** It searches them, keeps only the passages that really answer the question and replies with the source of each. “Last week” or “in September” narrows the search to that period. Each chat also opens with a short brief of recent decisions and unfinished work.
 3. **Chats turn into drafts you review.** When a chat ends, Carry drafts its decisions and open tasks into your notes folder's `+/` inbox. In the Carry app you accept, fix or skip each item; nothing becomes a note without you.
 
@@ -41,7 +41,7 @@ Carry doesn't upload your notes anywhere and uses no online service of its own. 
 | Search your team's shared notes too (a GitHub repo of Markdown notes; needs `gh`) | `carry github add --id team --repository owner/name` |
 | Ship the team repo's search index with it, so teammates search at once (run where the repo is cloned, then commit and push) | `carry github pack --id team --out <clone>/.carry/index.db` |
 | Get chat drafts every evening at 21:30 | `carry harvest --install-schedule` |
-| Turn on search by meaning later | `carry search --semantic on --install-ollama` |
+| Turn search by meaning on or off | `carry search --semantic on` (or `off`) |
 | Update Carry | `carry update`, then `carry app install` |
 | Check that everything works | `carry status --probe` |
 
@@ -65,7 +65,7 @@ uv pip install --python .venv/bin/python -e .
 .venv/bin/python -m unittest discover -s tests -q
 ```
 
-The core needs Python 3.11+ and no packages. Extras: `.[embed]` (NumPy), `.[yaml]` (PyYAML). Notes are the original data; the index can always be rebuilt.
+Needs Python 3.11+. Search by meaning uses `onnxruntime`, `tokenizers` and NumPy (no `onnxruntime` wheel exists for Intel Macs, which use Ollama or word search). Extra: `.[yaml]` (PyYAML). Notes are the original data; the index can always be rebuilt.
 
 </details>
 
