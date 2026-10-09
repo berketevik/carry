@@ -69,7 +69,7 @@ Recommended: a new folder at `~/Vault`; tell them where it will be in plain word
 
 Downloading makes a git copy in `~/<repo name>`, which is also where the owner opens Claude to write to it. It needs GitHub's `gh` tool and one sign-in (below).
 
-Search by meaning needs no question: setup downloads Carry's own model (about 200 MB) unless Ollama is already installed.
+Search by meaning needs no question: setup downloads Carry's own model (about 330 MB) unless Ollama is already installed.
 
 ### Missing programs, in this order
 
@@ -174,7 +174,7 @@ carry update
 ## Known pitfalls
 
 - **Folder connected with an older Carry:** it has no `carry-recall` subagent, or one on Haiku, so recall returns unfiltered passages or a weaker check. Run `carry connect` again after updating; it adds a missing subagent but leaves an existing file as it is, so update `model:` in an old one by hand.
-- **Large existing folders:** with Carry's own model the first scan reads about six passages a second, so setup scans a folder of more than 300 notes in the background; recall answers once it finishes.
+- **Large existing folders:** with Carry's own model the first scan reads about 35 passages a second on an Apple Silicon GPU (far fewer on an Intel Mac's CPU), so setup scans a folder of more than 300 notes in the background; recall answers once it finishes.
 - **Carry's folder in iCloud Drive or OneDrive:** the index and virtual environments break. Keep it in the home folder.
 - **The assistant does not see Carry:** it was started outside the notes folder, or the MCP server was not approved. `carry connect list` shows what was written where.
 
