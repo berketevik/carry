@@ -6,7 +6,7 @@
 
 Eylülde bir müşterinizin user ID'lerinin hatalı olduğunu buluyorsunuz. Kasımda onları düzeltmeye oturduğunuzda asistanınız önce notlarınıza bakar: ne bulduğunuzu hatırlatır ve nerede yazdığını gösterir. Notlarınız bilgisayarınızda, düz Markdown (`.md`) dosyaları olarak kalır.
 
-**Sürüm 0.8.1 · macOS 14+ · pilot**
+**Sürüm 0.9.0 · macOS 14+ · pilot**
 
 ## Başlayın
 
@@ -25,7 +25,7 @@ Sonra Claude Code'u (ya da Codex'i) not klasörünüzde açıp sorun: "Notlarım
 
 ![Carry nasıl çalışır: notlar bilgisayarınızda dizinlenir; soru kelimeyle ve anlamla aranır, asistanınız cevaplayan parçaları seçer](assets/how-it-works.tr.svg)
 
-1. **Notlarınız aranabilir hale gelir.** Carry onları kısa parçalara böler ve bilgisayarınızda bir arama dizini tutar: kelimelere göre ve [Ollama](https://ollama.com) varsa anlamına göre (kurulum bunu önerir).
+1. **Notlarınız aranabilir hale gelir.** Carry onları kısa parçalara böler ve bilgisayarınızda bir arama dizini tutar: kelimelere ve anlamına göre. Anlam modeli (yaklaşık 200 MB) Carry'nin içinde çalışır; bilgisayarınızda [Ollama](https://ollama.com) varsa Carry onu kullanır.
 2. **Asistanınız önce notlarınıza bakar.** Notlarda arar, yalnızca soruyu gerçekten cevaplayan parçaları tutar ve her birinin kaynağını göstererek cevap verir. “Geçen hafta” ya da “eylülde” gibi ifadeler aramayı o döneme daraltır. Her sohbet de son kararların ve yarım kalan işlerin kısa bir özetiyle açılır.
 3. **Sohbetler, onayladığınız taslaklara dönüşür.** Sohbet bitince Carry kararları ve açık işleri not klasörünüzdeki `+/` gelen kutusuna taslak olarak yazar. Carry uygulamasında her maddeyi kabul eder, düzeltir ya da atlarsınız; siz onaylamadan hiçbir şey nota dönüşmez.
 
@@ -41,7 +41,7 @@ Carry notlarınızı hiçbir yere yüklemez ve kendine ait bir çevrimiçi hizme
 | Ekibinizin ortak notlarında da aramak (Markdown notlarının durduğu bir GitHub deposu; `gh` gerekir) | `carry github add --id team --repository sahip/ad` |
 | Ekip deposunun arama dizinini depoyla birlikte göndermek, böylece ekip arkadaşları hemen arar (deponun klonunda çalıştırıp commit ve push edin) | `carry github pack --id team --out <klon>/.carry/index.db` |
 | Sohbet taslaklarını her akşam 21:30'da almak | `carry harvest --install-schedule` |
-| Anlamına göre aramayı sonradan açmak | `carry search --semantic on --install-ollama` |
+| Anlamına göre aramayı açıp kapatmak | `carry search --semantic on` (ya da `off`) |
 | Carry'yi güncellemek | `carry update`, ardından `carry app install` |
 | Her şeyin çalıştığını kontrol etmek | `carry status --probe` |
 
@@ -65,7 +65,7 @@ uv pip install --python .venv/bin/python -e .
 .venv/bin/python -m unittest discover -s tests -q
 ```
 
-Çekirdek Python 3.11+ ister, paket gerektirmez. Ek paketler: `.[embed]` (NumPy), `.[yaml]` (PyYAML). Asıl veri notlardır; dizin her zaman yeniden üretilebilir.
+Python 3.11+ ister. Anlamına göre arama `onnxruntime`, `tokenizers` ve NumPy kullanır (Intel Mac'ler için `onnxruntime` paketi yok; orada Ollama ya da kelime araması kullanılır). Ek paket: `.[yaml]` (PyYAML). Asıl veri notlardır; dizin her zaman yeniden üretilebilir.
 
 </details>
 

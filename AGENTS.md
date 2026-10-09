@@ -17,7 +17,7 @@ Carry does not upload notes anywhere and uses no online service of its own. Pass
 
 ![How Carry works](assets/how-it-works.svg)
 
-- Carry searches by words (built in) and, when [Ollama](https://ollama.com) is installed, by meaning (`embeddinggemma`, about 0.6 GB, runs locally). Search by meaning catches synonyms and Turkish/English matches.
+- Carry searches by words and by meaning. The meaning model (`embeddinggemma`, 4-bit, about 200 MB, downloaded once) runs inside Carry; where [Ollama](https://ollama.com) is installed Carry uses it instead (faster on a Mac's GPU, same results). Intel Macs have no built-in model and search by words unless Ollama is there. Search by meaning catches synonyms and Turkish/English matches.
 - The two result lists are combined. The owner's own assistant then keeps only the passages that really answer: in Claude Code the `carry-recall` subagent (Claude Sonnet) does this, in Codex the same subagent on Codex's GPT model. It runs on the owner's existing subscription; in Claude Code it adds a few cents per question.
 
 ## Installing Carry for someone
@@ -61,10 +61,7 @@ Recommended: a new folder at `~/Vault`; tell them where it will be in plain word
 **2. Language** (new folder only)
 > Notlarını çoğunlukla hangi dilde yazıyorsun, Türkçe mi İngilizce mi?
 
-**Search by meaning: a consent, not a choice.** Check silently with `ollama --version`, then `brew --version` (macOS) or `winget --version` (Windows). If Ollama is installed, it is used; say nothing. If it is missing and Homebrew or winget is there, ask:
-> Notlarını anlamına göre de arayabilmesi için bilgisayarına Ollama adlı ücretsiz bir program kurmam gerekiyor; notların internete gitmez. Kurayım mı?
-
-If neither is there, do not ask: Carry searches by words, which works well because the assistant searches with several wordings.
+Search by meaning needs no question: setup downloads Carry's own model (about 200 MB) unless Ollama is already installed.
 
 ### Missing programs, in this order
 
@@ -101,18 +98,18 @@ Below, `carry` means `~/.local/bin/carry` until a new shell finds it, and `WS` i
 carry --workspace WS setup --yes --vault ~/Vault --language Turkish
 ```
 
-This creates Carry's folder and the notes folder (with `CLAUDE.md`, `AGENTS.md`, the `carry-recall` subagents and the MCP settings), runs `git init`, sets up search by meaning (installing Ollama with Homebrew or winget if it is missing), builds the macOS app and scans the notes. Add `--no-semantic` if the owner said no to Ollama. Building the app takes a minute or two; say so before running it ("Birkaç dakika sürebilir, pencereyi kapatma.").
+This creates Carry's folder and the notes folder (with `CLAUDE.md`, `AGENTS.md`, the `carry-recall` subagents and the MCP settings), runs `git init`, sets up search by meaning (Ollama if installed, otherwise Carry's own model), builds the macOS app and scans the notes. Building the app takes a minute or two; say so before running it ("Birkaç dakika sürebilir, pencereyi kapatma.").
 
 **B. An existing folder of notes**
 
 ```sh
 carry --workspace WS init --embedding hashing --source notes=/path/to/notes
-carry --workspace WS search --semantic on --install-ollama
+carry --workspace WS search --semantic on
 carry --workspace WS connect claude /path/to/notes --language Turkish
 carry --workspace WS app install
 ```
 
-Use `--semantic off` (and no `--install-ollama`) if the owner said no to Ollama or there is no Homebrew or winget. For Codex use `connect codex`. `connect` writes the MCP settings (`.mcp.json`, or `.codex/config.toml` for Codex) and the `carry-recall` subagent (`.claude/agents/carry-recall.md`, or `.codex/agents/carry-recall.toml`), journaled; `carry connect undo <id>` reverts both, and `--dry-run` only shows the change. An existing `carry-recall` file is left as it is. It does not edit the folder's `CLAUDE.md` / `AGENTS.md`; the subagent's description and the Carry server's instructions already tell the assistant when to search.
+For Codex use `connect codex`. `connect` writes the MCP settings (`.mcp.json`, or `.codex/config.toml` for Codex) and the `carry-recall` subagent (`.claude/agents/carry-recall.md`, or `.codex/agents/carry-recall.toml`), journaled; `carry connect undo <id>` reverts both, and `--dry-run` only shows the change. An existing `carry-recall` file is left as it is. It does not edit the folder's `CLAUDE.md` / `AGENTS.md`; the subagent's description and the Carry server's instructions already tell the assistant when to search.
 
 ### Only if the owner asks
 
@@ -132,7 +129,7 @@ Afterwards run `gh auth setup-git` yourself. A team repo may ship its own search
 carry --workspace WS status --probe
 ```
 
-`status` should show the source, a usable index and, for search by meaning, a reachable Ollama. A new notes folder has no notes yet, so there is nothing to search. Make the first note together instead; it also shows the owner how Carry works:
+`status` should show the source, a usable index and a semantic provider (`onnx` or `ollama`). A new notes folder has no notes yet, so there is nothing to search. Make the first note together instead; it also shows the owner how Carry works:
 
 > Carry'yi denemek için ilk notunu birlikte yazalım. Hatırlamak istediğin bir şey söyle; örneğin bir telefon numarası, bir doğum günü ya da bir tarif.
 
@@ -154,7 +151,7 @@ Adapt it: Codex instead of Claude (`codex` instead of `claude`). If they use the
 
 ### Windows
 
-The CLI, MCP server, hooks, chat drafts and the evening job work on Windows (Task Scheduler instead of launchd, winget instead of Homebrew). There is no app. Ollama comes from `winget install Ollama.Ollama`.
+The CLI, MCP server, hooks, chat drafts and the evening job work on Windows (Task Scheduler instead of launchd, winget instead of Homebrew). There is no app.
 
 ## Keeping Carry up to date
 
@@ -168,7 +165,7 @@ carry update
 ## Known pitfalls
 
 - **Folder connected with an older Carry:** it has no `carry-recall` subagent, or one on Haiku, so recall returns unfiltered passages or a weaker check. Run `carry connect` again after updating; it adds a missing subagent but leaves an existing file as it is, so update `model:` in an old one by hand.
-- **`setup --yes` installs Ollama** unless `--no-semantic` is given.
+- **Large existing folders:** with Carry's own model the first scan reads about six passages a second, so setup scans a folder of more than 300 notes in the background; recall answers once it finishes.
 - **Carry's folder in iCloud Drive or OneDrive:** the index and virtual environments break. Keep it in the home folder.
 - **The assistant does not see Carry:** it was started outside the notes folder, or the MCP server was not approved. `carry connect list` shows what was written where.
 

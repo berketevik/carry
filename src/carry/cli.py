@@ -342,13 +342,15 @@ def cmd_context(args):
 def cmd_search(args):
     from . import index, jev, models, ollama_setup
     ws = open_workspace(args.workspace)
-    semantic = ws.embedding.provider == 'ollama' if args.semantic is None else args.semantic == 'on'
+    semantic = ws.embedding.provider in ('ollama', 'onnx') if args.semantic is None else args.semantic == 'on'
     judge = args.judge or ('jev' if ws.retrieval.reranker == 'jev' else 'assistant')
     if judge == 'jev' and not jev.api_key():
         _print(dict(status='error', error='no_typesafe_key'), args.json,
                ['no TypeSafe key: save it with carry setup or set TYPESAFE_API_KEY'])
         return EXIT_FAILED
-    if semantic:
+    # Without Ollama the model built into Carry searches by meaning; Ollama is needed only
+    # when asked for, or where that model cannot run (Intel Macs).
+    if semantic and (args.install_ollama or models.semantic_engine() == 'embeddinggemma'):
         ok, how = ollama_setup.ensure(install_if_missing=args.install_ollama)
         if not ok:
             hint = ('run again with --install-ollama (uses Homebrew)' if how == 'ollama_missing'
@@ -543,7 +545,7 @@ def build_parser():
     pk.add_argument('--out', required=True, help='usually <local clone of the repo>/.carry/index.db')
     gh.set_defaults(func=cmd_github)
     model = sub.add_parser('model', help='download and activate a local embedding model')
-    model.add_argument('model', choices=('semantic_jev', 'semantic_assistant', 'keyword_jev', 'keyword_assistant', 'assistant_ranked', 'accurate_multilingual', 'embeddinggemma', 'qwen3-embedding:0.6b', 'nomic-embed-text'))
+    model.add_argument('model', choices=('semantic_jev', 'semantic_assistant', 'keyword_jev', 'keyword_assistant', 'assistant_ranked', 'accurate_multilingual', 'embeddinggemma', 'embeddinggemma_onnx', 'qwen3-embedding:0.6b', 'nomic-embed-text'))
     model.add_argument('--wait', action='store_true')
     model.set_defaults(func=cmd_model)
 

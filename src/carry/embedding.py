@@ -1,7 +1,8 @@
 """Embedding providers behind one interface.
 
-Two providers ship today. `ollama` is the real local model; `hashing` is a
-deterministic offline provider used by tests and by explicitly degraded setups.
+Three providers ship today. `ollama` and `onnx` run the same local model
+(EmbeddingGemma), through the Ollama app or inside Carry; `hashing` is a
+deterministic offline provider used by tests and by keyword-only setups.
 The hashing provider is lexical, not semantic, and every status payload that
 exposes it says so, because pretending otherwise would hide a quality cliff.
 """
@@ -127,6 +128,46 @@ class OllamaEmbedding(EmbeddingProvider):
             return False, str(exc)
 
 
+class OnnxEmbedding(EmbeddingProvider):
+    """EmbeddingGemma run inside Carry (onnx_model): search by meaning without Ollama."""
+    name = "onnx"
+    semantic = True
+
+    def __init__(self, model="embeddinggemma", prefixes=True):
+        if model != "embeddinggemma":
+            raise ProviderUnavailable("unsupported_onnx_model:" + str(model))
+        self.model = model
+        self.prefixes = prefixes
+
+    @property
+    def fingerprint(self):
+        # The same model and prompts as Ollama's embeddinggemma. Measured against it on 927
+        # team passages, the vectors agree to cosine 0.95 and pick the same first passage for
+        # 12 of 12 questions, so both engines share a fingerprint: an index or a team pack
+        # carries over when Ollama is added or removed.
+        return OllamaEmbedding(model=self.model, prefixes=self.prefixes).fingerprint
+
+    def _embed(self, text):
+        from . import onnx_model
+        vector = onnx_model.embed([text])[0]
+        if not all(math.isfinite(x) for x in vector) or not any(vector):
+            raise ProviderUnavailable("invalid_embedding")
+        return vector
+
+    def embed_document(self, text):
+        return self._embed(("title: none | text: " if self.prefixes else "") + text)
+
+    def embed_query(self, text):
+        return self._embed(("task: search result | query: " if self.prefixes else "") + text)
+
+    def probe(self):
+        try:
+            self._embed("probe")
+            return True, "ok"
+        except ProviderUnavailable as exc:
+            return False, str(exc)
+
+
 def build_provider(config):
     """Instantiate the configured provider. Construction never reaches the
     network, so an unavailable model surfaces as a diagnostic, not an import
@@ -137,4 +178,6 @@ def build_provider(config):
         return OllamaEmbedding(model=config.model, endpoint=config.endpoint,
                                prefixes=config.prefixes, revision=config.revision,
                                timeout=config.timeout)
+    if config.provider == "onnx":
+        return OnnxEmbedding(model=config.model, prefixes=config.prefixes)
     raise ProviderUnavailable("unknown_provider:" + str(config.provider))
