@@ -342,7 +342,7 @@ def cmd_context(args):
 def cmd_search(args):
     from . import index, jev, models, ollama_setup
     ws = open_workspace(args.workspace)
-    semantic = ws.embedding.provider in ('ollama', 'onnx') if args.semantic is None else args.semantic == 'on'
+    semantic = ws.embedding.provider in ('ollama', 'llama') if args.semantic is None else args.semantic == 'on'
     judge = args.judge or ('jev' if ws.retrieval.reranker == 'jev' else 'assistant')
     if judge == 'jev' and not jev.api_key():
         _print(dict(status='error', error='no_typesafe_key'), args.json,
@@ -545,7 +545,7 @@ def build_parser():
     pk.add_argument('--out', required=True, help='usually <local clone of the repo>/.carry/index.db')
     gh.set_defaults(func=cmd_github)
     model = sub.add_parser('model', help='download and activate a local embedding model')
-    model.add_argument('model', choices=('semantic_jev', 'semantic_assistant', 'keyword_jev', 'keyword_assistant', 'assistant_ranked', 'accurate_multilingual', 'embeddinggemma', 'embeddinggemma_onnx', 'qwen3-embedding:0.6b', 'nomic-embed-text'))
+    model.add_argument('model', choices=('semantic_jev', 'semantic_assistant', 'keyword_jev', 'keyword_assistant', 'assistant_ranked', 'accurate_multilingual', 'embeddinggemma', 'embeddinggemma_builtin', 'embeddinggemma_onnx', 'qwen3-embedding:0.6b', 'nomic-embed-text'))
     model.add_argument('--wait', action='store_true')
     model.set_defaults(func=cmd_model)
 

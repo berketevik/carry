@@ -27,6 +27,12 @@ def status(workspace, probe_provider=False):
     degradation = []
     if not provider_info.get("semantic"):
         degradation.append("lexical_only_provider")
+    if provider_info["name"] == "llama":
+        from . import llama_model
+        if not llama_model.runtime_available():
+            degradation.append("llama_runtime_missing")
+        elif not llama_model.installed():
+            degradation.append("model_not_installed")
     if index_health["state"] != "fresh":
         degradation.append("index_" + index_health["state"])
     if sidecar.get("reconcile"):

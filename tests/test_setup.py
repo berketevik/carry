@@ -35,12 +35,12 @@ class SetupTest(unittest.TestCase):
         self.assertIn('CARRY HAZIR', out.getvalue())
 
     def test_semantic_search_uses_the_built_in_model_without_asking_for_ollama(self):
-        from carry import models, ollama_setup, onnx_model
+        from carry import llama_model, models, ollama_setup
         calls = []
         with redirect_stdout(io.StringIO()), \
                 patch.object(ollama_setup, 'status', return_value=dict(installed=False, brew='/opt/homebrew/bin/brew', installer='/opt/homebrew/bin/brew', running=False)), \
                 patch.object(ollama_setup, 'install') as install, \
-                patch.object(onnx_model, 'runtime_available', return_value=True), \
+                patch.object(llama_model, 'runtime_available', return_value=True), \
                 patch.object(models, 'setup', side_effect=lambda ws, preset: calls.append(preset)):
             answers = io.StringIO('\n'.join(['1', '1', str(self.base / 'Vault'), '1']) + '\n')
             code = setup_wizard.run(state_dir=str(self.base / 'ws'), animation=False, stream=answers, app=False)
@@ -49,11 +49,11 @@ class SetupTest(unittest.TestCase):
         self.assertEqual(calls, ['semantic_assistant'])
 
     def test_semantic_falls_back_to_keywords_without_ollama_or_the_runtime(self):
-        from carry import models, ollama_setup, onnx_model
+        from carry import llama_model, models, ollama_setup
         calls = []
         with redirect_stdout(io.StringIO()), \
                 patch.object(ollama_setup, 'status', return_value=dict(installed=False, brew=None, installer=None, running=False)), \
-                patch.object(onnx_model, 'runtime_available', return_value=False), \
+                patch.object(llama_model, 'runtime_available', return_value=False), \
                 patch.object(models, 'setup', side_effect=lambda ws, preset: calls.append(preset)):
             setup_wizard.run(state_dir=str(self.base / 'ws'), assume_yes=True, vault_path=str(self.base / 'Vault'), animation=False, app=False)
         self.assertEqual(calls, ['keyword_assistant'])

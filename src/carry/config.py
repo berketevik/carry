@@ -98,8 +98,11 @@ class EmbeddingConfig:
 
     @staticmethod
     def from_json(data):
-        return EmbeddingConfig(**{k: v for k, v in (data or {}).items()
-                                  if k in EmbeddingConfig.__dataclass_fields__})
+        fields = {k: v for k, v in (data or {}).items() if k in EmbeddingConfig.__dataclass_fields__}
+        if fields.get("provider") == "onnx":
+            # 0.9-0.10 ran the built-in model through onnxruntime; llama.cpp replaced it.
+            fields["provider"] = "llama"
+        return EmbeddingConfig(**fields)
 
 
 @dataclass(frozen=True)

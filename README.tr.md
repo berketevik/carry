@@ -6,7 +6,7 @@
 
 Eylülde bir müşterinizin user ID'lerinin hatalı olduğunu buluyorsunuz. Kasımda onları düzeltmeye oturduğunuzda asistanınız önce notlarınıza bakar: ne bulduğunuzu hatırlatır ve nerede yazdığını gösterir. Notlarınız bilgisayarınızda, düz Markdown (`.md`) dosyaları olarak kalır.
 
-**Sürüm 0.10.0 · macOS 14+ · pilot**
+**Sürüm 0.11.0 · macOS 14+ · pilot**
 
 ## Başlayın
 
@@ -27,7 +27,7 @@ Kurulum iki şey sorar: neye bağlanacağınızı (kendi notlarınız, ekibinizi
 
 ![Carry nasıl çalışır: notlar bilgisayarınızda dizinlenir; soru kelimeyle ve anlamla aranır, asistanınız cevaplayan parçaları seçer](assets/how-it-works.tr.svg)
 
-1. **Notlarınız aranabilir hale gelir.** Carry onları kısa parçalara böler ve bilgisayarınızda bir arama dizini tutar: kelimelere ve anlamına göre. Anlam modeli (yaklaşık 200 MB) Carry'nin içinde çalışır; bilgisayarınızda [Ollama](https://ollama.com) varsa Carry onu kullanır.
+1. **Notlarınız aranabilir hale gelir.** Carry onları kısa parçalara böler ve bilgisayarınızda bir arama dizini tutar: kelimelere ve anlamına göre. Anlam modeli (yaklaşık 330 MB) Carry'nin içinde, Mac'inizin GPU'sunda çalışır; bilgisayarınızda [Ollama](https://ollama.com) varsa Carry onu kullanır.
 2. **Asistanınız önce notlarınıza bakar.** Notlarda arar, yalnızca soruyu gerçekten cevaplayan parçaları tutar ve her birinin kaynağını göstererek cevap verir. “Geçen hafta” ya da “eylülde” gibi ifadeler aramayı o döneme daraltır. Her sohbet de son kararların ve yarım kalan işlerin kısa bir özetiyle açılır.
 3. **Sohbetler, onayladığınız taslaklara dönüşür.** Sohbet bitince Carry kararları ve açık işleri not klasörünüzdeki `+/` gelen kutusuna taslak olarak yazar. Carry uygulamasında her maddeyi kabul eder, düzeltir ya da atlarsınız; siz onaylamadan hiçbir şey nota dönüşmez.
 
@@ -67,7 +67,7 @@ uv pip install --python .venv/bin/python -e .
 .venv/bin/python -m unittest discover -s tests -q
 ```
 
-Python 3.11+ ister. Anlamına göre arama `onnxruntime`, `tokenizers` ve NumPy kullanır (Intel Mac'ler için `onnxruntime` paketi yok; orada Ollama ya da kelime araması kullanılır). Ek paket: `.[yaml]` (PyYAML). Asıl veri notlardır; dizin her zaman yeniden üretilebilir.
+Python 3.11+ ister. Anlamına göre arama `llama-cpp-python` (llama.cpp; kurulumda kaynaktan derlenir, bu yüzden Xcode Command Line Tools gerekir; Windows'a kurulmaz, orada Ollama ya da kelime araması kullanılır) ve NumPy kullanır. Ek paket: `.[yaml]` (PyYAML). Asıl veri notlardır; dizin her zaman yeniden üretilebilir.
 
 </details>
 

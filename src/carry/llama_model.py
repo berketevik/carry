@@ -1,8 +1,9 @@
-"""The built-in embedding model: EmbeddingGemma 300M as 4-bit ONNX, run in process.
+"""The built-in embedding model: EmbeddingGemma 300M as 8-bit GGUF, run in process by llama.cpp.
 
-Search by meaning without Ollama. The files come from a pinned revision on Hugging Face
-and are checked against their SHA-256 when downloaded; only `download()` reaches the
-network, never a search. The loaded model holds about 0.75 GB and is released when idle.
+Search by meaning without Ollama, on the same engine Ollama uses: on Apple Silicon the
+model runs on the Mac's GPU (Metal). The file comes from a pinned revision on Hugging
+Face and is checked against its SHA-256 when downloaded; only `download()` reaches the
+network, never a search. The loaded model holds about 1 GB and is released when idle.
 """
 import hashlib
 import os
@@ -12,36 +13,35 @@ from pathlib import Path
 
 from .errors import ProviderUnavailable
 
-REPOSITORY = 'onnx-community/embeddinggemma-300m-ONNX'
-REVISION = '5090578d9565bb06545b4552f76e6bc2c93e4a66'
+REPOSITORY = 'ggml-org/embeddinggemma-300M-GGUF'
+REVISION = '0f741b5a6585bd53aeb15cd1372c56f2a0f65e12'
 FILES = {  # path: (bytes, sha256)
-    'tokenizer.json': (20323312, '4dda02faaf32bc91031dc8c88457ac272b00c1016cc679757d1c441b248b9c47'),
-    'onnx/model_q4.onnx': (519322, 'ad1dfee81a70f7944b9b9d1cc6e48075b832881cf33fab2f2b248be78f3f0043'),
-    'onnx/model_q4.onnx_data': (196725760, '599962c3143b040de2dd05e5975be3e9091dd067cacc6a8f7186e3203bab9e02'),
+    'embeddinggemma-300M-Q8_0.gguf': (333590944, 'b5ce9d77a3fc4b3b39ccb5643c36777911cc4eb46a66962eadfa3f5f60490d63'),
 }
+MODEL_FILE = 'embeddinggemma-300M-Q8_0.gguf'
 DOWNLOAD_BYTES = sum(size for size, _ in FILES.values())
+# Pooled embeddings need the whole passage in one batch, so batch and context are equal.
 MAX_TOKENS = 2048
 # Every assistant session runs its own MCP process; release the model after this many
-# idle seconds (the next search reloads it in about half a second). 0 keeps it loaded.
+# idle seconds (the next search reloads it in a fraction of a second). 0 keeps it loaded.
 IDLE_SECONDS = float(os.environ.get('CARRY_EMBEDDING_IDLE_SECONDS', '600'))
 
 _lock = threading.RLock()
 _loaded = {}
 _timer = None
+_log_callback = None
 
 
 def model_dir():
     base = os.environ.get('CARRY_MODEL_DIR')
     root = Path(base).expanduser() if base else Path.home() / '.cache' / 'carry' / 'models'
-    return root / 'embeddinggemma-300m-q4' / REVISION[:12]
+    return root / 'embeddinggemma-300m-q8-gguf' / REVISION[:12]
 
 
 def runtime_available():
-    """onnxruntime has no wheel for Intel Macs, so it may be missing from an install."""
+    """llama-cpp-python is built from source at install and is not installed on Windows."""
     try:
-        import numpy  # noqa: F401
-        import onnxruntime  # noqa: F401
-        import tokenizers  # noqa: F401
+        import llama_cpp  # noqa: F401
     except ImportError:
         return False
     return True
@@ -96,27 +96,34 @@ def download(progress=None, directory=None, base_url='https://huggingface.co'):
     return directory
 
 
+def _silence(llama_cpp):
+    """llama.cpp logs to stderr from C; Carry's hooks and MCP server keep their output clean."""
+    global _log_callback
+    if _log_callback is None:
+        _log_callback = llama_cpp.llama_log_callback(lambda level, text, data: None)
+        llama_cpp.llama_log_set(_log_callback, None)
+
+
 def _load(directory):
-    import onnxruntime
-    from tokenizers import Tokenizer
-    tokenizer = Tokenizer.from_file(str(directory / 'tokenizer.json'))
-    tokenizer.enable_truncation(MAX_TOKENS)
-    options = onnxruntime.SessionOptions()
-    options.log_severity_level = 3
-    session = onnxruntime.InferenceSession(str(directory / 'onnx' / 'model_q4.onnx'), options,
-                                           providers=['CPUExecutionProvider'])
-    return tokenizer, session
+    import atexit
+    import llama_cpp
+    _silence(llama_cpp)
+    # A model still loaded when the process ends aborts it: ggml's Metal device is torn down
+    # by a C++ destructor while the model's GPU buffers are alive (GGML_ASSERT, exit 134).
+    # Free it first; atexit runs before those destructors and ignores a second registration.
+    atexit.unregister(release)
+    atexit.register(release)
+    # n_gpu_layers=-1 puts every layer on the GPU where llama.cpp was built with one (Metal on
+    # Apple Silicon) and is ignored on a CPU-only build.
+    return llama_cpp.Llama(model_path=str(directory / MODEL_FILE), embedding=True, n_gpu_layers=-1,
+                           n_ctx=MAX_TOKENS, n_batch=MAX_TOKENS, n_ubatch=MAX_TOKENS, verbose=False)
 
 
 def embed(texts, directory=None):
-    """One normalised 768-dimension vector per text."""
+    """One normalised 768-dimension vector per text; longer texts are cut at MAX_TOKENS."""
     directory = directory or model_dir()
     if not installed(directory):
         raise ProviderUnavailable('model_not_installed')
-    try:
-        import numpy
-    except ImportError:
-        raise ProviderUnavailable('onnx_runtime_missing')
     with _lock:
         key = str(directory)
         if key not in _loaded:
@@ -124,20 +131,16 @@ def embed(texts, directory=None):
             try:
                 _loaded[key] = _load(directory)
             except ImportError:
-                raise ProviderUnavailable('onnx_runtime_missing')
+                raise ProviderUnavailable('llama_runtime_missing')
             except Exception as exc:
                 raise ProviderUnavailable('model_load_failed:' + type(exc).__name__)
-        tokenizer, session = _loaded[key]
-        encoded = tokenizer.encode_batch(list(texts))
-        width = max(len(e.ids) for e in encoded)
-        ids = numpy.zeros((len(encoded), width), dtype=numpy.int64)
-        mask = numpy.zeros_like(ids)
-        for row, item in enumerate(encoded):
-            ids[row, :len(item.ids)] = item.ids
-            mask[row, :len(item.ids)] = 1
-        vectors = session.run(['sentence_embedding'], {'input_ids': ids, 'attention_mask': mask})[0]
+        model = _loaded[key]
+        try:
+            vectors = model.embed(list(texts), normalize=True, truncate=True)
+        except Exception as exc:
+            raise ProviderUnavailable('embedding_failed:' + type(exc).__name__)
     _schedule_release()
-    return [vector.tolist() for vector in vectors]
+    return [list(vector) for vector in vectors]
 
 
 def release():
@@ -145,6 +148,8 @@ def release():
     with _lock:
         if not _loaded:
             return False
+        for model in _loaded.values():
+            model.close()
         _loaded.clear()
     import gc
     gc.collect()

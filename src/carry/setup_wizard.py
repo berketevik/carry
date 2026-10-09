@@ -345,7 +345,7 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
     # 2. Search: by meaning, through Ollama when it is installed, otherwise with the model
     # built into Carry. No question: the owner's assistant checks the results either way.
     step(2, total, 'Arama')
-    from . import ollama_setup, onnx_model
+    from . import llama_model, ollama_setup
     semantic = semantic_default
     with_ollama = False
     if semantic:
@@ -353,10 +353,10 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
             with_ollama, how = ollama_setup.start()
             if not with_ollama:
                 warn(f'Ollama başlatılamadı ({how}); Carry\'nin kendi arama modeli kullanılacak.')
-        if not with_ollama and not onnx_model.runtime_available():
+        if not with_ollama and not llama_model.runtime_available():
             semantic = False
     label = ('Arama modeli hazırlanıyor' if with_ollama else
-             f'Arama modeli indiriliyor ({onnx_model.DOWNLOAD_BYTES // 1_000_000} MB, bir iki dakika sürer)') if semantic \
+             f'Arama modeli indiriliyor ({llama_model.DOWNLOAD_BYTES // 1_000_000} MB, bir iki dakika sürer)') if semantic \
         else 'Arama ayarı uygulanıyor'
     try:
         with Spinner(label):
@@ -415,11 +415,12 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
     # 5. Index
     step(5, total, 'Notlar aranabilir hale getiriliyor')
     count = sum(1 for source in ws.sources if Path(source.root).is_dir() for _ in walk_markdown(Path(source.root)))
-    if ws.embedding.provider == 'onnx' and count > BACKGROUND_FILES:
-        # The built-in model reads about six passages a second: a large folder takes a while.
+    if ws.embedding.provider == 'llama' and count > BACKGROUND_FILES:
+        # The built-in model reads about 35 passages a second on an Apple Silicon GPU, far fewer
+        # on an Intel Mac's CPU: a large folder takes a while.
         from . import maintenance
         maintenance.start(ws, 'index')
-        ok(f'{count} not arka planda taranıyor; büyük bir klasörde bu yarım saati bulabilir. '
+        ok(f'{count} not arka planda taranıyor; büyük bir klasörde bu birkaç dakika sürebilir. '
            f'Bu arada kurulum bitti, Carry tarama bitince aramaya başlar.')
     else:
         with Spinner('Notlar taranıyor'):

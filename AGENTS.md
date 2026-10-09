@@ -17,7 +17,7 @@ Carry does not upload notes anywhere and uses no online service of its own. Pass
 
 ![How Carry works](assets/how-it-works.svg)
 
-- Carry searches by words and by meaning. The meaning model (`embeddinggemma`, 4-bit, about 200 MB, downloaded once) runs inside Carry; where [Ollama](https://ollama.com) is installed Carry uses it instead (faster on a Mac's GPU, same results). Intel Macs have no built-in model and search by words unless Ollama is there. Search by meaning catches synonyms and Turkish/English matches.
+- Carry searches by words and by meaning. The meaning model (`embeddinggemma`, 8-bit, about 330 MB, downloaded once) runs inside Carry on llama.cpp, the engine Ollama uses, on the GPU of an Apple Silicon Mac (on the CPU of an Intel Mac); where [Ollama](https://ollama.com) is installed Carry uses it instead, with the same results. Windows has no built-in model and searches by words unless Ollama is there. Search by meaning catches synonyms and Turkish/English matches.
 - The two result lists are combined. The owner's own assistant then keeps only the passages that really answer: in Claude Code the `carry-recall` subagent (Claude Sonnet) does this, in Codex the same subagent on Codex's GPT model. It runs on the owner's existing subscription; in Claude Code it adds a few cents per question.
 
 ## Installing Carry for someone
@@ -138,7 +138,7 @@ The first makes chat drafts every evening at 21:30; chat drafts are also made wh
 carry --workspace WS status --probe
 ```
 
-`status` should show the source, a usable index and a semantic provider (`onnx` or `ollama`). A new notes folder has no notes yet, so there is nothing to search. Make the first note together instead; it also shows the owner how Carry works:
+`status` should show the source, a usable index and a semantic provider (`llama` or `ollama`). A new notes folder has no notes yet, so there is nothing to search. Make the first note together instead; it also shows the owner how Carry works:
 
 > Carry'yi denemek için ilk notunu birlikte yazalım. Hatırlamak istediğin bir şey söyle; örneğin bir telefon numarası, bir doğum günü ya da bir tarif.
 
@@ -160,7 +160,7 @@ Adapt it: Codex instead of Claude (`codex` instead of `claude`). If they use the
 
 ### Windows
 
-The CLI, MCP server, hooks, chat drafts and the evening job work on Windows (Task Scheduler instead of launchd, winget instead of Homebrew). There is no app.
+The CLI, MCP server, hooks, chat drafts and the evening job work on Windows (Task Scheduler instead of launchd, winget instead of Homebrew). There is no app, and no built-in meaning model (llama.cpp would need a C++ compiler at install): Carry searches by meaning through Ollama when it is installed, otherwise by words.
 
 ## Keeping Carry up to date
 
