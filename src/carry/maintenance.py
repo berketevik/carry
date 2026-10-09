@@ -143,6 +143,7 @@ def run(workspace, action, arguments):
                 states[source.source_id] = dict(status='failed', error=str(exc), checked_at=time.time())
             atomic_text(workspace.state_dir / 'github.status.json', json.dumps(states))
     workspace = Workspace.load(workspace.state_dir)
+    _ensure_builtin_model(workspace)
     job_progress(workspace, stage='indexing')
     if action != 'index' and index.health(workspace)['state'] == 'fresh':
         return dict(status='fresh')
@@ -154,6 +155,23 @@ def run(workspace, action, arguments):
         fallback = replace(workspace, embedding=EmbeddingConfig(provider='hashing'))
         result = dict(index.build(fallback), fallback='lexical_until_model_available')
     return result
+
+
+def _ensure_builtin_model(workspace):
+    """A workspace on the built-in model without its file (set up on 0.9-0.10's onnx model, or a
+    cleared cache) downloads it once here; without it every build fails and search falls to words."""
+    if workspace.embedding.provider != 'llama':
+        return
+    from . import llama_model
+    from .errors import ProviderUnavailable
+    if not llama_model.runtime_available() or llama_model.installed():
+        return
+    job_progress(workspace, stage='downloading_model', model='embeddinggemma_builtin')
+    try:
+        llama_model.download(progress=lambda done, total: job_progress(
+            workspace, stage='downloading_model', completed=done, total=total))
+    except ProviderUnavailable:
+        pass  # the build reports the failure and status names the missing model
 
 
 def main():

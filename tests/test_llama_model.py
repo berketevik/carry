@@ -1,5 +1,6 @@
 """The built-in model (llama.cpp): verified download, engine choice, shared fingerprint, real vectors when present."""
 import hashlib
+import json
 import io
 import math
 import os
@@ -98,6 +99,24 @@ class LlamaModelTest(unittest.TestCase):
             result = models.setup(Workspace.load(ws_dir), 'embeddinggemma_onnx')
         self.assertEqual(result['engine'], 'llama')
         self.assertEqual(Workspace.load(ws_dir).embedding.provider, 'llama')
+
+    def test_a_workspace_without_the_model_file_says_so_and_maintenance_fetches_it(self):
+        from carry import maintenance
+        from carry.status import status
+        ws_dir = self.base / 'ws'
+        with redirect_stdout(io.StringIO()):
+            cli.main(['--workspace', str(ws_dir), 'init', '--embedding', 'hashing'])
+        data = json.loads((ws_dir / 'workspace.json').read_text(encoding='utf-8'))
+        data['embedding'].update(provider='onnx', model='embeddinggemma')
+        (ws_dir / 'workspace.json').write_text(json.dumps(data), encoding='utf-8')
+        ws = Workspace.load(ws_dir)
+        with patch.object(llama_model, 'runtime_available', return_value=True), \
+                patch.object(llama_model, 'installed', return_value=False):
+            self.assertIn('model_not_installed', status(ws)['degradation'])
+            with patch.object(llama_model, 'download') as download, \
+                    patch('carry.index.build', return_value=dict(status='built')):
+                maintenance.run(ws, 'index', {})
+        download.assert_called_once()
 
 
 @unittest.skipUnless(llama_model.runtime_available() and llama_model.installed(), 'built-in model not downloaded here')
