@@ -1,7 +1,7 @@
 """Embedding providers behind one interface.
 
-Three providers ship today. `ollama` and `onnx` run the same local model
-(EmbeddingGemma), through the Ollama app or inside Carry; `hashing` is a
+Three providers ship today. `ollama` and `llama` run the same local model
+(EmbeddingGemma) on the same engine, llama.cpp, through the Ollama app or inside Carry; `hashing` is a
 deterministic offline provider used by tests and by keyword-only setups.
 The hashing provider is lexical, not semantic, and every status payload that
 exposes it says so, because pretending otherwise would hide a quality cliff.
@@ -128,28 +128,27 @@ class OllamaEmbedding(EmbeddingProvider):
             return False, str(exc)
 
 
-class OnnxEmbedding(EmbeddingProvider):
-    """EmbeddingGemma run inside Carry (onnx_model): search by meaning without Ollama."""
-    name = "onnx"
+class LlamaEmbedding(EmbeddingProvider):
+    """EmbeddingGemma run inside Carry by llama.cpp (llama_model): search by meaning without Ollama."""
+    name = "llama"
     semantic = True
 
     def __init__(self, model="embeddinggemma", prefixes=True):
         if model != "embeddinggemma":
-            raise ProviderUnavailable("unsupported_onnx_model:" + str(model))
+            raise ProviderUnavailable("unsupported_llama_model:" + str(model))
         self.model = model
         self.prefixes = prefixes
 
     @property
     def fingerprint(self):
-        # The same model and prompts as Ollama's embeddinggemma. Measured against it on 927
-        # team passages, the vectors agree to cosine 0.95 and pick the same first passage for
-        # 12 of 12 questions, so both engines share a fingerprint: an index or a team pack
-        # carries over when Ollama is added or removed.
+        # The same model, prompts and engine as Ollama's embeddinggemma: on Apple Silicon the
+        # vectors agree with Ollama's to cosine 1.000 for passages and queries, so both share a
+        # fingerprint and an index or a team pack carries over when Ollama is added or removed.
         return OllamaEmbedding(model=self.model, prefixes=self.prefixes).fingerprint
 
     def _embed(self, text):
-        from . import onnx_model
-        vector = onnx_model.embed([text])[0]
+        from . import llama_model
+        vector = llama_model.embed([text])[0]
         if not all(math.isfinite(x) for x in vector) or not any(vector):
             raise ProviderUnavailable("invalid_embedding")
         return vector
@@ -178,6 +177,6 @@ def build_provider(config):
         return OllamaEmbedding(model=config.model, endpoint=config.endpoint,
                                prefixes=config.prefixes, revision=config.revision,
                                timeout=config.timeout)
-    if config.provider == "onnx":
-        return OnnxEmbedding(model=config.model, prefixes=config.prefixes)
+    if config.provider == "llama":
+        return LlamaEmbedding(model=config.model, prefixes=config.prefixes)
     raise ProviderUnavailable("unknown_provider:" + str(config.provider))

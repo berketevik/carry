@@ -97,27 +97,28 @@ def search_preset(semantic, judge):
 
 
 def semantic_engine():
-    """Ollama when it is installed (it runs on the Mac's GPU); otherwise the model built into Carry."""
-    from . import ollama_setup, onnx_model
-    if ollama_setup.status()['installed'] or not onnx_model.runtime_available():
+    """Ollama when it is installed; otherwise the model built into Carry (the same engine, llama.cpp)."""
+    from . import llama_model, ollama_setup
+    if ollama_setup.status()['installed'] or not llama_model.runtime_available():
         return 'embeddinggemma'
-    return 'embeddinggemma_onnx'
+    return 'embeddinggemma_builtin'
 
 
 def setup(workspace, model):
     from .maintenance import job_progress
-    if model == 'embeddinggemma_onnx':
-        from . import onnx_model
+    if model in ('embeddinggemma_builtin', 'embeddinggemma_onnx'):  # the 0.9-0.10 name still works
+        from . import llama_model
         from .errors import ProviderUnavailable
-        if not onnx_model.runtime_available():
-            raise CarryError('onnx_runtime_missing')
+        if not llama_model.runtime_available():
+            raise CarryError('llama_runtime_missing')
+        model = 'embeddinggemma_builtin'
         job_progress(workspace, stage='downloading_model', model=model)
         try:
-            onnx_model.download(progress=lambda done, total: job_progress(
+            llama_model.download(progress=lambda done, total: job_progress(
                 workspace, stage='downloading_model', completed=done, total=total))
         except ProviderUnavailable as exc:
             raise CarryError(str(exc).split(':')[0])
-        config = EmbeddingConfig(provider='onnx', model='embeddinggemma', prefixes=True)
+        config = EmbeddingConfig(provider='llama', model='embeddinggemma', prefixes=True)
         available, _ = build_provider(config).probe()
         if not available:
             raise CarryError('model_probe_failed')
@@ -125,7 +126,7 @@ def setup(workspace, model):
             current = Workspace.load(workspace.state_dir)
             replace(current, embedding=config, retrieval=replace(current.retrieval, reranker='off')).save()
         job_progress(workspace, stage='model_ready', model=model)
-        return dict(model='embeddinggemma', engine='onnx', available=True)
+        return dict(model='embeddinggemma', engine='llama', available=True)
     if model in ('semantic_jev', 'semantic_assistant'):
         setup(workspace, semantic_engine())
         extra = SEMANTIC_JEV if model == 'semantic_jev' else SEMANTIC_ASSISTANT

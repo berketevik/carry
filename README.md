@@ -6,7 +6,7 @@
 
 In September you find that a client's user IDs are broken. In November you sit down to fix them, and your assistant checks your notes first: it reminds you what you found, with a link to where it's written. Your notes stay on your computer as plain Markdown (`.md`) files.
 
-**Version 0.10.0 · macOS 14+ · pilot**
+**Version 0.11.0 · macOS 14+ · pilot**
 
 ## Get started
 
@@ -27,7 +27,7 @@ Setup asks two things: what to connect (your own notes, your team's knowledge ba
 
 ![How Carry works: notes are indexed on your computer; a question is searched by words and by meaning, and your assistant keeps the passages that answer](assets/how-it-works.svg)
 
-1. **Your notes become searchable.** Carry splits them into short passages and keeps a search index on your computer, by words and by meaning. The meaning model (about 200 MB) runs inside Carry; if [Ollama](https://ollama.com) is installed, Carry uses it instead.
+1. **Your notes become searchable.** Carry splits them into short passages and keeps a search index on your computer, by words and by meaning. The meaning model (about 330 MB) runs inside Carry, on your Mac's GPU; if [Ollama](https://ollama.com) is installed, Carry uses it instead.
 2. **Your assistant checks your notes first.** It searches them, keeps only the passages that really answer the question and replies with the source of each. “Last week” or “in September” narrows the search to that period. Each chat also opens with a short brief of recent decisions and unfinished work.
 3. **Chats turn into drafts you review.** When a chat ends, Carry drafts its decisions and open tasks into your notes folder's `+/` inbox. In the Carry app you accept, fix or skip each item; nothing becomes a note without you.
 
@@ -67,7 +67,7 @@ uv pip install --python .venv/bin/python -e .
 .venv/bin/python -m unittest discover -s tests -q
 ```
 
-Needs Python 3.11+. Search by meaning uses `onnxruntime`, `tokenizers` and NumPy (no `onnxruntime` wheel exists for Intel Macs, which use Ollama or word search). Extra: `.[yaml]` (PyYAML). Notes are the original data; the index can always be rebuilt.
+Needs Python 3.11+. Search by meaning uses `llama-cpp-python` (llama.cpp, built from source at install, so Xcode Command Line Tools are needed; not installed on Windows, which uses Ollama or word search) and NumPy. Extra: `.[yaml]` (PyYAML). Notes are the original data; the index can always be rebuilt.
 
 </details>
 

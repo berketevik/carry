@@ -4,18 +4,18 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "carry"
-version = "0.10.0"
+version = "0.11.0"
 authors = [{ name = "Berke Tevik" }]
 description = "Portable local memory for coding agents: Markdown sources, a derived index and an MCP interface."
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
 dependencies = [
-    # Search by meaning without Ollama (onnx_model). onnxruntime has no wheel for Intel
-    # Macs; there Carry uses Ollama or searches by words.
+    # Search by meaning without Ollama (llama_model), on Ollama's engine: llama.cpp, on the GPU
+    # of an Apple Silicon Mac. It is built from source at install (Xcode Command Line Tools);
+    # Windows has no compiler by default, so there Carry uses Ollama or searches by words.
     "numpy>=1.26,<3",
-    "tokenizers>=0.20,<1",
-    "onnxruntime>=1.20,<2; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "llama-cpp-python>=0.3.36,<0.4; sys_platform != 'win32'",
 ]
 
 [project.optional-dependencies]

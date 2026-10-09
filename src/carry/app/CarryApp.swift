@@ -1965,8 +1965,8 @@ struct SearchSettings: View {
                         Text(T("1. How should it find notes?", "1. Notları nasıl bulsun?")).font(.headline)
                         option(isOn: finder == "semantic", title: T("By meaning", "Anlamına göre"), uses: [T("built-in model", "yerleşik model")],
                                short: T("Also finds notes written with other words (“meeting” finds “call”).", "Başka kelimelerle yazılmış notları da bulur (“toplantı” diye sorunca “görüşme”yi de)."),
-                               long: T("A small language model (embeddinggemma) runs inside Carry: a one-time 200 MB download, about 0.75 GB of memory while searching, released when idle. If the Ollama app is installed, Carry uses it instead. Your notes never leave the Mac for this step.",
-                                       "Küçük bir dil modeli (embeddinggemma) Carry'nin içinde çalışır: bir kerelik 200 MB indirme, arama sırasında yaklaşık 0,75 GB bellek, boştayken bellekten çıkar. Ollama uygulaması kuruluysa Carry onu kullanır. Bu adımda notlarınız Mac'ten çıkmaz."),
+                               long: T("A small language model (embeddinggemma) runs inside Carry, on the Mac's GPU: a one-time 330 MB download, about 1 GB of memory while searching, released when idle. If the Ollama app is installed, Carry uses it instead. Your notes never leave the Mac for this step.",
+                                       "Küçük bir dil modeli (embeddinggemma) Carry'nin içinde, Mac'in GPU'sunda çalışır: bir kerelik 330 MB indirme, arama sırasında yaklaşık 1 GB bellek, boştayken bellekten çıkar. Ollama uygulaması kuruluysa Carry onu kullanır. Bu adımda notlarınız Mac'ten çıkmaz."),
                                badge: T("recommended", "önerilen")) { finder = "semantic" }
                         option(isOn: finder == "keyword", title: T("By words", "Kelimelerine göre"), uses: [T("built in", "yerleşik")],
                                short: T("Finds notes that contain the words of the question. Nothing to install.", "Sorudaki kelimeleri içeren notları bulur. Kurulacak bir şey yok."),
