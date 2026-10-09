@@ -45,11 +45,11 @@ class VaultTest(unittest.TestCase):
         for rel, text in files.items():
             self.assertIsNone(re.search(r'\{\{[A-Z_]+\}\}', text), rel)
 
-    def test_recall_subagents_use_a_small_model_and_only_the_recall_tool(self):
+    def test_recall_subagents_use_sonnet_and_only_the_recall_tool(self):
         import tomllib
         files = vault.render('Turkish')
         claude = files['.claude/agents/carry-recall.md']
-        self.assertIn('model: haiku', claude)
+        self.assertIn('model: sonnet', claude)
         self.assertIn('tools: mcp__carry__carry_recall', claude)
         codex = tomllib.loads(files['.codex/agents/carry-recall.toml'])
         self.assertEqual(codex['name'], 'carry-recall')

@@ -1924,6 +1924,11 @@ struct SearchSettings: View {
         get { preset.hasSuffix("_jev") ? "jev" : preset == "accurate_multilingual" ? "local" : "assistant" }
         nonmutating set { preset = Self.preset(finder: finder, checker: newValue) }
     }
+    /// The check is the owner's own assistant; the other checkers stay visible only where already in use.
+    var legacyChecker: Bool {
+        let saved = str(model.settings, "preset", "")
+        return saved.hasSuffix("_jev") || saved == "accurate_multilingual"
+    }
     static func preset(finder: String, checker: String) -> String {
         switch (finder, checker) {
         case (_, "local"): return "accurate_multilingual"
@@ -1967,7 +1972,11 @@ struct SearchSettings: View {
                                short: T("Finds notes that contain the words of the question. Nothing to install.", "Sorudaki kelimeleri içeren notları bulur. Kurulacak bir şey yok."),
                                long: T("Built into Carry, nothing runs in the background. Misses notes that say the same thing in completely different words.",
                                        "Carry'nin içinde yerleşik; arka planda bir şey çalışmaz. Aynı şeyi tamamen başka kelimelerle anlatan notları kaçırabilir."),
-                               badge: nil) { finder = "keyword"; if checker == "local" { checker = "jev" } }
+                               badge: nil) { finder = "keyword"; if checker == "local" { checker = "assistant" } }
+                        if !legacyChecker {
+                            Text(T("Your assistant then keeps only the passages that really answer the question.", "Ardından asistanınız yalnızca soruyu gerçekten yanıtlayan parçaları tutar.")).font(.caption).foregroundStyle(.secondary)
+                        }
+                        if legacyChecker {
                         Divider()
                         Text(T("2. Who checks the results?", "2. Sonuçları kim kontrol etsin?")).font(.headline)
                         Text(T("The check keeps only passages that really answer the question, so your assistant is not misled.", "Kontrol, yalnızca soruyu gerçekten yanıtlayan parçaları tutar; böylece asistanınız yanılmaz.")).font(.caption).foregroundStyle(.secondary)
@@ -1975,17 +1984,18 @@ struct SearchSettings: View {
                                short: T("Most accurate and fastest (about half a second). Needs a TypeSafe key.", "En isabetli ve en hızlı (yaklaşık yarım saniye). TypeSafe anahtarı gerekir."),
                                long: T("A specialised service checks which passages answer the question and drops passages that try to instruct an AI. The question and up to 32 found passages go to TypeSafe in the US (secrets masked, best effort; TypeSafe says it does not train on them). In Carry's 36-question test, meaning + Jev put the right note first 34 times, the best result. Chat drafts are checked there too: masked chat excerpts and note passages go to TypeSafe while they are compared with your notes.",
                                        "Bu işe özel bir hizmet, hangi parçaların soruyu yanıtladığını kontrol eder ve yapay zekâya talimat vermeye çalışan parçaları eler. Soru ve en fazla 32 bulunan parça ABD'deki TypeSafe'e gider (gizli bilgiler elden geldiğince maskelenir; TypeSafe bunlarla model eğitmediğini belirtiyor). Carry'nin 36 soruluk testinde anlam + Jev doğru notu 34 kez ilk sıraya koydu; en iyi sonuç buydu. Sohbet taslakları da orada denetlenir: notlarınızla karşılaştırılırken maskelenmiş sohbet alıntıları ve not parçaları TypeSafe'e gider."),
-                               badge: T("recommended", "önerilen")) { checker = "jev" }
-                        option(isOn: checker == "assistant", title: T("My own assistant (Claude or GPT)", "Kendi asistanım (Claude ya da GPT)"), uses: ["Claude Code: Claude Haiku", "Codex: GPT"],
+                               badge: nil) { checker = "jev" }
+                        option(isOn: checker == "assistant", title: T("My own assistant (Claude or GPT)", "Kendi asistanım (Claude ya da GPT)"), uses: ["Claude Code: Claude Sonnet", "Codex: GPT"],
                                short: T("No extra service or key: the assistant you already use sorts the results.", "Ek hizmet ya da anahtar yok: zaten kullandığınız asistan sonuçları ayıklar."),
-                               long: T("Carry hands the assistant a few more passages and it decides which ones matter. In Claude Code a small Claude model (Haiku) does this in a helper step; in Codex, Codex's own GPT model does it. It runs on your existing subscription, with nothing extra leaving your Mac beyond what already goes to that assistant. A little slower and it uses a few more tokens per question. After a chat, the same assistant compares its drafts with your notes (already recorded or a real conflict).",
-                                       "Carry asistana biraz daha fazla parça verir; hangilerinin önemli olduğuna asistan karar verir. Claude Code'da bunu yardımcı bir adımda küçük bir Claude modeli (Haiku) yapar; Codex'te Codex'in kendi GPT modeli yapar. Mevcut aboneliğinizle çalışır; o asistana zaten gidenin ötesinde Mac'inizden ek bir şey çıkmaz. Biraz daha yavaştır ve soru başına biraz daha fazla token harcar. Sohbetten sonra taslakları notlarınızla da aynı asistan karşılaştırır (zaten kayıtlı mı, gerçek bir çelişki mi)."),
-                               badge: nil) { checker = "assistant" }
+                               long: T("Carry hands the assistant a few more passages and it decides which ones matter. In Claude Code a Claude model (Sonnet) does this in a helper step; in Codex, Codex's own GPT model does it. It runs on your existing subscription, with nothing extra leaving your Mac beyond what already goes to that assistant. A little slower and it uses a few more tokens per question. After a chat, the same assistant compares its drafts with your notes (already recorded or a real conflict).",
+                                       "Carry asistana biraz daha fazla parça verir; hangilerinin önemli olduğuna asistan karar verir. Claude Code'da bunu yardımcı bir adımda bir Claude modeli (Sonnet) yapar; Codex'te Codex'in kendi GPT modeli yapar. Mevcut aboneliğinizle çalışır; o asistana zaten gidenin ötesinde Mac'inizden ek bir şey çıkmaz. Biraz daha yavaştır ve soru başına biraz daha fazla token harcar. Sohbetten sonra taslakları notlarınızla da aynı asistan karşılaştırır (zaten kayıtlı mı, gerçek bir çelişki mi)."),
+                               badge: T("recommended", "önerilen")) { checker = "assistant" }
                         option(isOn: checker == "local", title: T("A large model on this Mac", "Bu Mac'te büyük bir model"), uses: [T("2 GB local model", "2 GB yerel model")],
                                short: T("Nothing goes online for the check. Heavy: for Macs with 16 GB memory or more; needs “By meaning”.", "Kontrol için hiçbir şey çevrimiçine gitmez. Ağır: 16 GB ve üzeri belleği olan Mac'ler için; “Anlamına göre” ile çalışır."),
                                long: T("A 2 GB relevance model (BGE reranker) runs on this Mac. It needs about 3 GB of free memory while searching and the first search after a pause is slow. On 8 GB Macs it can freeze the computer, so it is not recommended there.",
                                        "2 GB'lık bir alaka modeli (BGE reranker) bu Mac'te çalışır. Arama sırasında yaklaşık 3 GB boş bellek ister; bir aradan sonraki ilk arama yavaştır. 8 GB'lık Mac'lerde bilgisayarı dondurabildiği için önerilmez."),
                                badge: nil) { checker = "local"; finder = "semantic" }
+                        }
                         Divider()
                         FlowLayout(spacing: 8) {
                             Text(T("Your choice:", "Seçiminiz:")).fontWeight(.medium)
@@ -2003,7 +2013,6 @@ struct SearchSettings: View {
                     }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
                 }
                 if preset.contains("jev") || str(model.settings, "preset", "").contains("jev") { JevForm(model: model) }
-                else { DisclosureGroup(T("TypeSafe access key", "TypeSafe erişim anahtarı")) { JevForm(model: model).padding(.top, 8) } }
                 DisclosureGroup(T("Advanced", "Gelişmiş")) {
                     VStack(alignment: .leading, spacing: 16) {
                         GroupBox(L("Results handed to your assistant")) {
