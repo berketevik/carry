@@ -349,7 +349,7 @@ def cmd_search(args):
                ['no TypeSafe key: save it with carry setup or set TYPESAFE_API_KEY'])
         return EXIT_FAILED
     # Without Ollama the model built into Carry searches by meaning; Ollama is needed only
-    # when asked for, or where that model cannot run (Intel Macs).
+    # when asked for, or where that model is not installed (Windows).
     if semantic and (args.install_ollama or models.semantic_engine() == 'embeddinggemma'):
         ok, how = ollama_setup.ensure(install_if_missing=args.install_ollama)
         if not ok:
