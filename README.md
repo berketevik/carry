@@ -2,9 +2,9 @@
 
 🇹🇷 [Türkçe](README.tr.md) · 🤖 Assistants installing or explaining Carry: read [AGENTS.md](AGENTS.md) first.
 
-**Claude Code and Codex start every chat from zero. Carry gives them a memory made of your own notes.**
+**Carry connects Claude Code and Codex to your knowledge base. They search it before they answer, and you see which note each answer came from.**
 
-In September you find that a client's user IDs are broken. In November you sit down to fix them, and your assistant checks your notes first: it reminds you what you found, with a link to where it's written. Your notes stay on your computer as plain Markdown (`.md`) files.
+The knowledge base is a folder of Markdown (`.md`) notes: your own (an Obsidian vault, for example), your team's in a GitHub repository, or both. Carry indexes it on your computer and gives your assistant one tool to search it, `carry_recall`. In September you find that a client's user IDs are broken and write it down. In November you sit down to fix them and ask your assistant: it searches the knowledge base, tells you what you found and links the note it is written in. Your notes stay where they are; Carry reads them, and nothing is written without you.
 
 **Version 0.11.0 · macOS 14+ · pilot**
 
@@ -19,17 +19,19 @@ uv tool install "git+https://github.com/berketevik/carry"
 carry setup
 ```
 
-Setup asks two things: what to connect (your own notes, your team's knowledge base, or both) and, for each, whether to start fresh or use what you already have. Then open Claude Code (or Codex) in the folder it names and ask: "What is in my notes?"
+Setup asks two things: which knowledge base to connect (your own notes, your team's, or both) and, for each, whether to use what you already have or start fresh. Then open Claude Code (or Codex) in the folder it names and ask: "What is in my notes?" No notes yet? Setup can create a new notes folder, ready for your assistant to read and write.
 
 **Team leads:** give teammates one command, `carry setup --team owner/repo`, with your team's GitHub repository of Markdown notes. Whoever wants only the team's notes picks that in setup; nothing else is added.
 
 ## How it works
 
-![How Carry works: notes are indexed on your computer; a question is searched by words and by meaning, your assistant keeps the passages that answer; chats become drafts you review](assets/how-it-works.svg)
+![How Carry works: Carry indexes your knowledge base on your computer; your assistant searches it with carry_recall by words and by meaning, keeps the passages that answer and shows which note each part of the answer came from; optionally, chats become drafts you review](assets/how-it-works.svg)
 
-1. **Your notes become searchable.** Carry splits them into short passages and keeps a search index on your computer, by words and by meaning. The meaning model (about 330 MB) runs inside Carry, on your Mac's GPU; if [Ollama](https://ollama.com) is installed, Carry uses it instead.
-2. **Your assistant checks your notes first.** It searches them, keeps only the passages that really answer the question and replies with the source of each. “Last week” or “in September” narrows the search to that period. Each chat also opens with a short brief of recent decisions and unfinished work.
-3. **Chats turn into drafts you review.** When a chat ends, Carry drafts its decisions and open tasks into your notes folder's `+/` inbox. In the Carry app you accept, fix or skip each item; accepted items go to that day's log, and nothing is recorded without you.
+1. **Carry connects to your knowledge base.** It reads the notes, splits them into short passages and keeps a search index on your computer, by words and by meaning. The index follows your edits by itself. The meaning model (about 330 MB) runs inside Carry, on your Mac's GPU; if [Ollama](https://ollama.com) is installed, Carry uses it instead.
+2. **Your assistant searches it before answering.** Claude Code and Codex get Carry's search tool, `carry_recall`, and use it when a question is about your work, decisions or projects. Carry returns the matching passages with their source, and your assistant keeps only the ones that really answer. “Last week” or “in September” narrows the search to that period.
+3. **You see what came from the knowledge base.** Each search shows in the chat as a Carry call, and Carry asks the assistant to cite the note behind every claim, so you can tell what came from your knowledge base and what the assistant added. Passages from your team's knowledge base are marked as such. When nothing matches, the assistant is told to say so instead of guessing.
+
+**Optional extras.** No notes yet? Carry can create a new notes folder, set up for your assistant. Each chat there opens with a short brief of recent decisions and unfinished work, and when a chat ends Carry drafts its decisions and open tasks into the folder's `+/` inbox. In the Carry app you accept, fix or skip each item; accepted items go to that day's log, and nothing is recorded without you.
 
 ## Your data
 

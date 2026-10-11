@@ -685,12 +685,15 @@ struct InfoButton: View {
 }
 
 let glossary: [(String, String, String, String)] = [
+    ("Knowledge base", "Bilgi bankası",
+     "The notes your assistant searches through Carry: your own notes folder, your team's notes from GitHub, or both. Carry keeps them searchable and only reads them unless you allow otherwise.",
+     "Asistanınızın Carry üzerinden aradığı notlar: kendi not klasörünüz, ekibinizin GitHub'daki notları ya da ikisi. Carry onları aranabilir tutar; siz izin vermedikçe yalnızca okur."),
     ("Notes folder", "Not klasörü",
      "The folder where your notes live as plain text files (Markdown, .md). Apps like Obsidian call it a vault. Carry only reads it unless you allow otherwise.",
      "Notlarınızın düz metin dosyaları (Markdown, .md) olarak durduğu klasör. Obsidian gibi uygulamalar buna \u{201C}vault\u{201D} (kasa) der. Siz izin vermedikçe Carry yalnızca okur."),
     ("Assistant", "Asistan",
-     "An AI tool such as Claude Code or Codex. Once connected, it looks in your notes before answering.",
-     "Claude Code veya Codex gibi bir yapay zekâ aracı. Bağlandığında, cevap vermeden önce notlarınıza bakar."),
+     "An AI tool such as Claude Code or Codex. Once connected, it searches your knowledge base through Carry before answering and shows the notes it used.",
+     "Claude Code veya Codex gibi bir yapay zekâ aracı. Bağlandığında, cevap vermeden önce Carry üzerinden bilgi bankanızda arar ve kullandığı notları gösterir."),
     ("Search data", "Arama için hazırlanan bilgiler",
      "What Carry prepares from your notes so it can find the right one quickly. It updates by itself when notes change and can always be rebuilt.",
      "Carry'nin doğru notu hızlıca bulmak için notlarınızdan hazırladığı bilgiler. Notlar değişince kendiliğinden güncellenir ve her zaman yeniden oluşturulabilir."),
@@ -717,12 +720,12 @@ struct GuideSheet: View {
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    Text(T("Carry gives your AI assistant a memory: your own notes. When you ask Claude Code or Codex something, it first looks in your notes; when a chat ends, Carry saves what was decided as a draft note. Your notes stay on this Mac, in a folder you choose.",
-                           "Carry, yapay zekâ asistanınıza bir hafıza verir: kendi notlarınız. Claude Code veya Codex'e bir şey sorduğunuzda önce notlarınıza bakar; sohbet bitince Carry alınan kararları taslak not olarak kaydeder. Notlarınız bu Mac'te, sizin seçtiğiniz bir klasörde kalır."))
+                    Text(T("Carry connects your AI assistant to your knowledge base: your own notes, your team's, or both. When you ask Claude Code or Codex something, it searches the knowledge base through Carry before answering and shows which note each part of the answer came from. Your notes stay on this Mac, where they are. Carry can also create a new notes folder and turn chats into drafts for you to check.",
+                           "Carry, yapay zekâ asistanınızı bilgi bankanıza bağlar: kendi notlarınıza, ekibinizin notlarına ya da ikisine. Claude Code veya Codex'e bir şey sorduğunuzda cevap vermeden önce Carry üzerinden bilgi bankasında arar ve cevabın her kısmının hangi nottan geldiğini gösterir. Notlarınız bu Mac'te, oldukları yerde kalır. Carry isterseniz yeni bir not klasörü de oluşturur ve sohbetleri kontrol etmeniz için taslağa çevirir."))
                         .fixedSize(horizontal: false, vertical: true)
                     FlowLayout {
-                        Button(T("Write my first note", "İlk notumu yaz")) { dismiss(); model.showNewNote = true }
                         Button(T("Use it with my assistant", "Asistanımla kullan")) { dismiss(); model.page = "Settings"; model.settingsTab = "Clients" }
+                        Button(T("Write my first note", "İlk notumu yaz")) { dismiss(); model.showNewNote = true }
                         Button(T("Review chat drafts", "Sohbet taslaklarını incele")) { dismiss(); model.page = "Review" }
                     }
                     Divider()
@@ -783,7 +786,7 @@ struct NewNoteSheet: View {
 struct Onboarding: View {
     @ObservedObject var model: Model
     @State private var notesLanguage = Lang.code == "tr" ? "Turkish" : "English"
-    let steps = [("Welcome", "Tanışma"), ("Your notes", "Notlarınız"), ("Assistant", "Asistan"), ("Ready", "Hazır")]
+    let steps = [("Welcome", "Tanışma"), ("Knowledge base", "Bilgi bankası"), ("Assistant", "Asistan"), ("Ready", "Hazır")]
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 18) {
@@ -834,15 +837,18 @@ struct Onboarding: View {
     var welcome: some View {
         VStack(alignment: .leading, spacing: 22) {
             Text(T("Welcome to Carry", "Carry'ye hoş geldiniz")).font(.largeTitle.bold())
-            Text(T("Carry turns your notes into a memory for your AI assistant.",
-                   "Carry, notlarınızı yapay zekâ asistanınızın hafızasına dönüştürür.")).font(.title3).foregroundStyle(.secondary)
+            Text(T("Carry connects your AI assistant to your knowledge base.",
+                   "Carry, yapay zekâ asistanınızı bilgi bankanıza bağlar.")).font(.title3).foregroundStyle(.secondary)
             Text(T("Carry works with Claude Code and Codex on this Mac.",
                    "Carry bu Mac'te Claude Code ve Codex ile çalışır."))
                 .padding(10).background(Color.accentColor.opacity(0.08)).clipShape(RoundedRectangle(cornerRadius: 8)).fixedSize(horizontal: false, vertical: true)
-            point("brain.head.profile", T("Your assistant uses your notes", "Asistanınız notlarınızdan yararlanır"),
-                  T("When you ask a question, your connected assistant can look up the related parts of your notes through Carry.",
-                    "Bir soru sorduğunuzda bağlı asistanınız, Carry üzerinden notlarınızın ilgili bölümlerine bakabilir."))
-            point("text.bubble", T("Chats turn into notes", "Sohbetlerden not çıkar"),
+            point("brain.head.profile", T("Your assistant searches your knowledge base", "Asistanınız bilgi bankanızda arar"),
+                  T("When you ask a question, your connected assistant looks up the related parts of your notes, or your team's, through Carry before it answers.",
+                    "Bir soru sorduğunuzda bağlı asistanınız, cevap vermeden önce Carry üzerinden notlarınızın ya da ekibinizin notlarının ilgili bölümlerine bakar."))
+            point("quote.bubble", T("You see where answers come from", "Cevabın nereden geldiğini görürsünüz"),
+                  T("Each search shows in the chat, and the answer names the notes it used, so you can tell what came from your knowledge base.",
+                    "Her arama sohbette görünür ve cevap kullandığı notları gösterir; böylece neyin bilgi bankanızdan geldiğini bilirsiniz."))
+            point("text.bubble", T("Optional: chats turn into notes", "İsteğe bağlı: sohbetlerden not çıkar"),
                   T("When chat notes are on, Carry saves the decisions and to-dos from your chats as drafts for you to check.",
                     "Sohbet notları açıkken Carry, sohbetlerinizdeki kararları ve yapılacak işleri kontrol etmeniz için taslak olarak kaydeder."))
             point("lock.shield", T("Your files stay on your Mac", "Dosyalarınız Mac'inizde kalır"),
@@ -858,9 +864,9 @@ struct Onboarding: View {
 
     var notes: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text(T("Where should your notes live?", "Notlarınız nerede dursun?")).font(.largeTitle.bold())
-            Text(T("Carry needs one folder for your notes. You can start fresh, or use notes you already have.",
-                   "Carry'nin notlarınız için bir klasöre ihtiyacı var. Sıfırdan başlayabilir ya da mevcut notlarınızı kullanabilirsiniz.")).foregroundStyle(.secondary)
+            Text(T("Connect your knowledge base", "Bilgi bankanızı bağlayın")).font(.largeTitle.bold())
+            Text(T("Choose the folder of notes your assistant should search. No notes yet? Carry can create a new folder for you.",
+                   "Asistanınızın arayacağı not klasörünü seçin. Henüz notunuz yok mu? Carry sizin için yeni bir klasör oluşturabilir.")).foregroundStyle(.secondary)
             if let first = model.localSources.first {
                 GroupBox {
                     HStack {
@@ -874,6 +880,17 @@ struct Onboarding: View {
             HStack(alignment: .top, spacing: 18) {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
+                        Image(systemName: "folder.badge.person.crop").font(.largeTitle).foregroundStyle(Color.accentColor)
+                        Text(T("I have .md note files", "Bilgisayarımda .md not dosyalarım var")).font(.title3.bold())
+                        Text(T("Choose the folder with notes whose file names end in .md (for example an Obsidian folder). Apple Notes, Word and PDF files are not added this way. Your notes' contents are not changed.",
+                               "Dosya adı .md ile biten notların bulunduğu klasörü seçin (örneğin bir Obsidian klasörü). Apple Notlar, Word ve PDF dosyaları bu yolla eklenmez. Notlarınızın içeriği değiştirilmez."))
+                            .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                        Button(T("Choose my notes folder…", "Not klasörümü seç…")) { useExisting() }.buttonStyle(.borderedProminent)
+                    }.padding(12).frame(maxWidth: .infinity, minHeight: 280, alignment: .topLeading)
+                }
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
                         Image(systemName: "sparkles.rectangle.stack").font(.largeTitle).foregroundStyle(Color.accentColor)
                         Text(T("Create a new notes folder", "Yeni bir not klasörü oluştur")).font(.title3.bold())
                         Text(T("Carry prepares a folder for your notes, with a short guide for your assistant and tidy sub-folders. You write your first note right after.",
@@ -885,17 +902,6 @@ struct Onboarding: View {
                             Button(T("Create my notes folder", "Not klasörümü oluştur")) { createNotes(at: suggestedFolder) }.buttonStyle(.borderedProminent)
                             Button(T("Create somewhere else…", "Başka konumda oluştur…")) { if let f = folder(T("Choose or create an empty folder for your notes", "Notlarınız için boş bir klasör seçin ya da oluşturun")) { createNotes(at: f) } }
                         }
-                    }.padding(12).frame(maxWidth: .infinity, minHeight: 280, alignment: .topLeading)
-                }
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Image(systemName: "folder.badge.person.crop").font(.largeTitle).foregroundStyle(Color.accentColor)
-                        Text(T("I have .md note files", "Bilgisayarımda .md not dosyalarım var")).font(.title3.bold())
-                        Text(T("Choose the folder with notes whose file names end in .md (for example an Obsidian folder). Apple Notes, Word and PDF files are not added this way. Your notes' contents are not changed.",
-                               "Dosya adı .md ile biten notların bulunduğu klasörü seçin (örneğin bir Obsidian klasörü). Apple Notlar, Word ve PDF dosyaları bu yolla eklenmez. Notlarınızın içeriği değiştirilmez."))
-                            .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                        Spacer(minLength: 0)
-                        Button(T("Choose my notes folder…", "Not klasörümü seç…")) { useExisting() }.buttonStyle(.borderedProminent)
                     }.padding(12).frame(maxWidth: .infinity, minHeight: 280, alignment: .topLeading)
                 }
             }
@@ -931,8 +937,8 @@ struct Onboarding: View {
             while let item = walker.nextObject() as? String { if item.lowercased().hasSuffix(".md") { count += 1; if count > 2000 { break } } }
         }
         if count == 0 {
-            model.error = T("No .md note files were found in that folder. Choose another folder, or create a new notes folder on the left.",
-                            "Bu klasörde .md not dosyası bulunamadı. Başka bir klasör seçin ya da soldan yeni bir not klasörü oluşturun.")
+            model.error = T("No .md note files were found in that folder. Choose another folder, or create a new notes folder on the right.",
+                            "Bu klasörde .md not dosyası bulunamadı. Başka bir klasör seçin ya da sağdan yeni bir not klasörü oluşturun.")
             return
         }
         model.notice = T("\(count) note file(s) found.", "\(count) not dosyası bulundu.")
@@ -963,7 +969,7 @@ struct Onboarding: View {
         let root = model.notesRoot
         let connected = ["claude", "codex"].filter { (model.assistants[$0] as? [String: Any])?["connected"] as? Bool == true }
         return VStack(alignment: .leading, spacing: 20) {
-            Text(connected.isEmpty ? T("Your notes folder is ready", "Not klasörünüz hazır") : T("You're all set", "Hazırsınız")).font(.largeTitle.bold())
+            Text(connected.isEmpty ? T("Your notes are connected", "Notlarınız bağlandı") : T("You're all set", "Hazırsınız")).font(.largeTitle.bold())
             if connected.isEmpty {
                 Text(T("No assistant is connected yet, so nothing can search your notes for now. You can connect one any time under Settings › Assistants.",
                        "Henüz bir asistan bağlı değil; şimdilik notlarınızda arama yapan bir şey yok. İstediğiniz zaman Ayarlar › Asistanlar'dan bağlayabilirsiniz."))
@@ -992,8 +998,8 @@ struct Onboarding: View {
                     Text("cd \"\(root)\" && \(connected[0])").font(.system(.callout, design: .monospaced)).textSelection(.enabled).padding(8).background(Color.secondary.opacity(0.1)).clipShape(RoundedRectangle(cornerRadius: 6))
                 }.padding(.leading, 48)
                 point("text.bubble", T("Ask as you normally would", "Her zamanki gibi sorun"),
-                      T("Your assistant looks up the related parts of your notes before it answers.",
-                        "Asistanınız cevap vermeden önce notlarınızın ilgili bölümlerine bakar."))
+                      T("Your assistant looks up the related parts of your notes before it answers and shows which notes it used.",
+                        "Asistanınız cevap vermeden önce notlarınızın ilgili bölümlerine bakar ve hangi notları kullandığını gösterir."))
                 point("tray", T("Check the drafts now and then", "Taslaklara arada bir göz atın"),
                       T("After chats, Carry puts what is worth keeping into your Inbox. Go through it on the Review page and approve what is right.",
                         "Sohbetlerden sonra Carry saklanmaya değer olanları Gelen kutunuza koyar. İncele sayfasında gözden geçirip doğru olanları onaylayın."))
@@ -1441,7 +1447,7 @@ struct Overview: View {
             VStack(alignment: .leading, spacing: 22) {
                 if model.snapshot.isEmpty {
                     PageIntro(icon: "tray.full", title: T("Welcome to Carry", "Carry'ye hoş geldiniz"),
-                              text: T("Carry turns your notes into a memory for your AI assistant.", "Carry, notlarınızı yapay zekâ asistanınızın hafızasına dönüştürür."))
+                              text: T("Carry connects your AI assistant to your knowledge base.", "Carry, yapay zekâ asistanınızı bilgi bankanıza bağlar."))
                     Button(T("Start setup", "Kuruluma başla")) { model.startOnboarding() }.buttonStyle(.borderedProminent).controlSize(.large)
                 } else {
                     Text(pageName("Overview")).font(.largeTitle.bold())
@@ -2320,13 +2326,12 @@ struct Sources: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 PageIntro(icon: "folder", title: T("Note folders", "Not klasörleri"),
-                          text: T("The folders Carry reads your notes from. Removing one here never deletes any file.", "Carry'nin notlarınızı okuduğu klasörler. Buradan kaldırmak hiçbir dosyayı silmez."))
+                          text: T("Your knowledge base: the folders Carry reads notes from, your own and your team's. Removing one here never deletes any file.", "Bilgi bankanız: Carry'nin notları okuduğu klasörler, sizinkiler ve ekibinizinkiler. Buradan kaldırmak hiçbir dosyayı silmez."))
                 ForEach(model.sources.indices, id: \.self) { i in
                     let source = model.sources[i]
                     SourceCard(model: model, source: source).id(str(source, "source_id") + pretty(source))
                 }
                 FlowLayout {
-                Button(T("Create a new notes folder…", "Yeni not klasörü oluştur…")) { model.onboardingStep = 1; model.onboarding = true }
                 Button(T("Add a notes folder…", "Not klasörü ekle…")) {
                     if let root = folder(T("Choose a folder that holds notes (.md files)", "Not (.md dosyaları) içeren bir klasör seçin")) {
                         let taken = Set(model.sources.map { str($0, "source_id") })
@@ -2335,6 +2340,7 @@ struct Sources: View {
                         model.run("add_source", ["source_id": sid, "root": root, "writable": false]) { _ in model.notice = T("Folder added. Carry is reading it in the background.", "Klasör eklendi. Carry arka planda okuyor."); model.refresh() }
                     }
                 }.buttonStyle(.borderedProminent)
+                Button(T("Create a new notes folder…", "Yeni not klasörü oluştur…")) { model.onboardingStep = 1; model.onboarding = true }
                 }
                 DisclosureGroup(T("Advanced sources: GitHub, custom settings", "Gelişmiş kaynaklar: GitHub, özel ayarlar")) {
                     VStack(alignment: .leading, spacing: 16) {
@@ -2747,8 +2753,8 @@ struct Connections: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 PageIntro(icon: "person.2.wave.2", title: T("Assistants", "Asistanlar"),
-                          text: T("The AI tools that use your notes. Connect the ones you use; they can then search your notes whenever you open them in your notes folder.",
-                                  "Notlarınızı kullanan yapay zekâ araçları. Kullandıklarınızı bağlayın; not klasörünüzde açtığınızda notlarınızda arama yapabilirler."))
+                          text: T("The AI tools Carry connects to your knowledge base. Connect the ones you use; opened in your notes folder, they search your notes through Carry and show which notes they used.",
+                                  "Carry'nin bilgi bankanıza bağladığı yapay zekâ araçları. Kullandıklarınızı bağlayın; not klasörünüzde açtığınızda Carry üzerinden notlarınızda arar ve hangi notları kullandıklarını gösterirler."))
                 AssistantCard(model: model, client: "claude")
                 AssistantCard(model: model, client: "codex")
                 DisclosureGroup(isExpanded: $model.connectionFormOpen) {

@@ -2,9 +2,9 @@
 
 🇬🇧 [English](README.md) · 🤖 Carry'yi kuran ya da anlatan asistanlar: önce [AGENTS.md](AGENTS.md) dosyasını okusun.
 
-**Claude Code ve Codex her sohbete sıfırdan başlar. Carry onlara kendi notlarınızdan bir hafıza verir.**
+**Carry, Claude Code'u ve Codex'i bilgi bankanıza bağlar. Cevap vermeden önce orada ararlar ve her cevabın hangi nottan geldiğini görürsünüz.**
 
-Eylülde bir müşterinizin user ID'lerinin hatalı olduğunu buluyorsunuz. Kasımda onları düzeltmeye oturduğunuzda asistanınız önce notlarınıza bakar: ne bulduğunuzu hatırlatır ve nerede yazdığını gösterir. Notlarınız bilgisayarınızda, düz Markdown (`.md`) dosyaları olarak kalır.
+Bilgi bankası, Markdown (`.md`) notlarından oluşan bir klasördür: sizin notlarınız (örneğin bir Obsidian vault'u), ekibinizin GitHub'daki notları ya da ikisi. Carry onu bilgisayarınızda dizinler ve asistanınıza onda arama yapacağı tek bir araç verir: `carry_recall`. Eylülde bir müşterinizin user ID'lerinin hatalı olduğunu bulup not alıyorsunuz. Kasımda onları düzeltmeye oturup asistanınıza soruyorsunuz: bilgi bankasında arar, ne bulduğunuzu söyler ve yazdığınız notun bağlantısını verir. Notlarınız olduğu yerde kalır; Carry onları okur, siz onaylamadan hiçbir şey yazılmaz.
 
 **Sürüm 0.11.0 · macOS 14+ · pilot**
 
@@ -19,17 +19,19 @@ uv tool install "git+https://github.com/berketevik/carry"
 carry setup
 ```
 
-Kurulum iki şey sorar: neye bağlanacağınızı (kendi notlarınız, ekibinizin bilgi bankası ya da ikisi) ve her biri için sıfırdan mı kurulacağını yoksa hazırdakinin mi bağlanacağını. Sonra Claude Code'u (ya da Codex'i) kurulumun söylediği klasörde açıp sorun: "Notlarımda ne var?"
+Kurulum iki şey sorar: hangi bilgi bankasının bağlanacağını (kendi notlarınız, ekibinizinki ya da ikisi) ve her biri için hazırdakinin mi bağlanacağını yoksa sıfırdan mı kurulacağını. Sonra Claude Code'u (ya da Codex'i) kurulumun söylediği klasörde açıp sorun: "Notlarımda ne var?" Henüz notunuz yok mu? Kurulum, asistanınızın okuyup yazabileceği yeni bir not klasörü de oluşturabilir.
 
 **Ekip liderleri:** ekip arkadaşlarınıza tek bir komut verin: `carry setup --team sahip/depo` (ekibinizin Markdown notlarını tutan GitHub deposu). Yalnızca ekibin notlarını isteyen kurulumda onu seçer; başka hiçbir şey eklenmez.
 
 ## Nasıl çalışır?
 
-![Carry nasıl çalışır: notlar bilgisayarınızda dizinlenir; soru kelimeyle ve anlamla aranır, asistanınız cevaplayan parçaları seçer; sohbetler onaylayacağınız taslaklara dönüşür](assets/how-it-works.tr.svg)
+![Carry nasıl çalışır: Carry bilgi bankanızı bilgisayarınızda dizinler; asistanınız carry_recall ile kelimeyle ve anlamla arar, cevaplayan parçaları seçer ve cevabın her kısmının hangi nottan geldiğini gösterir; isteğe bağlı olarak sohbetler onaylayacağınız taslaklara dönüşür](assets/how-it-works.tr.svg)
 
-1. **Notlarınız aranabilir hale gelir.** Carry onları kısa parçalara böler ve bilgisayarınızda bir arama dizini tutar: kelimelere ve anlamına göre. Anlam modeli (yaklaşık 330 MB) Carry'nin içinde, Mac'inizin GPU'sunda çalışır; bilgisayarınızda [Ollama](https://ollama.com) varsa Carry onu kullanır.
-2. **Asistanınız önce notlarınıza bakar.** Notlarda arar, yalnızca soruyu gerçekten cevaplayan parçaları tutar ve her birinin kaynağını göstererek cevap verir. “Geçen hafta” ya da “eylülde” gibi ifadeler aramayı o döneme daraltır. Her sohbet de son kararların ve yarım kalan işlerin kısa bir özetiyle açılır.
-3. **Sohbetler, onayladığınız taslaklara dönüşür.** Sohbet bitince Carry kararları ve açık işleri not klasörünüzdeki `+/` gelen kutusuna taslak olarak yazar. Carry uygulamasında her maddeyi kabul eder, düzeltir ya da atlarsınız; kabul edilenler o günün log'una yazılır, siz onaylamadan hiçbir şey kaydedilmez.
+1. **Carry bilgi bankanıza bağlanır.** Notları okur, kısa parçalara böler ve bilgisayarınızda bir arama dizini tutar: kelimelere ve anlamına göre. Dizin, yaptığınız değişiklikleri kendiliğinden izler. Anlam modeli (yaklaşık 330 MB) Carry'nin içinde, Mac'inizin GPU'sunda çalışır; bilgisayarınızda [Ollama](https://ollama.com) varsa Carry onu kullanır.
+2. **Asistanınız cevap vermeden önce orada arar.** Claude Code ve Codex, Carry'nin arama aracını (`carry_recall`) alır ve soru işinizle, kararlarınızla ya da projelerinizle ilgili olduğunda onu kullanır. Carry eşleşen parçaları kaynaklarıyla döndürür; asistanınız yalnızca soruyu gerçekten cevaplayanları tutar. “Geçen hafta” ya da “eylülde” gibi ifadeler aramayı o döneme daraltır.
+3. **Bilgi bankasından geleni görürsünüz.** Her arama sohbette bir Carry çağrısı olarak görünür ve Carry asistandan her bilginin dayandığı notu göstermesini ister; böylece neyin bilgi bankanızdan geldiğini, neyi asistanın eklediğini ayırt edersiniz. Ekibinizin bilgi bankasından gelen parçalar ayrıca işaretlenir. Hiçbir şey eşleşmezse asistana tahmin yürütmek yerine bunu söylemesi bildirilir.
+
+**İsteğe bağlı ekler.** Henüz notunuz yok mu? Carry, asistanınız için hazırlanmış yeni bir not klasörü oluşturabilir. O klasörde her sohbet son kararların ve yarım kalan işlerin kısa bir özetiyle açılır; sohbet bitince Carry kararları ve açık işleri klasörün `+/` gelen kutusuna taslak olarak yazar. Carry uygulamasında her maddeyi kabul eder, düzeltir ya da atlarsınız; kabul edilenler o günün log'una yazılır, siz onaylamadan hiçbir şey kaydedilmez.
 
 ## Verileriniz
 
