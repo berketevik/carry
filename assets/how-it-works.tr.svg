@@ -1,11 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 800" width="1000" height="800" role="img" aria-label="Carry nasıl çalışır: notlar parçalara bölünür ve bilgisayarında kelimeye ve anlama göre dizinlenir; soru iki yoldan aranır, sonuçlar birleştirilir, asistan cevaplayan parçaları seçer ve kaynak göstererek cevaplar. Sohbet bitince asistan kararları ve açık işleri +/ gelen kutusuna taslak olarak yazar; her maddeyi kabul eder, düzeltir ya da atlarsın; kabul edilenler o günün log&#39;una yazılır.">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 800" width="1000" height="800" role="img" aria-label="Carry nasıl çalışır: Carry bilgi bankana, yani kendi notlarına ya da ekibinin notlarına bağlanır, onu parçalara böler ve bilgisayarında kelimeye ve anlama göre dizinler. Asistanın carry_recall ile iki yoldan arar; sonuçlar birleştirilir, asistan cevaplayan parçaları seçer ve cevabın her kısmının hangi nottan geldiğini gösterir. İsteğe bağlı olarak sohbet bitince asistan kararları ve açık işleri +/ gelen kutusuna taslak olarak yazar; her birini kabul eder, düzeltir ya da atlarsın, kabul edilenler o günün log&#39;una yazılır.">
   <style>text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;fill:#1f2328}.t{font-size:16px;font-weight:600}.s{font-size:13px;fill:#59636e}.h{font-size:15px;font-weight:600;fill:#59636e}</style>
   <defs><marker id="h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#6e7781"/></marker></defs>
   <rect x="0.5" y="0.5" width="999" height="799" rx="12" fill="#ffffff" stroke="#d0d7de"/>
-  <text x="20" y="36" class="h">1 · Notlar hazırlanır, bilgisayarında</text>
+  <text x="20" y="36" class="h">1 · Carry bilgi bankana bağlanır, bilgisayarında</text>
   <rect x="20" y="120" width="170" height="80" rx="8" fill="#f6f8fa" stroke="#afb8c1" stroke-width="1.5"/>
-  <text x="36" y="152" class="t">Notlar</text>
-  <text x="36" y="174" class="s">Markdown dosyaları</text>
+  <text x="36" y="152" class="t">Bilgi bankası</text>
+  <text x="36" y="174" class="s">senin ya da ekibinin</text>
   <rect x="230" y="120" width="170" height="80" rx="8" fill="#f6f8fa" stroke="#afb8c1" stroke-width="1.5"/>
   <text x="246" y="152" class="t">Parçalara bölünür</text>
   <text x="246" y="174" class="s">kısa bölümler</text>
@@ -25,10 +25,10 @@
   <path d="M675 92H697V145H714" fill="none" stroke="#6e7781" stroke-width="1.6" marker-end="url(#h)"/>
   <path d="M675 230H697V175H714" fill="none" stroke="#6e7781" stroke-width="1.6" marker-end="url(#h)"/>
   <line x1="20" y1="306" x2="980" y2="306" stroke="#d0d7de"/>
-  <text x="20" y="342" class="h">2 · Bir soru sorarsın</text>
+  <text x="20" y="342" class="h">2 · Asistanın carry_recall ile orada arar</text>
   <rect x="10" y="440" width="140" height="80" rx="8" fill="#f6f8fa" stroke="#afb8c1" stroke-width="1.5"/>
   <text x="26" y="472" class="t">Soru</text>
-  <text x="26" y="494" class="s">sen sorarsın</text>
+  <text x="26" y="494" class="s">carry_recall ile</text>
   <rect x="190" y="370" width="180" height="80" rx="8" fill="#fbefdc" stroke="#b0661a" stroke-width="1.5"/>
   <text x="206" y="402" class="t">Kelimeyle ara</text>
   <text x="206" y="424" class="s">birebir terimler</text>
@@ -42,9 +42,10 @@
   <text x="616" y="464" class="t">Asistan seçer</text>
   <text x="616" y="486" class="s">cevaplamayan</text>
   <text x="616" y="504" class="s">parçaları eler</text>
-  <rect x="830" y="440" width="160" height="80" rx="8" fill="#f6f8fa" stroke="#afb8c1" stroke-width="1.5"/>
-  <text x="846" y="472" class="t">Cevap</text>
-  <text x="846" y="494" class="s">kaynak göstererek</text>
+  <rect x="830" y="432" width="160" height="96" rx="8" fill="#f6f8fa" stroke="#afb8c1" stroke-width="1.5"/>
+  <text x="846" y="464" class="t">Cevap</text>
+  <text x="846" y="486" class="s">her kısmın hangi</text>
+  <text x="846" y="504" class="s">nottan geldiği görünür</text>
   <path d="M150 480H170V410H184" fill="none" stroke="#6e7781" stroke-width="1.6" marker-end="url(#h)"/>
   <path d="M170 480V550H184" fill="none" stroke="#6e7781" stroke-width="1.6" marker-end="url(#h)"/>
   <path d="M370 410H390V465H404" fill="none" stroke="#6e7781" stroke-width="1.6" marker-end="url(#h)"/>
@@ -52,7 +53,7 @@
   <path d="M560 480H594" fill="none" stroke="#6e7781" stroke-width="1.6" marker-end="url(#h)"/>
   <path d="M790 480H824" fill="none" stroke="#6e7781" stroke-width="1.6" marker-end="url(#h)"/>
   <line x1="20" y1="626" x2="980" y2="626" stroke="#d0d7de"/>
-  <text x="20" y="662" class="h">3 · Sohbetler, onayladığın taslaklara dönüşür</text>
+  <text x="20" y="662" class="h">3 · İsteğe bağlı: sohbetler, onayladığın taslaklara dönüşür</text>
   <rect x="20" y="690" width="170" height="80" rx="8" fill="#f6f8fa" stroke="#afb8c1" stroke-width="1.5"/>
   <text x="36" y="722" class="t">Sohbet biter</text>
   <text x="36" y="744" class="s">Claude Code, Codex</text>

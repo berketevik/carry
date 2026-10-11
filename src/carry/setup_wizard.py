@@ -264,7 +264,8 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
     p = Prompter(assume_yes, stream)
     total = 5
     say(paint('\n  CARRY', BOLD + ';' + MAGENTA) + paint('  · kurulum', DIM))
-    say(paint('  Carry, Claude ya da Codex\'in senin notlarını okuyup onlara dayanarak cevap vermesini sağlar.', DIM))
+    say(paint('  Carry, Claude\'u ya da Codex\'i bilgi bankana (kendi notların, ekibinin notları ya da ikisi) bağlar:', DIM))
+    say(paint('  cevap vermeden önce orada ararlar ve cevabın hangi nottan geldiğini gösterirler.', DIM))
     say(paint(f'  Notların {HERE} kalır. Yalnızca birkaç soru var; köşeli parantezdeki cevap önerilendir,', DIM))
     say(paint('  emin değilsen Enter\'a basman yeterli.', DIM))
 
