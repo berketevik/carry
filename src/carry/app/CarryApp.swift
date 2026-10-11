@@ -634,6 +634,8 @@ struct Tile: View {
 
 /// Inline two-language text for the explanatory copy (short labels go through L()).
 func T(_ en: String, _ tr: String) -> String { Lang.code == "tr" ? tr : en }
+/// The version `carry app install` writes into Info.plist, so the sidebar shows which build is running.
+let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
 
 func pageName(_ key: String) -> String {
     switch key {
@@ -3201,7 +3203,7 @@ struct ContentView: View {
                 }.listStyle(.sidebar)
                 Button { model.showGuide = true } label: { Label(T("How Carry works", "Carry nasıl çalışır?"), systemImage: "questionmark.circle") }
                     .buttonStyle(.borderless).padding(.horizontal, 20).padding(.top, 8)
-                Text(T("PILOT · LOCAL", "PİLOT · YEREL")).font(.caption2.weight(.semibold)).foregroundStyle(.secondary).padding(.horizontal, 20).padding(.bottom, 20).padding(.top, 4)
+                Text(T("PILOT · LOCAL", "PİLOT · YEREL") + (appVersion.map { " · " + $0 } ?? "")).font(.caption2.weight(.semibold)).foregroundStyle(.secondary).padding(.horizontal, 20).padding(.bottom, 20).padding(.top, 4)
             }.navigationSplitViewColumnWidth(min: 190, ideal: 205)
         } detail: {
             VStack(spacing: 0) {
