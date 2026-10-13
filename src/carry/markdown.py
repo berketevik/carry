@@ -38,6 +38,14 @@ def _scalar(raw):
         return int(text)
     if re.fullmatch(r"-?\d+\.\d+", text):
         return float(text)
+    if text.startswith("{") and text.endswith("}"):
+        # An inline JSON object (a harvest digest's `harvest:` line) is a YAML flow mapping:
+        # read it as PyYAML would, or a digest is taken for a plain draft.
+        try:
+            value = json.loads(text)
+        except ValueError:
+            return text
+        return value if isinstance(value, dict) else text
     if text.startswith("[") and text.endswith("]"):
         inner = text[1:-1].strip()
         return [_scalar(p) for p in inner.split(",")] if inner else []
