@@ -43,6 +43,8 @@ class MeetTest(unittest.TestCase):
         stop = patch.object(harvest, 'ask_agent', side_effect=CarryError('no_agent_in_tests')); stop.start(); self.addCleanup(stop.stop)
         compare = patch.object(harvest, 'agent_compare', side_effect=lambda items, *a: ([('new', None)] * len(items), True))
         self.compare = compare.start(); self.addCleanup(compare.stop)
+        self.real_reindex = meet.reindex
+        reindex = patch.object(meet, 'reindex'); self.reindex = reindex.start(); self.addCleanup(reindex.stop)
 
     def saved(self, segments=SEGMENTS, title='Carry Meet'):
         return meet.save(self.ws, segments, title=title, started='2026-10-13T14:30:00+03:00', duration=95)
@@ -184,6 +186,30 @@ class MeetTest(unittest.TestCase):
         self.assertEqual(len(calls), 2)  # no merge call
         self.assertEqual([p['line'] for p in points], [1, 2, 3, 4, 7, 8, 9, 10])
 
+    def test_a_note_keeps_its_language_and_its_transcript_whatever_the_summary_s(self):
+        rel = meet.save(self.ws, SEGMENTS, title='Planning', started='2026-10-13T14:30:00+03:00', duration=95, language='English')['path']
+        front, _, _, body = meet.read(self.root, rel)
+        self.assertEqual(meet.note_language(front, body), 'English')
+        ask, calls = agent([], [])
+        with patch.object(harvest, 'ask_agent', side_effect=ask):
+            meet.summarize(self.ws, rel, which='claude:sonnet')  # the vault drafts in Turkish, the note is English
+            self.assertIn('Notes are in English', calls[0]['system'])
+            meet.summarize(self.ws, rel, which='claude:sonnet', language='Turkish')
+        text = (self.root / rel).read_text(encoding='utf-8')
+        self.assertIn('## Özet', text)
+        self.assertIn('## Transcript\n\n- **[1 · 00:02] Me:** Merhaba', text)  # never lost to another heading
+        self.assertEqual(self.reindex.call_count, 2)  # the changed note is indexed after each summary
+
+    def test_an_old_note_is_known_by_its_headings(self):
+        self.assertEqual(meet.note_language({}, '# M\n\n## Transkript\n\n- x'), 'Turkish')
+        self.assertEqual(meet.note_language({}, '# M\n\n## Transcript\n\n- x'), 'English')
+
+    def test_reindex_waits_for_a_build_that_is_running(self):
+        with patch('carry.maintenance.start', side_effect=[dict(state='running', started=False), dict(state='running', started=True)]) as start, \
+                patch.object(meet.time, 'sleep') as sleep:
+            self.real_reindex(self.ws)
+        self.assertEqual((start.call_count, sleep.call_count), (2, 1))
+
     def test_a_failed_summary_keeps_the_transcript_and_says_so(self):
         rel = self.saved()['path']
         with self.assertRaisesRegex(CarryError, 'no_agent_in_tests'):
@@ -248,9 +274,10 @@ class MeetTest(unittest.TestCase):
     def test_the_bridge_saves_then_summarises_in_the_background(self):
         bridge = desktop.Bridge()
         with patch.object(meet, 'spawn') as spawn, patch.object(desktop.maintenance, 'start'):
-            saved = bridge.dispatch(dict(action='meeting_save', workspace=str(self.ws.state_dir), segments=SEGMENTS,
+            saved = bridge.dispatch(dict(action='meeting_save', workspace=str(self.ws.state_dir), segments=SEGMENTS, language='English',
                                          title='Bridge', started='2026-10-13T09:05:00+03:00', duration=40))
         self.assertEqual(saved['path'], 'sources/carry/meet/2026-10-13 0905 — Bridge.md')
+        self.assertIn('meet_language: English', (self.root / saved['path']).read_text(encoding='utf-8'))  # the app's Language
         spawn.assert_called_once()
         self.assertEqual(spawn.call_args.args[1:], (saved['path'], self.root))
         listed = bridge.dispatch(dict(action='meeting_list', workspace=str(self.ws.state_dir)))

@@ -218,7 +218,7 @@ def save(ws, segments, title='', started=None, duration=None, root=None, languag
     summary = f'{name}, {when:%Y-%m-%d %H:%M}, {minutes} min'
     text = (f'---\ntype: meeting\nsummary: {json.dumps(summary, ensure_ascii=False)}\ncreated: {when:%Y-%m-%d}\n'
             f'started: {when.isoformat(timespec="seconds")}\nduration_minutes: {minutes}\nsource_type: meet\n'
-            f'meet_status: pending\n---\n\n# {name}\n\n## {L["summary"]}\n\n*{L["pending"]}*\n\n## {L["transcript"]}\n\n{body}\n')
+            f'meet_language: {language}\nmeet_status: pending\n---\n\n# {name}\n\n## {L["summary"]}\n\n*{L["pending"]}*\n\n## {L["transcript"]}\n\n{body}\n')
     atomic_text(root / rel, text)
     return dict(path=rel, root=str(root), lines=len(lines), minutes=minutes, title=name)
 
@@ -377,7 +377,7 @@ def write_digest(root, rel, title, groups, meta, language, day):
 
 
 def _front(front, status, **extra):
-    keep = ('summary', 'created', 'started', 'duration_minutes')
+    keep = ('summary', 'created', 'started', 'duration_minutes', 'meet_language')
     head = ['---', 'type: meeting'] + [f'{k}: {json.dumps(front[k], ensure_ascii=False) if k == "summary" else front[k]}'
                                        for k in keep if front.get(k) is not None]
     head += ['source_type: meet', f'meet_status: {status}']
@@ -385,12 +385,24 @@ def _front(front, status, **extra):
     return '\n'.join(head + ['---', '', ''])
 
 
+def note_language(front, body):
+    """The language a meeting note was saved in: recorded since it was saved, else its headings."""
+    if front.get('meet_language') in LABELS:
+        return front['meet_language']
+    return next((lang for lang, L in LABELS.items() if f"\n## {L['transcript']}\n" in body), None)
+
+
+def _transcript(body):
+    """The transcript section, kept as it was, whatever language the note was saved in."""
+    at = [body.index(m) for m in (f"## {L['transcript']}\n" for L in LABELS.values()) if m in body]
+    return body[min(at):] if at else ''
+
+
 def write_note(root, rel, front, title, body, points, items, language, digest_rel=None, cut=None):
     """The meeting note with its summary and minutes above the transcript, which stays as it was."""
     L = labels(language)
     day = str(front.get('created') or datetime.date.today().isoformat())
-    marker = f"## {L['transcript']}"
-    transcript = body[body.index(marker):] if marker in body else ''
+    transcript = _transcript(body)
     out = [f'# {title}', '', f"## {L['summary']}", '']
     out += [f"- {p['statement']} *({p['clock']})*" for p in points] or [f"*{L['nothing']}*"]
     out += ['', f"## {L['minutes']}", '']
@@ -409,8 +421,7 @@ def mark_failed(root, rel, error, language):
     """A failed summary says so in the note; the transcript is never touched."""
     front, title, _, body = read(root, rel)
     L = labels(language)
-    marker = f"## {L['transcript']}"
-    transcript = body[body.index(marker):] if marker in body else ''
+    transcript = _transcript(body)
     text = f"# {title}\n\n## {L['summary']}\n\n*{L['failed'].format(error=error)}*\n\n"
     atomic_text(root / rel, _front(front, 'failed', error=str(error)[:200]) + text + transcript)
 
@@ -429,7 +440,7 @@ def summarize(ws, rel, root=None, language=None, which=None):
     assistant cannot answer (signed out, say), the next one in clients() summarises."""
     root = meeting_vault(ws, root)
     front, title, lines, body = read(root, rel)
-    language = language or harvest.draft_language(ws, root)
+    language = language or note_language(front, body) or harvest.draft_language(ws, root)
     if not lines:
         raise CarryError('meeting_transcript_empty')
     day = str(front.get('created') or datetime.date.today().isoformat())
@@ -467,12 +478,26 @@ def summarize(ws, rel, root=None, language=None, which=None):
             mark_failed(root, rel, exc, language)
         except (CarryError, OSError):
             pass
+        reindex(ws)
         raise exc if isinstance(exc, CarryError) else CarryError(f'meeting_summary_failed: {exc}') from exc
     _record(ws, rel, status='done', digest=digest_rel)
+    reindex(ws)
     return dict(path=rel, digest=digest_rel, points=len(points), items=len(items), dropped=dropped, cut=cut)
 
 
 # -- background run and the Meetings page ---------------------------------------------
+
+REINDEX_WAIT = 600  # seconds
+
+
+def reindex(ws, wait=REINDEX_WAIT):
+    """The note and the digest changed: index them. A build already running when they were
+    written refuses to publish (index_failed, measured on the first retry), so wait for it to
+    end and start one after."""
+    from . import maintenance
+    end = time.time() + wait
+    while not maintenance.start(ws).get('started') and time.time() < end:
+        time.sleep(5)
 
 def _state(ws):
     try:

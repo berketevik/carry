@@ -3715,7 +3715,9 @@ var meetingMenuBar: Bool { UserDefaults.standard.object(forKey: "meetingMenuBar"
                     done?(); return
                 }
                 let iso = ISO8601DateFormatter(); iso.timeZone = .current
+                // The note is in the language the meeting was transcribed in.
                 self.save(["action": "meeting_save", "title": title, "started": iso.string(from: started), "duration": duration,
+                           "language": MeetingRecorder.locale.hasPrefix("tr") ? "Turkish" : "English",
                            "segments": all.map { ["start": $0.start, "speaker": $0.speaker, "text": $0.text] }], then: done)
             }
         }

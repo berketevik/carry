@@ -408,8 +408,9 @@ class Bridge:
             from . import meet
             root = meet.meeting_vault(ws)
             if action == 'meeting_save':
+                language = request.get('language') if request.get('language') in meet.LABELS else None
                 saved = meet.save(ws, request.get('segments'), request.get('title', ''), request.get('started'),
-                                  request.get('duration'), root=root)
+                                  request.get('duration'), root=root, language=language)
                 meet.spawn(ws, saved['path'], root)
                 maintenance.start(ws)
                 return saved
