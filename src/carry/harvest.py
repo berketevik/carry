@@ -222,6 +222,7 @@ def _client(name):
 def ask_agent(system, body, which, field):
     """One JSON answer from the owner's own client (Claude or Codex), two tries."""
     piped = sys.platform == 'win32'
+    failure = ''
     for _ in range(2):
         with tempfile.TemporaryDirectory(prefix='carry-harvest-') as cwd:
             if which.startswith('claude'):
@@ -230,9 +231,14 @@ def ask_agent(system, body, which, field):
                                       input=body if piped else None,
                                       capture_output=True, text=True, encoding='utf-8', timeout=900, cwd=cwd)
                 try:
-                    text = json.loads(proc.stdout).get('result', '')
+                    reply = json.loads(proc.stdout)
                 except ValueError:
-                    text = ''
+                    reply = {}
+                reply = reply if isinstance(reply, dict) else {}
+                text = str(reply.get('result') or '')
+                # A signed-out or failing client puts its error where the answer goes.
+                if reply.get('is_error'):
+                    failure, text = text or str(reply.get('subtype') or 'error'), ''
             else:
                 prompt = system + '\n\n' + body
                 proc = subprocess.run(_client('codex') + ['exec', '--skip-git-repo-check', '-m', which.split(':')[1],
@@ -242,7 +248,9 @@ def ask_agent(system, body, which, field):
         items = _items_from(text, field)
         if items is not None:
             return items
-    raise CarryError('extraction_unparseable')
+        if which.startswith('codex') and proc.returncode:
+            failure = ([line for line in (proc.stderr or '').splitlines() if line.strip()] or [f'exit {proc.returncode}'])[-1]
+    raise CarryError(f'assistant_failed: {failure[:300]}' if failure else 'extraction_unparseable')
 
 
 AGENT_COMPARE = """You compare items taken from a chat with passages from the owner's notes. For each case give one verdict:
