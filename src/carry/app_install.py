@@ -77,12 +77,20 @@ def install(target=DEFAULT_PATH, workspace=None, python=None):
         (app / 'Contents' / 'Resources').mkdir()
         swift = Path(tmp) / 'CarryApp.swift'
         swift.write_text(source.read_text(encoding='utf-8'), encoding='utf-8', newline='\n')
-        build = subprocess.run([compiler, '-O', '-parse-as-library', '-swift-version', '5',
-                                '-target', f'{arch}-apple-macosx14.0', '-module-cache-path', str(Path(tmp) / 'cache'),
-                                str(swift), '-o', str(app / 'Contents' / 'MacOS' / 'Carry')],
+        flags = ['-O', '-parse-as-library', '-swift-version', '5', '-target', f'{arch}-apple-macosx14.0',
+                 '-module-cache-path', str(Path(tmp) / 'cache')]
+        build = subprocess.run([compiler] + flags + [str(swift), '-o', str(app / 'Contents' / 'MacOS' / 'Carry')],
                                capture_output=True, text=True)
         if build.returncode != 0:
             raise CarryError('app_build_failed: ' + build_error(build.stderr or build.stdout))
+        # Apple's on-device model, the meeting summary's fallback when no assistant answers. If it
+        # does not build, the app is the same without that fallback.
+        model = Path(tmp) / 'CarryModel.swift'
+        model.write_text((resources.files('carry') / 'app' / 'CarryModel.swift').read_text(encoding='utf-8'), encoding='utf-8', newline='\n')
+        helper = app / 'Contents' / 'MacOS' / 'carry-model'
+        subprocess.run([compiler] + flags + [str(model), '-o', str(helper)], capture_output=True, text=True)
+        if helper.exists():
+            subprocess.run(['/usr/bin/codesign', '--force', '--sign', '-', str(helper)], capture_output=True)
         with open(app / 'Contents' / 'Info.plist', 'wb') as f:
             plistlib.dump(dict(CFBundleExecutable='Carry', CFBundleIdentifier=BUNDLE_ID, CFBundleName='Carry',
                                CFBundleDisplayName='Carry', CFBundlePackageType='APPL', CFBundleShortVersionString=_version(),

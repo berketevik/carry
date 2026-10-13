@@ -5,12 +5,14 @@ other side, also in headphones) and transcribes both on the Mac with Apple's on-
 recognizer; no audio is written to disk and nothing goes online. At Stop the transcript
 is saved at once, as one file under sources/carry/meet/, so a failed summary never loses
 a meeting. The summary runs once in the background on the owner's own assistant (harvest's
-path: Claude Sonnet, else Codex), the transcript in parts within a fixed budget. Every
+path: Claude Sonnet, else Codex) and, when none answers, on Apple's on-device model, the
+transcript in parts within a fixed budget. Every
 summary point and item carries a quote that code finds word for word in the cited line,
 or it is dropped. The file gets the summary and the minutes; decisions, open items and
 facts also go to one draft digest in +/, which the owner reviews item by item like chat
 drafts (carry.digest). Nothing is accepted automatically.
 """
+import bisect
 import datetime
 import hashlib
 import json
@@ -38,6 +40,12 @@ LOG_NAME = 'meet.log'
 # with the notes.
 PART_CHARS = 16000
 MAX_PARTS = 12
+# Apple's on-device model has a 4,096-token window, and Turkish runs at 2.6 characters a
+# token there (measured): a part is about 5 minutes, forty parts the same three and a half
+# hours. It does not compare the items with the notes (a batch is far over its window).
+APPLE_PART_CHARS = 5000
+APPLE_MAX_PARTS = 40
+APPLE = 'apple:on-device'
 MAX_LINES = 20000
 MAX_TEXT = 4000  # characters of one transcript line
 TYPES = ('decision', 'open_item', 'fact')
@@ -77,7 +85,27 @@ def labels(language):
 def words(text):
     """Lower-case words: a quote matches its line word for word, whatever punctuation the
     recognizer or the assistant put around them."""
-    return ' '.join(re.findall(r'\w+', (text or '').lower()))
+    return ' '.join(re.findall(r'\w+', (text or '').lower().replace('\u0307', '')))  # 'İ' lowers to i + a dot
+
+
+# Apple's on-device model copies Turkish letters without their marks ('yayına' as 'yayina').
+FOLD = str.maketrans('çğıöşüâîû', 'cgiosuaiu')
+
+
+def locate(quote, order):
+    """The first line in order that says the quote, and the quote as that line says it when
+    only the marks of Turkish letters differ (None when they match as they are)."""
+    if not quote or len(quote.split()) < 3:
+        return None, None
+    loose = quote.translate(FOLD)
+    for x in order:
+        line = words(mask(x['text'])[0])
+        if quote in line:
+            return x, None
+        at = line.translate(FOLD).find(loose)
+        if at >= 0:
+            return x, line[at:at + len(loose)]
+    return None, None
 
 
 def _clock(seconds):
@@ -247,31 +275,53 @@ def check(items, lines, kinds):
         except (TypeError, ValueError):
             cited = None
         order = ([by_n[cited]] if cited in by_n else []) + lines
-        hit = next((x for x in order if quote and len(quote.split()) >= 3 and quote in words(mask(x['text'])[0])), None)
+        hit, said = locate(quote, order)
         digest = hashlib.sha1((kind + statement.lower()).encode()).hexdigest()[:12]
         if kind not in kinds or not hit or not statement or digest in seen:
             dropped += 1
             continue
         seen.add(digest)
         keywords = [k.strip() for k in (it.get('keywords') or []) if isinstance(k, str) and k.strip()][:6]
-        kept.append(dict(type=kind, statement=statement, quote=' '.join(str(it['quote']).split()), line=hit['n'],
+        kept.append(dict(type=kind, statement=statement, quote=said or ' '.join(str(it['quote']).split()), line=hit['n'],
                          speaker=hit['speaker'], clock=hit['at'], keywords=keywords))
     return kept, dropped
+
+
+def _ask_part(ask, system, part, which):
+    """One part's items; a part over the model's window is asked again in halves."""
+    try:
+        return ask(system, render(part), which, 'items')
+    except CarryError as exc:
+        if 'context_window_exceeded' not in str(exc) or len(part) < 2:
+            raise
+        half = len(part) // 2
+        return _ask_part(ask, system, part[:half], which) + _ask_part(ask, system, part[half:], which)
 
 
 def extract(lines, language, which, ask=None):
     """Summary points and items of the whole meeting: one call per part, one to merge the points."""
     ask = ask or harvest.ask_agent
     L = labels(language)
-    chosen, cut = parts(lines)
+    chosen, cut = parts(lines, APPLE_PART_CHARS, APPLE_MAX_PARTS) if which == APPLE else parts(lines)
     system = SYSTEM.format(me=L['me'], others=L['others'], language=language)
     raw = []
     for part in chosen:
-        raw += ask(system, render(part), which, 'items')
+        raw += _ask_part(ask, system, part, which)
     kept, dropped = check(raw, lines, ('summary',) + TYPES)
     points = [it for it in kept if it['type'] == 'summary']
     items = [it for it in kept if it['type'] != 'summary']
-    if len(points) > 8:
+    if len(points) > 8 and which == APPLE:
+        # Asked to merge, the on-device model returned 11 points out of order with a name
+        # misspelt (measured): keep each part's first points instead, in transcript order.
+        starts, taken, quota = [part[0]['n'] for part in chosen], {}, max(1, 8 // len(chosen))
+        firsts = []
+        for p in sorted(points, key=lambda p: p['line']):
+            k = bisect.bisect_right(starts, p['line'])
+            taken[k] = taken.get(k, 0) + 1
+            if taken[k] <= quota:
+                firsts.append(p)
+        points = firsts
+    elif len(points) > 8:
         body = json.dumps([dict(statement=p['statement'], line=p['line'], quote=p['quote']) for p in points], ensure_ascii=False, indent=1)
         try:
             merged, _ = check([dict(m, type='summary') for m in ask(MERGE.format(language=language), body, which, 'items')],
@@ -365,9 +415,18 @@ def mark_failed(root, rel, error, language):
     atomic_text(root / rel, _front(front, 'failed', error=str(error)[:200]) + text + transcript)
 
 
+def clients(which=None):
+    """Who summarises, in order: the owner's own assistants, then Apple's on-device model."""
+    chain = [which] if which else harvest.assistants() + ([APPLE] if harvest.apple_model() else [])
+    if not chain:
+        raise CarryError('no_extraction_client')
+    return chain
+
+
 def summarize(ws, rel, root=None, language=None, which=None):
     """The one summary of a saved meeting. The owner's assistant compares the items with the
-    notes (known or a real conflict); meeting text never goes to an online checker."""
+    notes (known or a real conflict); meeting text never goes to an online checker. When an
+    assistant cannot answer (signed out, say), the next one in clients() summarises."""
     root = meeting_vault(ws, root)
     front, title, lines, body = read(root, rel)
     language = language or harvest.draft_language(ws, root)
@@ -376,14 +435,26 @@ def summarize(ws, rel, root=None, language=None, which=None):
     day = str(front.get('created') or datetime.date.today().isoformat())
     _record(ws, rel, status='running', pid=os.getpid(), started_at=time.time())
     try:
-        which = which or harvest.extractor()
-        points, items, dropped, cut = extract(lines, language, which)
+        failures = []
+        for which in clients(which):
+            try:
+                points, items, dropped, cut = extract(lines, language, which)
+                break
+            except (CarryError, subprocess.SubprocessError, OSError) as exc:
+                failures.append((which, str(exc)))
+        else:
+            if len(failures) == 1:
+                raise CarryError(failures[0][1])
+            raise CarryError('assistant_failed: ' + ' | '.join(f"{w.split(':')[0]}: {e.split(': ', 1)[-1]}" for w, e in failures))
         groups = dict(new=[], conflict=[], known=[])
         ran = False
         if items:
             for it in items:
                 it['at'] = day  # the day it was said, for the comparison and the log
-            verdicts, ran = harvest.agent_compare(items, ws, which, language)
+            if which == APPLE:
+                verdicts = [('new', None)] * len(items)
+            else:
+                verdicts, ran = harvest.agent_compare(items, ws, which, language)
             for it, (verdict, it['match']) in zip(items, verdicts):
                 groups[verdict].append(it)
         meta = dict(extractor=which, judge='agent' if ran else None, compared=ran, kind='meeting', meeting=rel,

@@ -30,11 +30,11 @@ Kurulum iki şey sorar: neye bağlanacağınızı (kendi notlarınız, ekibinizi
 1. **Notlarınız aranabilir hale gelir.** Carry onları kısa parçalara böler ve bilgisayarınızda bir arama dizini tutar: kelimelere ve anlamına göre. Anlam modeli (yaklaşık 330 MB) Carry'nin içinde, Mac'inizin GPU'sunda çalışır; bilgisayarınızda [Ollama](https://ollama.com) varsa Carry onu kullanır.
 2. **Asistanınız önce notlarınıza bakar.** Notlarda arar, yalnızca soruyu gerçekten cevaplayan parçaları tutar ve her birinin kaynağını göstererek cevap verir. “Geçen hafta” ya da “eylülde” gibi ifadeler aramayı o döneme daraltır. Her sohbet de son kararların ve yarım kalan işlerin kısa bir özetiyle açılır.
 3. **Sohbetler, onayladığınız taslaklara dönüşür.** Sohbet bitince Carry kararları ve açık işleri not klasörünüzdeki `+/` gelen kutusuna taslak olarak yazar. Carry uygulamasında her maddeyi kabul eder, düzeltir ya da atlarsınız; kabul edilenler o günün log'una yazılır, siz onaylamadan hiçbir şey kaydedilmez.
-4. **Toplantılar da nota dönüşür.** Uygulamadaki Toplantılar sayfasından ya da bir görüşme mikrofonu açtığında menü çubuğundan Carry toplantıyı kaydeder ve konuşulanı o anda yazıya döker: mikrofonunuz ve macOS 14.2 ve sonrasında görüşmenin sesi, Mac'inizde yazıya dökülür. Ses saklanmaz. Durdur'a basınca transkript `sources/carry/meet/` altına kaydedilir; asistanınız onu bir kez özetler, kararlar, açık işler ve bilgiler söylendikleri satırla birlikte sohbet taslakları gibi İncele'ye gelir.
+4. **Toplantılar da nota dönüşür.** Uygulamadaki Toplantılar sayfasından ya da bir görüşme mikrofonu açtığında menü çubuğundan Carry toplantıyı kaydeder ve konuşulanı o anda yazıya döker: mikrofonunuz ve macOS 14.2 ve sonrasında görüşmenin sesi, Mac'inizde yazıya dökülür. Ses saklanmaz. Durdur'a basınca transkript `sources/carry/meet/` altına kaydedilir; asistanınız onu bir kez özetler (cevap veren bir asistan yoksa Apple'ın Mac'inizdeki modeli özetler), kararlar, açık işler ve bilgiler söylendikleri satırla birlikte sohbet taslakları gibi İncele'ye gelir.
 
 ## Verileriniz
 
-Carry notlarınızı hiçbir yere yüklemez ve kendine ait bir çevrimiçi hizmet kullanmaz. Asistanınızın okuduğu parçalar yalnızca o asistana gider (kendi hesabınızla Claude Code ya da Codex); sohbet taslakları da onun üzerinden çıkarılır. Toplantıları Apple'ın tanıyıcısı Mac'inizde yazıya döker (Dikte'nin açık olması gerekir); özet için asistanınıza yalnızca transkript gider.
+Carry notlarınızı hiçbir yere yüklemez ve kendine ait bir çevrimiçi hizmet kullanmaz. Asistanınızın okuduğu parçalar yalnızca o asistana gider (kendi hesabınızla Claude Code ya da Codex); sohbet taslakları da onun üzerinden çıkarılır. Toplantıları Apple'ın tanıyıcısı Mac'inizde yazıya döker (Dikte'nin açık olması gerekir); özet için asistanınıza yalnızca transkript gider. Cevap veren bir asistan yoksa (kurulu değilse ya da oturumu kapalıysa) özeti Apple'ın cihazdaki modeli çıkarır ve hiçbir şey Mac'inizden çıkmaz (macOS 26 ve sonrası, Apple Intelligence açık).
 
 <details>
 <summary><b>Sonra gerekirse</b></summary>
@@ -79,6 +79,7 @@ Python 3.11+ ister. Anlamına göre arama `llama-cpp-python` (llama.cpp; kurulum
 - Claude Code ve Codex ile çalışır. Yalnız `.md` dosyalarını okur.
 - Arama ve sohbet taslakları eksik ya da yanlış olabilir; taslakları kaynaklarıyla kontrol edin.
 - Toplantı transkripti yalnızca sizi karşı taraftan ayırır, her konuşmacıyı ayrı ayrı göstermez. Hoparlörle görüşürken mikrofonunuz görüşmenin sesini de duyar; Carry bu yankıları ayıklar ama en temiz transkript kulaklıkla çıkar.
+- Özetin yedeği olan Apple'ın cihazdaki modeli Claude ya da Codex'ten daha az madde yakalar ve maddeleri notlarınızla karşılaştırmaz; her madde yine alıntısıyla gelir, İncele'de kontrol edin.
 - Gizli bilgi maskeleme kusursuz değildir.
 
 </details>

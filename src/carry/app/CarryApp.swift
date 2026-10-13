@@ -737,8 +737,8 @@ let glossary: [(String, String, String, String)] = [
      "When a chat with your assistant ends, Carry picks out decisions, facts and unfinished work and saves them as drafts for you.",
      "Asistanınızla bir sohbet bittiğinde Carry kararları, bilgileri ve yarım kalan işleri seçip sizin için taslak olarak kaydeder."),
     ("Meetings", "Toplantılar",
-     "Carry records a meeting on this Mac and writes down what is said, from your microphone and the sound of the call; no audio is kept. When it ends the transcript is saved with your notes and your assistant summarises it once. Its decisions, open items and facts wait for you on the Review page.",
-     "Carry toplantıyı bu Mac'te kaydeder ve konuşulanı yazıya döker: mikrofonunuzdan ve görüşmenin sesinden; ses saklanmaz. Toplantı bitince transkript notlarınıza kaydedilir, asistanınız bir kez özetler. Kararlar, açık işler ve bilgiler İncele sayfasında sizi bekler."),
+     "Carry records a meeting on this Mac and writes down what is said, from your microphone and the sound of the call; no audio is kept. When it ends the transcript is saved with your notes and your assistant summarises it once; with no assistant that answers, Apple's model on this Mac does. Its decisions, open items and facts wait for you on the Review page.",
+     "Carry toplantıyı bu Mac'te kaydeder ve konuşulanı yazıya döker: mikrofonunuzdan ve görüşmenin sesinden; ses saklanmaz. Toplantı bitince transkript notlarınıza kaydedilir, asistanınız bir kez özetler; cevap veren bir asistan yoksa Apple'ın bu Mac'teki modeli özetler. Kararlar, açık işler ve bilgiler İncele sayfasında sizi bekler."),
     ("Inbox", "Gelen kutusu",
      "The + folder, where new chat drafts and captures collect. What waits for you there is on the Review page.",
      "Yeni sohbet taslaklarının ve kayıtların toplandığı + klasörü. Orada sizi bekleyenler İncele sayfasındadır."),
@@ -3931,14 +3931,21 @@ struct MeetingsView: View {
 
 /// Why a summary did not come out, in words the owner can act on.
 func meetingError(_ error: String) -> String {
+    let nobody = T("No assistant could summarise: install and sign in to Claude Code or Codex, or turn on Apple Intelligence in System Settings, then retry.",
+                   "Özetleyecek bir asistan yok: Claude Code ya da Codex kurup giriş yapın veya Sistem Ayarları'nda Apple Intelligence'ı açın, sonra yeniden deneyin.")
+    if error == "no_extraction_client" { return nobody }
     guard error.hasPrefix("assistant_failed") else {
         return error == "extraction_unparseable" ? T("Your assistant's answer could not be read. Retry.", "Asistanınızın cevabı okunamadı. Yeniden deneyin.") : error
     }
     let said = error.dropFirst("assistant_failed".count).trimmingCharacters(in: CharacterSet(charactersIn: ": "))
+    // Apple's on-device model, the last to try, is off: the owner's assistant is the way out.
+    let appleOff = said.contains("apple_model_unavailable") ? T(" Apple's model on this Mac is not available either (Apple Intelligence).",
+                                                                 " Apple'ın bu Mac'teki modeli de kullanılamıyor (Apple Intelligence).") : ""
     if ["authenticate", "login", "logged in", "sign in"].contains(where: { said.lowercased().contains($0) }) {
         return T("Your assistant is signed out. Open it in Terminal (claude or codex), sign in, then retry.",
-                 "Asistanınızın oturumu kapanmış. Terminal'de açıp (claude ya da codex) yeniden giriş yapın, sonra yeniden deneyin.")
+                 "Asistanınızın oturumu kapanmış. Terminal'de açıp (claude ya da codex) yeniden giriş yapın, sonra yeniden deneyin.") + appleOff
     }
+    if !appleOff.isEmpty && !said.contains("|") { return nobody }
     return T("Your assistant could not answer: \(said)", "Asistanınız cevap veremedi: \(said)")
 }
 

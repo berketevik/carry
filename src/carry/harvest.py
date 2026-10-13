@@ -189,13 +189,30 @@ def _render(exchanges):
     return '\n\n'.join(f"### Exchange {e['i']}\nOWNER: {e['user']}\nASSISTANT: {e['assistant']}" for e in exchanges)
 
 
-def extractor():
-    """The owner's own client runs the extraction on their plan: Claude Sonnet, else Codex gpt-6-astra (both measured)."""
+def assistants():
+    """The owner's own clients on this Mac, in order: Claude Sonnet, Codex gpt-6-astra (both measured)."""
+    found = []
     if shutil.which('claude'):
-        return 'claude:sonnet'
+        found.append('claude:sonnet')
     if shutil.which('codex'):
-        return 'codex:gpt-6-astra'  # measured 64% recall, every quote verbatim; gpt-reserve reached 38%
-    raise CarryError('no_extraction_client')
+        found.append('codex:gpt-6-astra')  # measured 64% recall, every quote verbatim; gpt-reserve reached 38%
+    return found
+
+
+def extractor():
+    """The owner's own client runs the extraction on their plan."""
+    found = assistants()
+    if not found:
+        raise CarryError('no_extraction_client')
+    return found[0]
+
+
+def apple_model():
+    """The helper `carry app install` builds into the app for Apple's on-device model (the
+    meeting summary's fallback), or None when there is none."""
+    from .app_install import DEFAULT_PATH
+    helper = DEFAULT_PATH / 'Contents' / 'MacOS' / 'carry-model'
+    return helper if sys.platform == 'darwin' and helper.is_file() else None
 
 
 def _items_from(text, field='items'):
@@ -220,7 +237,7 @@ def _client(name):
 
 
 def ask_agent(system, body, which, field):
-    """One JSON answer from the owner's own client (Claude or Codex), two tries."""
+    """One JSON answer from the owner's own client (Claude or Codex) or Apple's on-device model, two tries."""
     piped = sys.platform == 'win32'
     failure = ''
     for _ in range(2):
@@ -239,6 +256,10 @@ def ask_agent(system, body, which, field):
                 # A signed-out or failing client puts its error where the answer goes.
                 if reply.get('is_error'):
                     failure, text = text or str(reply.get('subtype') or 'error'), ''
+            elif which.startswith('apple'):
+                proc = subprocess.run([str(apple_model())], input=json.dumps(dict(instructions=system, prompt=body)),
+                                      capture_output=True, text=True, encoding='utf-8', timeout=900, cwd=cwd)
+                text = proc.stdout
             else:
                 prompt = system + '\n\n' + body
                 proc = subprocess.run(_client('codex') + ['exec', '--skip-git-repo-check', '-m', which.split(':')[1],
@@ -248,8 +269,10 @@ def ask_agent(system, body, which, field):
         items = _items_from(text, field)
         if items is not None:
             return items
-        if which.startswith('codex') and proc.returncode:
+        if not which.startswith('claude') and proc.returncode:
             failure = ([line for line in (proc.stderr or '').splitlines() if line.strip()] or [f'exit {proc.returncode}'])[-1]
+            if which.startswith('apple') and proc.returncode in (69, 70):
+                break  # the model is off on this Mac, or the part is too long: a second try ends the same
     raise CarryError(f'assistant_failed: {failure[:300]}' if failure else 'extraction_unparseable')
 
 

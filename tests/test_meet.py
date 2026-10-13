@@ -42,7 +42,7 @@ class MeetTest(unittest.TestCase):
         # No test reaches a real assistant or the search index.
         stop = patch.object(harvest, 'ask_agent', side_effect=CarryError('no_agent_in_tests')); stop.start(); self.addCleanup(stop.stop)
         compare = patch.object(harvest, 'agent_compare', side_effect=lambda items, *a: ([('new', None)] * len(items), True))
-        compare.start(); self.addCleanup(compare.stop)
+        self.compare = compare.start(); self.addCleanup(compare.stop)
 
     def saved(self, segments=SEGMENTS, title='Carry Meet'):
         return meet.save(self.ws, segments, title=title, started='2026-10-13T14:30:00+03:00', duration=95)
@@ -107,6 +107,16 @@ class MeetTest(unittest.TestCase):
         self.assertEqual(kept[1]['speaker'], 'Ben')
         self.assertEqual(dropped, 3)
 
+    def test_a_quote_without_the_marks_of_turkish_letters_keeps_the_line_s_own_words(self):
+        lines = [dict(n=1, at='00:03', speaker='Ben', text='O zaman yeni siteyi aralıkta yayına alıyoruz, İstanbul ekibi de onaylar.')]
+        kept, dropped = meet.check([dict(type='decision', statement='Site aralıkta yayına alınır.', line=1,
+                                         quote='yeni siteyi aralikta yayina aliyoruz'),
+                                    dict(type='fact', statement='Ekip onaylar.', line=1, quote='istanbul ekibi de onaylar'),
+                                    dict(type='fact', statement='Uydurma.', line=1, quote='yeni siteyi ocakta yayina aliyoruz')],
+                                   lines, meet.TYPES)
+        self.assertEqual(dropped, 1)
+        self.assertEqual([k['quote'] for k in kept], ['yeni siteyi aralıkta yayına alıyoruz', 'istanbul ekibi de onaylar'])
+
     def test_long_transcripts_are_split_within_the_budget(self):
         lines = [dict(n=i + 1, at='00:00', speaker='Ben', text='kelime ' * 100) for i in range(50)]
         parts, cut = meet.parts(lines, limit=2000, most=3)
@@ -165,6 +175,15 @@ class MeetTest(unittest.TestCase):
         self.assertIn('- Birleşik nokta. *(00:09)*', body)
         self.assertIn('Bu toplantıdan kaydedilecek bir karar', body)
 
+    def test_the_on_device_model_keeps_each_part_s_first_points_instead_of_merging(self):
+        lines = [dict(n=i + 1, at='00:00', speaker='Ben', text=f'bugün konuştuğumuz konu numara {i + 1} burada') for i in range(12)]
+        point = lambda n: dict(type='summary', statement=f'Nokta {n}.', line=n, quote=f'konuştuğumuz konu numara {n}')
+        ask, calls = agent([point(n) for n in (6, 5, 4, 3, 2, 1)], [point(n) for n in range(7, 13)])
+        with patch.object(meet, 'APPLE_PART_CHARS', 400):  # two parts of six lines
+            points, _, _, _ = meet.extract(lines, 'Turkish', meet.APPLE, ask=ask)
+        self.assertEqual(len(calls), 2)  # no merge call
+        self.assertEqual([p['line'] for p in points], [1, 2, 3, 4, 7, 8, 9, 10])
+
     def test_a_failed_summary_keeps_the_transcript_and_says_so(self):
         rel = self.saved()['path']
         with self.assertRaisesRegex(CarryError, 'no_agent_in_tests'):
@@ -175,6 +194,56 @@ class MeetTest(unittest.TestCase):
         self.assertIn('- **[3 · 00:21] Ben:** Ayşe cuma gününe kadar', body)
         self.assertEqual(meet.listing(self.ws)['meetings'][0]['status'], 'failed')
         self.assertFalse(list((self.root / '+').glob('*toplantı*')))
+
+    def test_a_signed_out_assistant_hands_the_summary_to_apple_s_on_device_model(self):
+        rel = self.saved()['path']
+        calls = []
+
+        def ask(system, body, which, field):
+            calls.append(which)
+            if which.startswith('claude'):
+                raise CarryError('assistant_failed: Failed to authenticate: OAuth session expired')
+            return [dict(type='decision', statement='Ses diske yazılmaz.', line=2, quote='ses diske yazılmayacak, buna karar verdik')]
+        with patch.object(harvest, 'assistants', return_value=['claude:sonnet']), \
+                patch.object(harvest, 'apple_model', return_value=Path('/Apps/carry-model')), \
+                patch.object(harvest, 'ask_agent', side_effect=ask):
+            report = meet.summarize(self.ws, rel)
+        self.assertEqual(calls, ['claude:sonnet', meet.APPLE])
+        self.assertEqual(report['items'], 1)
+        self.compare.assert_not_called()  # the on-device window cannot hold the notes to compare with
+        self.assertIn(meet.APPLE, (self.root / report['digest']).read_text(encoding='utf-8'))
+
+    def test_when_no_one_can_summarise_every_reason_is_kept(self):
+        rel = self.saved()['path']
+        reasons = {'claude:sonnet': 'assistant_failed: Failed to authenticate: OAuth session expired',
+                   meet.APPLE: 'assistant_failed: apple_model_unavailable: appleIntelligenceNotEnabled'}
+
+        def ask(system, body, which, field):
+            raise CarryError(reasons[which])
+        with patch.object(harvest, 'assistants', return_value=['claude:sonnet']), \
+                patch.object(harvest, 'apple_model', return_value=Path('/Apps/carry-model')), \
+                patch.object(harvest, 'ask_agent', side_effect=ask):
+            with self.assertRaises(CarryError) as caught:
+                meet.summarize(self.ws, rel)
+        self.assertEqual(str(caught.exception), 'assistant_failed: claude: Failed to authenticate: OAuth session expired'
+                                                ' | apple: apple_model_unavailable: appleIntelligenceNotEnabled')
+        with patch.object(harvest, 'assistants', return_value=[]), patch.object(harvest, 'apple_model', return_value=None):
+            with self.assertRaisesRegex(CarryError, 'no_extraction_client'):
+                meet.summarize(self.ws, rel)
+
+    def test_a_part_over_the_on_device_window_is_asked_again_in_halves(self):
+        lines = meet.read(self.root, self.saved()['path'])[2]
+        bodies = []
+
+        def ask(system, body, which, field):
+            bodies.append(body)
+            if body.count('\n') > 1:
+                raise CarryError('assistant_failed: context_window_exceeded')
+            return []
+        meet.extract(lines, 'Turkish', meet.APPLE, ask=ask)
+        self.assertEqual([b.count('\n') + 1 for b in bodies], [4, 2, 2])
+        with self.assertRaisesRegex(CarryError, 'Failed to authenticate'):
+            meet.extract(lines, 'Turkish', 'claude:sonnet', ask=lambda *a: (_ for _ in ()).throw(CarryError('Failed to authenticate')))
 
     def test_the_bridge_saves_then_summarises_in_the_background(self):
         bridge = desktop.Bridge()

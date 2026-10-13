@@ -221,6 +221,20 @@ class AppInstallTest(unittest.TestCase):
         for key in ('NSMicrophoneUsageDescription', 'NSSpeechRecognitionUsageDescription', 'NSAudioCaptureUsageDescription'):
             self.assertIn('Carry', info[key])
 
+    def test_the_app_brings_apple_s_on_device_model_for_meetings(self):
+        from carry import app_install
+        from importlib import resources
+        import subprocess
+        done = subprocess.CompletedProcess([], 0, '', '')
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(app_install, 'swiftc', return_value='/usr/bin/swiftc'), patch.object(app_install.sys, 'platform', 'darwin'), \
+                    patch.object(app_install.subprocess, 'run', return_value=done) as run:
+                app_install.install(target=Path(tmp) / 'Carry.app')
+        built = [c.args[0] for c in run.call_args_list if c.args[0][0] == '/usr/bin/swiftc']
+        self.assertEqual([Path(b[-3]).name for b in built], ['CarryApp.swift', 'CarryModel.swift'])
+        self.assertTrue(built[1][-1].endswith('Contents/MacOS/carry-model'))
+        self.assertIn('FoundationModels', (resources.files('carry') / 'app' / 'CarryModel.swift').read_text(encoding='utf-8'))
+
     def test_build_failure_shows_the_first_errors_and_a_known_fix(self):
         from carry import app_install
         output = ("<unknown>:0: error: redefinition of module 'SwiftBridging'\n"
