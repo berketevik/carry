@@ -20,6 +20,13 @@ BUNDLE_ID = 'local.carry.alpha'
 DEFAULT_PATH = Path.home() / 'Applications' / 'Carry.app'
 LSREGISTER = ('/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/'
               'LaunchServices.framework/Versions/A/Support/lsregister')
+# What macOS shows when Carry Meet first asks for the microphone, speech recognition and
+# the system audio of a call; without these keys macOS refuses the access outright.
+USAGE = dict(
+    NSMicrophoneUsageDescription='Carry transcribes the meetings you record on this Mac. No audio is kept.',
+    NSSpeechRecognitionUsageDescription="Carry turns a meeting into text with this Mac's on-device recognizer. Nothing leaves this Mac.",
+    NSAudioCaptureUsageDescription='Carry hears the other side of a call to transcribe the meeting you record. No audio is kept.',
+)
 
 
 def swiftc():
@@ -80,7 +87,7 @@ def install(target=DEFAULT_PATH, workspace=None, python=None):
             plistlib.dump(dict(CFBundleExecutable='Carry', CFBundleIdentifier=BUNDLE_ID, CFBundleName='Carry',
                                CFBundleDisplayName='Carry', CFBundlePackageType='APPL', CFBundleShortVersionString=_version(),
                                CFBundleVersion='1', LSMinimumSystemVersion='14.0', NSHighResolutionCapable=True,
-                               CFBundleIconFile='Carry'), f)
+                               CFBundleIconFile='Carry', **USAGE), f)
         (app / 'Contents' / 'Resources' / 'python-path.txt').write_text((python or sys.executable) + '\n', encoding='utf-8', newline='\n')
         icon = resources.files('carry') / 'app' / 'Carry.icns'
         if icon.is_file():

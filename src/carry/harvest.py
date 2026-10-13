@@ -369,14 +369,14 @@ REAL_MIN = 0.6  # measured on 1 real and 7 false candidates (0.75 vs at most 0.5
 
 def evidence_for(item, workspace, limit=6):
     """Unjudged passages to compare an item with: recall's judge asks whether a passage answers a
-    question, and a statement is not one. Chat raws, digests and notes marked secret stay out."""
+    question, and a statement is not one. Chat raws, meetings, digests and notes marked secret stay out."""
     from dataclasses import replace
     from .recall import is_secret, recall
     unjudged = replace(workspace, retrieval=replace(workspace.retrieval, reranker='off', vector_min_score=-1.0))
     extra = [item['quote'][:200]] + [k for k in (item.get('keywords') or []) if isinstance(k, str)][:3]
     found = recall(unjudged, item['statement'], queries=extra)
     return [x for x in found.get('evidence', []) if 'chat-raw' not in x['path'] and '/harvest/' not in x['path']
-            and not is_secret(x.get('metadata'))][:limit]
+            and '/meet/' not in x['path'] and not is_secret(x.get('metadata'))][:limit]
 
 
 def _passage(x):

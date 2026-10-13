@@ -21,7 +21,8 @@ from .vaultview import is_digest
 DECISIONS = ('accepted', 'fixed', 'skipped')
 MARK = re.compile(r'\s*<!-- carry: (accepted|fixed|skipped) (\d{4}-\d{2}-\d{2}) -->\s*$')
 ITEM = re.compile(r'^- \*\*(?P<tag>[^*]+?):\*\* (?P<statement>.+?)(?: ↔ (?P<match>\[\[[^\]]+\]\]))?$')
-QUOTE = re.compile(r'^\s+> (?P<quote>.*?) \*\(exchange (?P<exchange>\d+), (?P<speaker>[^,)]+)(?:, (?P<date>\d{4}-\d{2}-\d{2}))?\)\*\s*$')
+# A chat item cites its exchange, a meeting item (carry.meet) the transcript line it quotes.
+QUOTE = re.compile(r'^\s+> (?P<quote>.*?) \*\((?P<unit>exchange|segment) (?P<exchange>\d+), (?P<speaker>[^,)]+)(?:, (?P<date>\d{4}-\d{2}-\d{2}))?\)\*\s*$')
 NOTE_SIDE = re.compile(r'^\s+≠ (?P<text>.+)$')
 WHY = re.compile(r'^\s+∵ (?P<text>.+)$')
 FOLDED_ITEM = re.compile(r'^- (?P<statement>.+?) → (?P<match>\[\[[^\]]+\]\])\s*$')
@@ -29,6 +30,8 @@ ACTIONABLE = ('new', 'conflict', 'review')
 FOLDED = ('resolved', 'dropped', 'known')
 LOG_HEADING = dict(Turkish='Sohbetlerden', English='From chats')
 LOG_SUMMARY = dict(Turkish='{day}: sohbetlerden onaylanan maddeler.', English='{day}: items approved from chats.')
+MEETING_LOG_HEADING = dict(Turkish='Toplantılardan', English='From meetings')
+MEETING_LOG_SUMMARY = dict(Turkish='{day}: toplantılardan onaylanan maddeler.', English='{day}: items approved from meetings.')
 
 
 
@@ -78,7 +81,8 @@ def parse(text):
             items.append(dict(id=item_id(m['statement']), section=section, tag=m['tag'].strip(),
                               kind=m['tag'].split(' · ')[0].strip(), statement=m['statement'].strip(),
                               match=m['match'] or '', quote=q['quote'] if q else '',
-                              exchange=int(q['exchange']) if q else None, speaker=q['speaker'] if q else '',
+                              exchange=int(q['exchange']) if q else None, unit=q['unit'] if q else 'exchange',
+                              speaker=q['speaker'] if q else '',
                               date=(q['date'] if q else None) or str(front.get('created') or ''),
                               said=q['date'] if q and q['date'] else '',
                               match_text=side['text'].strip() if side else '', why=why['text'].strip() if why else '',
@@ -87,7 +91,9 @@ def parse(text):
             items.append(dict(id=item_id(m['statement']), section=section, statement=m['statement'].strip(),
                               match=m['match'], decision='folded', line=n))
     raw = next((s for s in front.get('sources') or [] if isinstance(s, str)), '')
-    return dict(items=items, raw=raw, language=language or 'English', created=str(front.get('created') or ''))
+    run = front.get('harvest') if isinstance(front.get('harvest'), dict) else {}
+    return dict(items=items, raw=raw, language=language or 'English', created=str(front.get('created') or ''),
+                kind='meeting' if run.get('kind') == 'meeting' else 'chat')
 
 
 def _open(ws, source_id, relative):
@@ -144,10 +150,11 @@ def items(ws, source_id, relative):
     return dict(path=relative, items=parsed['items'], waiting=waiting, draft=front.get('draft') is True)
 
 
-def _append_log(root, day, language, entry, raw):
+def _append_log(root, day, language, entry, raw, kind='chat'):
     rel = f'log/{day}.md'
     path = root / rel
-    heading = f'## {LOG_HEADING.get(language, LOG_HEADING["English"])}'
+    headings, summaries = (MEETING_LOG_HEADING, MEETING_LOG_SUMMARY) if kind == 'meeting' else (LOG_HEADING, LOG_SUMMARY)
+    heading = f'## {headings.get(language, headings["English"])}'
     if path.exists():
         text = path.read_text(encoding='utf-8').rstrip('\n')
         headings = [l for l in text.split('\n') if l.startswith('## ')]
@@ -155,7 +162,7 @@ def _append_log(root, day, language, entry, raw):
             text += f'\n\n{heading}\n'
         text += '\n' + entry + '\n'
     else:
-        summary = LOG_SUMMARY.get(language, LOG_SUMMARY['English']).format(day=day)
+        summary = summaries.get(language, summaries['English']).format(day=day)
         text = (f'---\ntype: daily\nsummary: "{summary}"\ncreated: {day}\nsources:\n  - "{raw}"\n---\n\n'
                 f'# {day}\n\n{heading}\n\n{entry}\n')
     atomic_text(path, text)
@@ -191,11 +198,12 @@ def decide(ws, source_id, relative, item, action, text=None, today=None):
     if action != 'skip':
         said = statement or found['statement']
         where = f" ↔ {found['match']}" if found['match'] else ''
-        source = f"{parsed['raw']}, exchange {found['exchange']}" if found['exchange'] else parsed['raw']
+        source = f"{parsed['raw']}, {found['unit']} {found['exchange']}" if found['exchange'] else parsed['raw']
         entry = f"- **{found['tag']}:** {said}{where} ({source})"
         if found['quote']:
             entry += f"\n  > {found['quote']}"
-        logged = _append_log(root, found['date'] or parsed['created'] or today, parsed['language'], entry, parsed['raw'])
+        logged = _append_log(root, found['date'] or parsed['created'] or today, parsed['language'], entry, parsed['raw'],
+                             parsed['kind'])
     atomic_text(path, '\n'.join(lines))
     waiting = sum(1 for it in parse('\n'.join(lines))['items'] if it['decision'] is None)
     done = False
@@ -217,7 +225,7 @@ def _item_lines(it, match, note_text='', why=''):
     at = f", {it['said']}" if it.get('said') else ''  # only a date the digest had, never the fallback
     out = [f"- **{it['tag']}:** {it['statement']}" + (f' ↔ {match}' if match else '')]
     if it.get('quote'):
-        out.append(f"  > {it['quote']} *(exchange {it['exchange']}, {it['speaker']}{at})*")
+        out.append(f"  > {it['quote']} *({it.get('unit', 'exchange')} {it['exchange']}, {it['speaker']}{at})*")
     if note_text:
         out.append(f'  ≠ {note_text}')
     if why:

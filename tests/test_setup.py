@@ -208,6 +208,19 @@ class AppInstallTest(unittest.TestCase):
                     app_install.install(target=other.parent)
             self.assertTrue((other / 'Info.plist').exists())
 
+    def test_the_app_declares_why_it_records_meetings(self):
+        from carry import app_install
+        import plistlib, subprocess
+        done = subprocess.CompletedProcess([], 0, '', '')
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(app_install, 'swiftc', return_value='/usr/bin/swiftc'), patch.object(app_install.sys, 'platform', 'darwin'), \
+                    patch.object(app_install.subprocess, 'run', return_value=done):
+                target = app_install.install(target=Path(tmp) / 'Carry.app')
+            with open(target / 'Contents' / 'Info.plist', 'rb') as f:
+                info = plistlib.load(f)
+        for key in ('NSMicrophoneUsageDescription', 'NSSpeechRecognitionUsageDescription', 'NSAudioCaptureUsageDescription'):
+            self.assertIn('Carry', info[key])
+
     def test_build_failure_shows_the_first_errors_and_a_known_fix(self):
         from carry import app_install
         output = ("<unknown>:0: error: redefinition of module 'SwiftBridging'\n"

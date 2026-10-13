@@ -1,5 +1,10 @@
 import SwiftUI
 import AppKit
+import AVFoundation
+import AudioToolbox
+import CoreAudio
+import Speech
+import UserNotifications
 
 // The bridge owns one child. Private pipes have no address to expose and close
 // on app exit. Failed writes are never replayed automatically.
@@ -140,15 +145,48 @@ func presetLabel(_ preset: String) -> String {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     static let worker = Worker()
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    /// With Carry Meet in the menu bar, closing the window leaves Carry running there.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        MainActor.assumeIsolated { !meetingMenuBar && !MeetingRecorder.shared.recording }
+    }
     /// Set the icon ourselves: Dock and Stage Manager can keep a stale cached icon for an
     /// app rebuilt in place.
     func applicationDidFinishLaunching(_ notification: Notification) {
         if let icon = Bundle.main.image(forResource: "Carry") { NSApp.applicationIconImage = icon }
+        MeetingNotice.setUp(self)
+        MainActor.assumeIsolated { MeetingWatcher.shared.start() }
+    }
+    /// A meeting being recorded is saved before Carry quits.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        MainActor.assumeIsolated {
+            let recorder = MeetingRecorder.shared
+            guard recorder.recording else { return .terminateNow }
+            recorder.stop { NSApp.reply(toApplicationShouldTerminate: true) }
+            return .terminateLater
+        }
     }
     func applicationWillTerminate(_ notification: Notification) { Self.worker.stop() }
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound])
+    }
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        let action = response.actionIdentifier
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                let recorder = MeetingRecorder.shared
+                switch action {
+                case "start": recorder.start(title: MeetingWatcher.shared.pendingTitle)
+                case "stop": recorder.stop()
+                default: MainWindow.show(); recorder.openMeetings += 1
+                }
+            }
+            completionHandler()
+        }
+    }
 }
 
 @MainActor final class Model: ObservableObject {
@@ -315,7 +353,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// the user has moved on to another note or source are dropped.
     func openNote(_ path: String, source: String? = nil, record: Bool = true) {
         let sid = source ?? vaultSource
-        if page != "Review" { page = "Vault" }
+        if !["Review", "Meetings"].contains(page) { page = "Vault" }
         if !sid.isEmpty && sid != vaultSource { vaultSource = sid; files = []; vault = [:]; loadVault() }
         noteToken += 1
         let token = noteToken
@@ -642,6 +680,7 @@ func pageName(_ key: String) -> String {
     case "Graph": return T("Map", "Harita")
     case "Search": return T("Search notes", "Notlarda ara")
     case "Review": return T("Review", "İncele")
+    case "Meetings": return T("Meetings", "Toplantılar")
     case "Proposals": return T("Change proposals", "Değişiklik önerileri")
     default: return T("Settings", "Ayarlar")
     }
@@ -697,6 +736,9 @@ let glossary: [(String, String, String, String)] = [
     ("Chat notes", "Sohbet notları",
      "When a chat with your assistant ends, Carry picks out decisions, facts and unfinished work and saves them as drafts for you.",
      "Asistanınızla bir sohbet bittiğinde Carry kararları, bilgileri ve yarım kalan işleri seçip sizin için taslak olarak kaydeder."),
+    ("Meetings", "Toplantılar",
+     "Carry records a meeting on this Mac and writes down what is said, from your microphone and the sound of the call; no audio is kept. When it ends the transcript is saved with your notes and your assistant summarises it once. Its decisions, open items and facts wait for you on the Review page.",
+     "Carry toplantıyı bu Mac'te kaydeder ve konuşulanı yazıya döker: mikrofonunuzdan ve görüşmenin sesinden; ses saklanmaz. Toplantı bitince transkript notlarınıza kaydedilir, asistanınız bir kez özetler. Kararlar, açık işler ve bilgiler İncele sayfasında sizi bekler."),
     ("Inbox", "Gelen kutusu",
      "The + folder, where new chat drafts and captures collect. What waits for you there is on the Review page.",
      "Yeni sohbet taslaklarının ve kayıtların toplandığı + klasörü. Orada sizi bekleyenler İncele sayfasındadır."),
@@ -717,13 +759,14 @@ struct GuideSheet: View {
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    Text(T("Carry gives your AI assistant a memory: your own notes. When you ask Claude Code or Codex something, it first looks in your notes; when a chat ends, Carry saves what was decided as a draft note. Your notes stay on this Mac, in a folder you choose.",
-                           "Carry, yapay zekâ asistanınıza bir hafıza verir: kendi notlarınız. Claude Code veya Codex'e bir şey sorduğunuzda önce notlarınıza bakar; sohbet bitince Carry alınan kararları taslak not olarak kaydeder. Notlarınız bu Mac'te, sizin seçtiğiniz bir klasörde kalır."))
+                    Text(T("Carry builds your own lasting memory and enriches the context with it whenever you talk to an AI model. The memory is your notes, and it grows from your chats and your meetings: when you ask Claude Code or Codex something, it first looks in your notes; when a chat or a meeting ends, Carry saves what was decided as drafts for you to check. Your notes stay on this Mac, in a folder you choose.",
+                           "Carry kendi kalıcı hafızanızı oluşturur ve yapay zekâ modelleriyle konuşurken bu hafızayla bağlamı zenginleştirir. Hafıza notlarınızdır; sohbetlerinizden ve toplantılarınızdan büyür: Claude Code veya Codex'e bir şey sorduğunuzda önce notlarınıza bakar; bir sohbet ya da toplantı bitince Carry alınan kararları kontrol etmeniz için taslak olarak kaydeder. Notlarınız bu Mac'te, sizin seçtiğiniz bir klasörde kalır."))
                         .fixedSize(horizontal: false, vertical: true)
                     FlowLayout {
                         Button(T("Write my first note", "İlk notumu yaz")) { dismiss(); model.showNewNote = true }
                         Button(T("Use it with my assistant", "Asistanımla kullan")) { dismiss(); model.page = "Settings"; model.settingsTab = "Clients" }
                         Button(T("Review chat drafts", "Sohbet taslaklarını incele")) { dismiss(); model.page = "Review" }
+                        Button(T("Record a meeting", "Toplantı kaydet")) { dismiss(); model.page = "Meetings" }
                     }
                     Divider()
                     ForEach(glossary.indices, id: \.self) { i in
@@ -1301,7 +1344,8 @@ struct DigestItemsView: View {
         }
     }
     func quoteLine(_ it: [String: Any]) -> String {
-        let at: String = str(it, "exchange", "") != "" ? T("  · exchange ", "  · mesaj ") + str(it, "exchange") : ""
+        let unit = str(it, "unit", "exchange") == "segment" ? T("  · line ", "  · satır ") : T("  · exchange ", "  · mesaj ")
+        let at: String = str(it, "exchange", "") != "" ? unit + str(it, "exchange") : ""
         return "“" + str(it, "quote") + "”" + at
     }
     @ViewBuilder func buttons(_ it: [String: Any]) -> some View {
@@ -3182,9 +3226,810 @@ struct GraphView: View {
     }
 }
 
+// MARK: - Carry Meet
+// A meeting is recorded from the microphone and, on macOS 14.2+, the system audio (the other
+// side of a call, also in headphones), and transcribed on this Mac by Apple's on-device
+// recognizer. No audio is written to disk. At Stop the transcript goes to carry.meet, which
+// saves it as a note at once and summarises it in the background with the owner's assistant.
+
+/// One line of a meeting transcript: who spoke ("me" is the microphone, "others" the system
+/// audio), seconds from the start of the recording, and what the recognizer heard.
+struct Utterance { let start: Double; let speaker: String; let text: String }
+
+/// Any PCM buffer as 16 kHz mono Float32, the smallest stream the recognizer takes.
+final class MonoConverter {
+    static let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)!
+    private var converter: AVAudioConverter?
+    private var input: AVAudioFormat?
+    func convert(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        if input != buffer.format { converter = AVAudioConverter(from: buffer.format, to: Self.format); input = buffer.format }
+        guard let converter else { return nil }
+        let capacity = AVAudioFrameCount(Double(buffer.frameLength) * Self.format.sampleRate / buffer.format.sampleRate) + 32
+        guard let out = AVAudioPCMBuffer(pcmFormat: Self.format, frameCapacity: capacity) else { return nil }
+        var fed = false
+        var error: NSError?
+        converter.convert(to: out, error: &error) { _, status in
+            if fed { status.pointee = .noDataNow; return nil }
+            fed = true; status.pointee = .haveData; return buffer
+        }
+        return error == nil && out.frameLength > 0 ? out : nil
+    }
+}
+
+/// On-device speech recognition for one audio source. One recognition task is unreliable past
+/// about a minute, so a new request starts at the first sentence end after 45 s (at the latest
+/// at 58 s, mid-sentence). Words are split into utterances at pauses.
+final class SpeechStream {
+    let speaker: String
+    private let recognizer: SFSpeechRecognizer
+    private let lock = NSLock()
+    private var request: SFSpeechAudioBufferRecognitionRequest?
+    private var current: Kept?
+    private var live: [Kept] = []  // requests whose final result has not come yet
+    private var timer: Timer?
+    private var origin = Date()
+    private var finals: [Utterance] = []
+    private var partialText = ""
+    private let converter = MonoConverter()
+    /// Called once when macOS refuses recognition because Siri and Dictation are off.
+    var onUnavailable: (() -> Void)?
+    private var refused = false
+    static let turnSeconds: TimeInterval = 45
+    static let longestSeconds: TimeInterval = 58
+    static let pause: TimeInterval = 1.5
+
+    init?(speaker: String, locale: String) {
+        guard let r = SFSpeechRecognizer(locale: Locale(identifier: locale)), r.supportsOnDeviceRecognition else { return nil }
+        self.speaker = speaker; recognizer = r
+    }
+    private func locked<T>(_ body: () -> T) -> T { lock.lock(); defer { lock.unlock() }; return body() }
+    var utterances: [Utterance] { locked { finals } }
+    var partial: String { locked { partialText } }
+    private var busy: Bool { locked { live.contains { !$0.done } } }
+
+    func start(origin: Date) {
+        self.origin = origin
+        begin()
+        let t = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
+            guard let self, let old = self.locked({ self.current }), Date().timeIntervalSince(old.started) > Self.longestSeconds else { return }
+            self.rotate(from: old)
+        }
+        RunLoop.main.add(t, forMode: .common)
+        timer = t
+    }
+    /// Called from the capture thread: convert and hand over, nothing heavier.
+    func append(_ buffer: AVAudioPCMBuffer) {
+        guard let mono = converter.convert(buffer) else { return }
+        locked { request }?.append(mono)
+    }
+    /// One request: what it has kept (in its own time), the sentence being heard, and whether
+    /// its final result has come.
+    private final class Kept {
+        let started = Date()
+        var end = -1.0, text = "", partial = "", heard: Double? = nil, done = false
+    }
+    private func keep(_ text: String, at start: Double) {
+        finals.append(Utterance(start: start, speaker: speaker, text: text))
+        finals.sort { $0.start < $1.start }
+    }
+    /// Whether most words of `part` are in `text`: the sentence being heard came back final.
+    static func covered(_ part: String, by text: String) -> Bool {
+        let words = Set(text.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }))
+        let heard = part.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+        return !heard.isEmpty && Double(heard.filter(words.contains).count) >= 0.5 * Double(heard.count)
+    }
+    private func begin() {
+        let r = SFSpeechAudioBufferRecognitionRequest()
+        r.shouldReportPartialResults = true
+        r.requiresOnDeviceRecognition = true
+        r.addsPunctuation = true
+        r.taskHint = .dictation
+        let offset = Date().timeIntervalSince(origin)
+        let kept = Kept()
+        // The on-device recognizer starts over after every pause: the request's final result
+        // holds only the last sentence. Each sentence ends with a result whose words carry
+        // their times; that one is kept, and words before what is already kept are skipped.
+        // A sentence cut off by a new request or by Stop may never come back final: what was
+        // heard of it is kept, at the time it was first heard.
+        let task = recognizer.recognitionTask(with: r) { [weak self] result, error in
+            guard let self else { return }
+            if let e = error as NSError?, e.domain == "kLSRErrorDomain", e.code == 201, !self.refused {
+                self.refused = true; self.onUnavailable?()
+            }
+            let turn: Bool = self.locked {
+                let now = Date().timeIntervalSince(self.origin)
+                let ending = error != nil || result?.isFinal == true
+                defer { if ending { kept.done = true } }
+                var timed = false
+                if let result {
+                    let t = result.bestTranscription
+                    timed = t.segments.contains { $0.duration > 0 }
+                    if kept.heard == nil { kept.heard = now }
+                    if timed {
+                        for u in Self.split(t, offset: offset, speaker: self.speaker, after: kept.end) { self.keep(u.text, at: u.start) }
+                        kept.end = max(kept.end, t.segments.map { $0.timestamp + $0.duration }.max() ?? kept.end)
+                        if Self.covered(kept.partial, by: t.formattedString) { kept.partial = "" }
+                        kept.text = t.formattedString; kept.heard = nil
+                    } else if result.isFinal, !t.formattedString.isEmpty, t.formattedString != kept.text {
+                        self.keep(t.formattedString, at: kept.heard ?? now)
+                        kept.partial = ""
+                    } else if !result.isFinal {
+                        kept.partial = t.formattedString
+                    }
+                }
+                if ending && !kept.partial.isEmpty { self.keep(kept.partial, at: kept.heard ?? now); kept.partial = "" }
+                if self.current === kept { self.partialText = timed || ending ? "" : kept.partial }
+                return timed && self.current === kept && Date().timeIntervalSince(kept.started) > Self.turnSeconds
+            }
+            if turn { DispatchQueue.main.async { self.rotate(from: kept) } }
+        }
+        _ = task
+        locked { request = r; current = kept; live.removeAll { $0.done }; live.append(kept) }
+    }
+    /// A new request takes over the audio; the old one is ended and delivers its final result.
+    private func rotate(from old: Kept) {
+        let ended: SFSpeechAudioBufferRecognitionRequest? = locked { current === old ? request : nil }
+        guard let ended else { return }
+        begin()
+        ended.endAudio()
+    }
+    /// The words after `after` (seconds into the request) as utterances, split at pauses.
+    static func split(_ t: SFTranscription, offset: Double, speaker: String, after: Double = -1) -> [Utterance] {
+        var out: [Utterance] = []
+        var words: [String] = [], start = 0.0, end = 0.0
+        for s in t.segments where s.timestamp > after - 0.01 {
+            if !words.isEmpty && s.timestamp - end > pause {
+                out.append(Utterance(start: offset + start, speaker: speaker, text: words.joined(separator: " ")))
+                words = []
+            }
+            if words.isEmpty { start = s.timestamp }
+            words.append(s.substring); end = s.timestamp + s.duration
+        }
+        if !words.isEmpty { out.append(Utterance(start: offset + start, speaker: speaker, text: words.joined(separator: " "))) }
+        return out
+    }
+    /// Ends the last request and waits up to eight seconds for every final result.
+    func finish() async {
+        timer?.invalidate(); timer = nil
+        let r: SFSpeechAudioBufferRecognitionRequest? = locked { defer { request = nil; current = nil; partialText = "" }; return request }
+        r?.endAudio()
+        for _ in 0..<80 {
+            if !busy { break }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        // A final result that never came: keep what was heard of its sentence.
+        locked { for k in live where !k.done && !k.partial.isEmpty { keep(k.partial, at: k.heard ?? Date().timeIntervalSince(origin)); k.partial = "" } }
+    }
+}
+
+/// The default microphone through AVAudioEngine; restarts itself when the input device changes.
+final class MicCapture {
+    private let engine = AVAudioEngine()
+    private var observer: NSObjectProtocol?
+    var onBuffer: ((AVAudioPCMBuffer) -> Void)?
+    func start() throws {
+        let input = engine.inputNode
+        input.removeTap(onBus: 0)
+        input.installTap(onBus: 0, bufferSize: 4096, format: input.outputFormat(forBus: 0)) { [weak self] buffer, _ in self?.onBuffer?(buffer) }
+        engine.prepare()
+        try engine.start()
+        if observer == nil {
+            observer = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
+                guard let self else { return }
+                self.engine.stop(); try? self.start()
+            }
+        }
+    }
+    func stop() {
+        if let observer { NotificationCenter.default.removeObserver(observer) }
+        observer = nil
+        engine.inputNode.removeTap(onBus: 0); engine.stop()
+    }
+}
+
+struct AudioError: LocalizedError {
+    let what: String; let status: OSStatus
+    var errorDescription: String? { "\(what) (\(status))" }
+}
+
+func audioProperty<T>(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector, _ value: inout T) -> OSStatus {
+    var address = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+    var size = UInt32(MemoryLayout<T>.size)
+    return withUnsafeMutablePointer(to: &value) { AudioObjectGetPropertyData(object, &address, 0, nil, &size, $0) }
+}
+
+func audioObjects(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector) -> [AudioObjectID] {
+    var address = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+    var size: UInt32 = 0
+    guard AudioObjectGetPropertyDataSize(object, &address, 0, nil, &size) == noErr, size > 0 else { return [] }
+    var ids = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+    guard AudioObjectGetPropertyData(object, &address, 0, nil, &size, &ids) == noErr else { return [] }
+    return ids
+}
+
+/// Everything this Mac plays, through a Core Audio process tap (macOS 14.2+): a private
+/// aggregate device around the tap, read by an IO block. macOS asks once for system audio
+/// recording; nothing is written to disk.
+@available(macOS 14.2, *)
+final class SystemAudioCapture {
+    private var tap = AudioObjectID(kAudioObjectUnknown)
+    private var aggregate = AudioObjectID(kAudioObjectUnknown)
+    private var proc: AudioDeviceIOProcID?
+    private let queue = DispatchQueue(label: "carry.meet.system", qos: .userInitiated)
+    var onBuffer: ((AVAudioPCMBuffer) -> Void)?
+
+    func start() throws {
+        let description = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
+        description.uuid = UUID()
+        description.muteBehavior = .unmuted
+        description.isPrivate = true
+        description.name = "Carry Meet"
+        var status = AudioHardwareCreateProcessTap(description, &tap)
+        guard status == noErr else { throw AudioError(what: "process tap", status: status) }
+        var output = AudioObjectID(kAudioObjectUnknown)
+        status = audioProperty(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultSystemOutputDevice, &output)
+        var uid: CFString = "" as CFString
+        if status == noErr { status = audioProperty(output, kAudioDevicePropertyDeviceUID, &uid) }
+        guard status == noErr else { stop(); throw AudioError(what: "output device", status: status) }
+        let settings: [String: Any] = [
+            kAudioAggregateDeviceNameKey: "Carry Meet",
+            kAudioAggregateDeviceUIDKey: UUID().uuidString,
+            kAudioAggregateDeviceMainSubDeviceKey: uid as String,
+            kAudioAggregateDeviceIsPrivateKey: true,
+            kAudioAggregateDeviceIsStackedKey: false,
+            kAudioAggregateDeviceTapAutoStartKey: true,
+            kAudioAggregateDeviceSubDeviceListKey: [[kAudioSubDeviceUIDKey: uid as String]],
+            kAudioAggregateDeviceTapListKey: [[kAudioSubTapDriftCompensationKey: true, kAudioSubTapUIDKey: description.uuid.uuidString]],
+        ]
+        status = AudioHardwareCreateAggregateDevice(settings as CFDictionary, &aggregate)
+        guard status == noErr else { stop(); throw AudioError(what: "aggregate device", status: status) }
+        var stream = AudioStreamBasicDescription()
+        status = audioProperty(tap, kAudioTapPropertyFormat, &stream)
+        guard status == noErr, let format = AVAudioFormat(streamDescription: &stream) else { stop(); throw AudioError(what: "tap format", status: status) }
+        status = AudioDeviceCreateIOProcIDWithBlock(&proc, aggregate, queue) { [weak self] _, input, _, _, _ in
+            guard let self, let copy = Self.copy(input, format) else { return }
+            self.onBuffer?(copy)
+        }
+        guard status == noErr else { stop(); throw AudioError(what: "io proc", status: status) }
+        status = AudioDeviceStart(aggregate, proc)
+        guard status == noErr else { stop(); throw AudioError(what: "device start", status: status) }
+    }
+    /// The IO block's buffers live only during the call: copy them out.
+    private static func copy(_ list: UnsafePointer<AudioBufferList>, _ format: AVAudioFormat) -> AVAudioPCMBuffer? {
+        let source = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: list))
+        guard let first = source.first, first.mDataByteSize > 0 else { return nil }
+        let frames = first.mDataByteSize / max(format.streamDescription.pointee.mBytesPerFrame, 1)
+        guard frames > 0, let out = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames) else { return nil }
+        out.frameLength = frames
+        let target = UnsafeMutableAudioBufferListPointer(out.mutableAudioBufferList)
+        for (i, buffer) in source.enumerated() where i < target.count {
+            guard let from = buffer.mData, let to = target[i].mData else { continue }
+            memcpy(to, from, Int(min(buffer.mDataByteSize, target[i].mDataByteSize)))
+        }
+        return out
+    }
+    func stop() {
+        if aggregate != kAudioObjectUnknown {
+            if let proc { AudioDeviceStop(aggregate, proc); AudioDeviceDestroyIOProcID(aggregate, proc) }
+            AudioHardwareDestroyAggregateDevice(aggregate)
+        }
+        if tap != kAudioObjectUnknown { AudioHardwareDestroyProcessTap(tap) }
+        proc = nil; aggregate = AudioObjectID(kAudioObjectUnknown); tap = AudioObjectID(kAudioObjectUnknown)
+    }
+}
+
+/// Which other apps have the microphone open: Core Audio's process list on macOS 14.2+ (bundle
+/// IDs), else whether the default input device runs at all.
+enum MicUsers {
+    static func current() -> [String] {
+        let me = ProcessInfo.processInfo.processIdentifier
+        if #available(macOS 14.2, *) {
+            return audioObjects(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyProcessObjectList).compactMap { p in
+                var running: UInt32 = 0, pid: pid_t = 0
+                var bundle: CFString = "" as CFString
+                guard audioProperty(p, kAudioProcessPropertyIsRunningInput, &running) == noErr, running != 0,
+                      audioProperty(p, kAudioProcessPropertyPID, &pid) == noErr, pid != me else { return nil }
+                _ = audioProperty(p, kAudioProcessPropertyBundleID, &bundle)
+                return (bundle as String).isEmpty ? "pid:\(pid)" : bundle as String
+            }
+        }
+        var device = AudioObjectID(kAudioObjectUnknown), running: UInt32 = 0
+        guard audioProperty(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultInputDevice, &device) == noErr,
+              audioProperty(device, kAudioDevicePropertyDeviceIsRunningSomewhere, &running) == noErr else { return [] }
+        return running != 0 ? ["input"] : []
+    }
+    /// "Zoom", "Google Chrome": a helper's bundle ID (com.google.Chrome.helper) names its app.
+    static func appName(_ id: String) -> String? {
+        var parts = id.split(separator: ".").map(String.init)
+        while parts.count >= 2 {
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: parts.joined(separator: ".")) {
+                return FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: "")
+            }
+            parts.removeLast()
+        }
+        return nil
+    }
+}
+
+func clock(_ seconds: Double) -> String {
+    let s = Int(seconds)
+    return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60) : String(format: "%02d:%02d", s / 60, s % 60)
+}
+
+/// Notifications for Carry Meet: "a meeting started, record it?", "did it end?", "summary ready".
+enum MeetingNotice {
+    /// Notifications need an app bundle; a bare binary has none and would crash here.
+    static var available: Bool { Bundle.main.bundleIdentifier != nil }
+    static func setUp(_ delegate: UNUserNotificationCenterDelegate) {
+        guard available else { return }
+        let center = UNUserNotificationCenter.current()
+        center.delegate = delegate
+        center.setNotificationCategories([
+            UNNotificationCategory(identifier: "meeting.start", actions: [UNNotificationAction(identifier: "start", title: T("Start recording", "Kaydı başlat"))], intentIdentifiers: []),
+            UNNotificationCategory(identifier: "meeting.end", actions: [UNNotificationAction(identifier: "stop", title: T("Stop recording", "Kaydı durdur"))], intentIdentifiers: []),
+        ])
+    }
+    static func post(_ id: String, _ title: String, _ body: String, category: String? = nil) {
+        guard available else { return }
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            guard granted else { return }
+            let content = UNMutableNotificationContent()
+            content.title = title; content.body = body
+            if let category { content.categoryIdentifier = category }
+            center.add(UNNotificationRequest(identifier: id, content: content, trigger: nil))
+        }
+    }
+}
+
+/// Opens Carry's window from the menu bar or a notification; the label view hands over the action.
+@MainActor enum MainWindow {
+    static var open: OpenWindowAction?
+    static func show() {
+        if let w = NSApp.windows.first(where: { $0.identifier?.rawValue.hasPrefix("main") == true && ($0.isVisible || $0.isMiniaturized) }) {
+            w.deminiaturize(nil); w.makeKeyAndOrderFront(nil)
+        } else { open?(id: "main") }
+        NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
+/// Carry stays in the menu bar and watches for meetings unless the owner turns it off.
+var meetingMenuBar: Bool { UserDefaults.standard.object(forKey: "meetingMenuBar") as? Bool ?? true }
+
+@MainActor final class MeetingRecorder: ObservableObject {
+    static let shared = MeetingRecorder()
+    @Published private(set) var recording = false
+    @Published private(set) var saving = false
+    @Published private(set) var elapsed: Double = 0
+    @Published private(set) var lines: [Utterance] = []
+    @Published private(set) var partials: [Utterance] = []
+    @Published private(set) var hearsSystem = false
+    @Published private(set) var unsaved: [String: Any]? = nil
+    @Published var title = ""
+    @Published var problem = ""
+    @Published var problemSettings = ""
+    @Published var notice = ""
+    @Published var openMeetings = 0  // bumped to bring the Meetings page forward
+    @Published var changed = 0       // bumped when a meeting was saved or its summary finished
+    private var started = Date()
+    private var mic: MicCapture?
+    private var system: AnyObject?
+    private var streams: [SpeechStream] = []
+    private var timer: Timer?
+    private var summaries: [String: String] = [:]  // path: title, while the summary runs
+    private var poll: Timer?
+    var workspace: String { ProcessInfo.processInfo.environment["CARRY_DESKTOP_WORKSPACE"] ?? UserDefaults.standard.string(forKey: "workspace") ?? "" }
+    static var locale: String { UserDefaults.standard.string(forKey: "meetingLocale") ?? (Lang.code == "tr" ? "tr-TR" : "en-US") }
+
+    func start(title: String? = nil) {
+        guard !recording, !saving else { return }
+        problem = ""; problemSettings = ""; notice = ""
+        if let title { self.title = title }
+        AVCaptureDevice.requestAccess(for: .audio) { micAllowed in
+            SFSpeechRecognizer.requestAuthorization { speech in
+                DispatchQueue.main.async { MainActor.assumeIsolated { self.begin(micAllowed, speech) } }
+            }
+        }
+    }
+    private func fail(_ message: String, settings: String = "") {
+        problem = message; problemSettings = settings
+        MeetingNotice.post("meeting.problem", T("Carry could not record", "Carry kayıt yapamadı"), message)
+    }
+    private func begin(_ micAllowed: Bool, _ speech: SFSpeechRecognizerAuthorizationStatus) {
+        guard !recording else { return }
+        guard micAllowed else {
+            return fail(T("Carry may not use the microphone. Allow it in System Settings › Privacy & Security › Microphone.",
+                          "Carry mikrofonu kullanamıyor. Sistem Ayarları › Gizlilik ve Güvenlik › Mikrofon bölümünden izin verin."),
+                        settings: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")
+        }
+        guard speech == .authorized else {
+            return fail(T("Carry may not transcribe speech. Allow it in System Settings › Privacy & Security › Speech Recognition.",
+                          "Carry konuşmayı yazıya dökemiyor. Sistem Ayarları › Gizlilik ve Güvenlik › Konuşma Tanıma bölümünden izin verin."),
+                        settings: "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition")
+        }
+        guard let me = SpeechStream(speaker: "me", locale: Self.locale) else {
+            return fail(T("This Mac cannot transcribe this language on the device. Choose another meeting language.",
+                          "Bu Mac bu dili cihaz üstünde yazıya dökemiyor. Başka bir toplantı dili seçin."))
+        }
+        var all = [me]
+        var tap: AnyObject? = nil
+        if #available(macOS 14.2, *), let others = SpeechStream(speaker: "others", locale: Self.locale) {
+            let capture = SystemAudioCapture()
+            capture.onBuffer = { others.append($0) }
+            tap = capture; all.append(others)
+        }
+        started = Date()
+        for s in all {
+            s.onUnavailable = { DispatchQueue.main.async { MainActor.assumeIsolated { MeetingRecorder.shared.dictationOff() } } }
+            s.start(origin: started)
+        }
+        let mic = MicCapture()
+        mic.onBuffer = { me.append($0) }
+        do { try mic.start() } catch {
+            for s in all { Task { await s.finish() } }
+            return fail(T("The microphone could not start: \(error.localizedDescription)", "Mikrofon açılamadı: \(error.localizedDescription)"))
+        }
+        hearsSystem = false
+        if #available(macOS 14.2, *), let capture = tap as? SystemAudioCapture {
+            do { try capture.start(); hearsSystem = true } catch {
+                let unheard = all.removeLast()  // the microphone alone still works
+                Task { await unheard.finish() }
+            }
+        }
+        self.mic = mic; system = hearsSystem ? tap : nil; streams = all
+        elapsed = 0; lines = []; partials = []; recording = true
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in MainActor.assumeIsolated { MeetingRecorder.shared.tick() } }
+    }
+    private func tick() {
+        elapsed = Date().timeIntervalSince(started)
+        lines = streams.flatMap { $0.utterances }.sorted { $0.start < $1.start }
+        partials = streams.compactMap { s in s.partial.isEmpty ? nil : Utterance(start: elapsed, speaker: s.speaker, text: s.partial) }
+    }
+    private func halt() {
+        timer?.invalidate(); timer = nil
+        mic?.stop(); mic = nil
+        if #available(macOS 14.2, *) { (system as? SystemAudioCapture)?.stop() }
+        system = nil
+        recording = false
+    }
+    /// Siri and Dictation are off: macOS refuses every recognition, so nothing would be saved.
+    func dictationOff() {
+        guard recording else { return }
+        halt(); streams = []; lines = []; partials = []
+        fail(T("Turn on Dictation to transcribe meetings: System Settings › Keyboard › Dictation. Carry uses the recognizer on this Mac; no audio leaves it.",
+               "Toplantıları yazıya dökmek için Dikte'yi açın: Sistem Ayarları › Klavye › Dikte. Carry bu Mac'teki tanıyıcıyı kullanır; ses Mac'ten çıkmaz."),
+             settings: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension")
+    }
+    func stop(then done: (() -> Void)? = nil) {
+        guard recording else { done?(); return }
+        let duration = Date().timeIntervalSince(started), started = started, title = title, streams = streams
+        halt(); saving = true
+        Task {
+            for s in streams { await s.finish() }
+            let all = streams.flatMap { $0.utterances }.sorted { $0.start < $1.start }
+            await MainActor.run {
+                self.streams = []; self.lines = all; self.partials = []
+                guard !all.isEmpty else {
+                    self.saving = false
+                    self.notice = T("Nothing was heard, so nothing was saved.", "Hiçbir şey duyulmadı, bu yüzden bir şey kaydedilmedi.")
+                    done?(); return
+                }
+                let iso = ISO8601DateFormatter(); iso.timeZone = .current
+                self.save(["action": "meeting_save", "title": title, "started": iso.string(from: started), "duration": duration,
+                           "segments": all.map { ["start": $0.start, "speaker": $0.speaker, "text": $0.text] }], then: done)
+            }
+        }
+    }
+    /// Sends the transcript to be saved; on failure it stays here so it can be sent again.
+    func save(_ request: [String: Any], then done: (() -> Void)? = nil) {
+        saving = true; unsaved = nil
+        var request = request
+        request["workspace"] = workspace
+        let name = str(request, "title", "")
+        AppDelegate.worker.call(request) { result in
+            DispatchQueue.main.async { MainActor.assumeIsolated {
+                self.saving = false
+                switch result {
+                case .success(let value):
+                    let path = str(value, "path", "")
+                    self.title = ""; self.changed += 1
+                    self.notice = T("Saved to \(path). Your assistant is summarising it; the items will wait on the Review page.",
+                                    "\(path) dosyasına kaydedildi. Asistanınız özetliyor; maddeler İncele sayfasında sizi bekleyecek.")
+                    self.follow(path, str(value, "title", name))
+                case .failure(let e):
+                    self.unsaved = request
+                    self.problem = T("The transcript could not be saved: \(e.localizedDescription). It is kept until you save it again.",
+                                     "Transkript kaydedilemedi: \(e.localizedDescription). Yeniden kaydedene kadar burada tutuluyor.")
+                }
+                done?()
+            } }
+        }
+    }
+    /// Watches a running summary and says when it is done, even with the window closed.
+    func follow(_ path: String, _ title: String) {
+        summaries[path] = title
+        guard poll == nil else { return }
+        poll = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in MainActor.assumeIsolated { MeetingRecorder.shared.checkSummaries() } }
+    }
+    private func checkSummaries() {
+        AppDelegate.worker.call(["action": "meeting_list", "workspace": workspace]) { result in
+            DispatchQueue.main.async { MainActor.assumeIsolated {
+                guard case .success(let value) = result else { return }
+                for m in value["meetings"] as? [[String: Any]] ?? [] {
+                    let path = str(m, "path", "")
+                    guard let title = self.summaries[path], ["done", "failed"].contains(str(m, "status")) else { continue }
+                    self.summaries[path] = nil; self.changed += 1
+                    if str(m, "status") == "done" {
+                        MeetingNotice.post("meeting.done." + path, T("Meeting summary ready", "Toplantı özeti hazır"),
+                                           str(m, "digest", "") != "" ? T("\(title): its decisions and open items wait on the Review page.", "\(title): kararları ve açık işleri İncele sayfasında sizi bekliyor.")
+                                                                       : T("\(title): summary written to the meeting note.", "\(title): özet toplantı notuna yazıldı."))
+                    } else {
+                        MeetingNotice.post("meeting.failed." + path, T("No meeting summary", "Toplantı özeti çıkmadı"),
+                                           T("\(title): the transcript is saved. Retry the summary on the Meetings page.", "\(title): transkript kayıtlı. Özeti Toplantılar sayfasından yeniden deneyin."))
+                    }
+                }
+                if self.summaries.isEmpty { self.poll?.invalidate(); self.poll = nil }
+            } }
+        }
+    }
+}
+
+/// Asks when another app opens the microphone (a call is starting), and reminds when it
+/// closes it while Carry still records. Carry's own recording is never counted.
+@MainActor final class MeetingWatcher {
+    static let shared = MeetingWatcher()
+    private var timer: Timer?
+    private var last: [String] = []
+    private var heard = false, quiet = 0, reminded = false
+    func start() {
+        guard timer == nil else { return }
+        timer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { _ in MainActor.assumeIsolated { MeetingWatcher.shared.check() } }
+    }
+    private func check() {
+        let recorder = MeetingRecorder.shared
+        let users = MicUsers.current().filter { $0 != Bundle.main.bundleIdentifier }
+        defer { last = users }
+        guard meetingMenuBar else { return }
+        if recorder.recording {
+            if !users.isEmpty { heard = true; quiet = 0 } else if heard { quiet += 1 }
+            if quiet == 3 && !reminded {
+                reminded = true
+                MeetingNotice.post("meeting.end", T("Did the meeting end?", "Toplantı bitti mi?"),
+                                   T("No other app uses the microphone now. Carry is still recording.", "Mikrofonu artık başka bir uygulama kullanmıyor. Carry kayda devam ediyor."), category: "meeting.end")
+            }
+            return
+        }
+        heard = false; quiet = 0; reminded = false
+        guard last.isEmpty, let first = users.first, !recorder.saving else { return }
+        let app = MicUsers.appName(first)
+        MeetingNotice.post("meeting.start", T("A meeting started. Record it?", "Toplantı başladı, kaydedilsin mi?"),
+                           app.map { T("\($0) is using the microphone. Carry transcribes on this Mac and keeps no audio.", "\($0) mikrofonu kullanıyor. Carry bu Mac'te yazıya döker, ses saklamaz.") }
+                               ?? T("An app is using the microphone. Carry transcribes on this Mac and keeps no audio.", "Bir uygulama mikrofonu kullanıyor. Carry bu Mac'te yazıya döker, ses saklamaz."),
+                           category: "meeting.start")
+        pendingTitle = app.map { T("\($0) meeting", "\($0) toplantısı") } ?? ""
+    }
+    /// The title a recording started from the notification gets.
+    var pendingTitle = ""
+}
+
+struct MeetingsView: View {
+    @ObservedObject var model: Model
+    @ObservedObject var recorder = MeetingRecorder.shared
+    @State private var meetings: [[String: Any]] = []
+    @State private var source = ""  // the notes folder meetings are saved to
+    @AppStorage("meetingMenuBar") private var menuBar = true
+    @AppStorage("meetingLocale") private var locale = Lang.code == "tr" ? "tr-TR" : "en-US"
+    var running: Bool { meetings.contains { ["pending", "running"].contains(str($0, "status")) } }
+    var body: some View {
+        HSplitView {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(pageName("Meetings")).font(.title.bold())
+                Text(T("Record a meeting on this Mac. Carry writes it down as it is said, from your microphone and, on macOS 14.2 or later, the sound of the call; no audio is kept. When you stop, the transcript is saved to your notes and your assistant summarises it once. Its decisions, open items and facts wait for you on the Review page.",
+                       "Toplantıyı bu Mac'te kaydedin. Carry konuşulanı anında yazıya döker: mikrofonunuzdan ve macOS 14.2 ya da sonrasında görüşmenin sesinden; ses saklanmaz. Durdurduğunuzda transkript notlarınıza kaydedilir, asistanınız bir kez özetler. Kararlar, açık işler ve bilgiler İncele sayfasında sizi bekler."))
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                if !recorder.problem.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(recorder.problem).fixedSize(horizontal: false, vertical: true)
+                        HStack {
+                            if !recorder.problemSettings.isEmpty, let url = URL(string: recorder.problemSettings) {
+                                Button(T("Open System Settings", "Sistem Ayarları'nı aç")) { NSWorkspace.shared.open(url) }
+                            }
+                            if let unsaved = recorder.unsaved { Button(T("Save again", "Yeniden kaydet")) { recorder.problem = ""; recorder.save(unsaved) } }
+                            Spacer()
+                            Button { recorder.problem = "" } label: { Image(systemName: "xmark") }.buttonStyle(.plain)
+                        }
+                    }.padding(10).foregroundStyle(.red).background(Color.red.opacity(0.07)).clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                if !recorder.notice.isEmpty && !recorder.recording {
+                    Text(recorder.notice).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+                recorderBox
+                Divider()
+                if meetings.isEmpty {
+                    Text(T("No meetings yet.", "Henüz toplantı yok.")).foregroundStyle(.secondary)
+                    Spacer()
+                } else {
+                    List {
+                        ForEach(meetings.map { str($0, "path") }, id: \.self) { path in
+                            row(meetings.first { str($0, "path") == path } ?? [:])
+                                .listRowBackground(str(model.note, "path", "") == path ? Color.accentColor.opacity(0.15) : Color.clear)
+                        }
+                    }.listStyle(.inset)
+                }
+                Toggle(T("Stay in the menu bar and ask when a meeting starts", "Menü çubuğunda kal, toplantı başlayınca sor"), isOn: $menuBar).font(.callout)
+            }.padding(18).frame(minWidth: 320, idealWidth: 380, maxWidth: 480)
+            if recorder.recording || recorder.saving { LiveTranscript(recorder: recorder).frame(minWidth: 380, maxWidth: .infinity) }
+            else { NoteView(model: model).frame(minWidth: 380, idealWidth: 480, maxWidth: .infinity) }
+        }
+        .onAppear(perform: load)
+        .onChange(of: recorder.changed) { load() }
+        .onReceive(Timer.publish(every: 4, on: .main, in: .common).autoconnect()) { _ in if running { load() } }
+    }
+    @ViewBuilder var recorderBox: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if recorder.recording {
+                HStack(spacing: 8) {
+                    Image(systemName: "record.circle.fill").foregroundStyle(.red)
+                    Text(clock(recorder.elapsed)).font(.title2.monospacedDigit().weight(.semibold))
+                    Spacer()
+                    Badge(text: recorder.hearsSystem ? T("Microphone + call audio", "Mikrofon + görüşme sesi") : T("Microphone only", "Yalnız mikrofon"))
+                }
+                TextField(T("Title, e.g. Weekly planning", "Başlık, örn. Haftalık planlama"), text: $recorder.title).textFieldStyle(.roundedBorder)
+                Button { recorder.stop() } label: { Label(T("Stop and save", "Durdur ve kaydet"), systemImage: "stop.fill").frame(maxWidth: .infinity) }
+                    .buttonStyle(.borderedProminent).tint(.red).controlSize(.large)
+            } else if recorder.saving {
+                HStack { ProgressView().controlSize(.small); Text(T("Saving the transcript…", "Transkript kaydediliyor…")) }
+            } else {
+                TextField(T("Title (optional)", "Başlık (isteğe bağlı)"), text: $recorder.title).textFieldStyle(.roundedBorder)
+                HStack {
+                    Button { recorder.start() } label: { Label(T("Start recording", "Kaydı başlat"), systemImage: "record.circle") }
+                        .buttonStyle(.borderedProminent).controlSize(.large)
+                    Spacer()
+                    Picker(T("Language", "Dil"), selection: $locale) { Text("Türkçe").tag("tr-TR"); Text("English").tag("en-US") }.frame(width: 170)
+                }
+                if #unavailable(macOS 14.2) {
+                    Text(T("On this macOS only your microphone is recorded; macOS 14.2 or later also hears the call.", "Bu macOS'ta yalnız mikrofonunuz kaydedilir; macOS 14.2 ve sonrası görüşmenin sesini de duyar."))
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }.padding(12).background(Color.secondary.opacity(0.06)).clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+    @ViewBuilder func row(_ m: [String: Any]) -> some View {
+        let status = str(m, "status")
+        VStack(alignment: .leading, spacing: 4) {
+            Button { model.openNote(str(m, "path"), source: source) } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(str(m, "title")).fontWeight(.medium).lineLimit(2)
+                    Text(dayLabel(String(str(m, "started").prefix(10))) + " " + String(str(m, "started").dropFirst(11).prefix(5)) + " · " + T("\(str(m, "minutes")) min", "\(str(m, "minutes")) dk"))
+                        .font(.caption).foregroundStyle(.secondary)
+                }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+            }.buttonStyle(.plain)
+            HStack(spacing: 8) {
+                switch status {
+                case "done":
+                    Badge(text: T("Summary ready", "Özet hazır"), color: .green)
+                    if str(m, "digest", "") != "" {
+                        Button(T("Review items", "Maddeleri incele")) { model.page = "Review"; model.openNote(str(m, "digest"), source: source) }.buttonStyle(.link).font(.caption)
+                    }
+                case "failed":
+                    Badge(text: T("No summary", "Özet çıkmadı"), color: .red)
+                    Button(T("Retry", "Yeniden dene")) { model.run("meeting_summarize", ["path": str(m, "path")]) { _ in load() } }.buttonStyle(.link).font(.caption)
+                default:
+                    ProgressView().controlSize(.mini)
+                    Text(T("Summarising…", "Özetleniyor…")).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            if status == "failed", str(m, "error", "") != "" { Text(meetingError(str(m, "error"))).font(.caption2).foregroundStyle(.secondary).lineLimit(3) }
+        }.padding(.vertical, 3)
+    }
+    func load() {
+        model.run("meeting_list", clearError: false, quiet: true) { value in
+            meetings = value["meetings"] as? [[String: Any]] ?? []; source = str(value, "source_id", "")
+        }
+    }
+}
+
+/// Why a summary did not come out, in words the owner can act on.
+func meetingError(_ error: String) -> String {
+    guard error.hasPrefix("assistant_failed") else {
+        return error == "extraction_unparseable" ? T("Your assistant's answer could not be read. Retry.", "Asistanınızın cevabı okunamadı. Yeniden deneyin.") : error
+    }
+    let said = error.dropFirst("assistant_failed".count).trimmingCharacters(in: CharacterSet(charactersIn: ": "))
+    if ["authenticate", "login", "logged in", "sign in"].contains(where: { said.lowercased().contains($0) }) {
+        return T("Your assistant is signed out. Open it in Terminal (claude or codex), sign in, then retry.",
+                 "Asistanınızın oturumu kapanmış. Terminal'de açıp (claude ya da codex) yeniden giriş yapın, sonra yeniden deneyin.")
+    }
+    return T("Your assistant could not answer: \(said)", "Asistanınız cevap veremedi: \(said)")
+}
+
+/// What has been said so far, newest at the bottom; the line being heard is shown faded.
+struct LiveTranscript: View {
+    @ObservedObject var recorder: MeetingRecorder
+    func who(_ speaker: String) -> String { speaker == "me" ? T("Me", "Ben") : T("Others", "Karşı taraf") }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(T("Live transcript", "Canlı transkript")).font(.headline).padding(16)
+            Divider()
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 8) {
+                        ForEach(Array(recorder.lines.enumerated()), id: \.offset) { _, u in line(u, faded: false) }
+                        ForEach(Array(recorder.partials.enumerated()), id: \.offset) { _, u in line(u, faded: true) }
+                        Color.clear.frame(height: 1).id("end")
+                    }.padding(16)
+                }
+                .onChange(of: recorder.lines.count + recorder.partials.map(\.text.count).reduce(0, +)) { proxy.scrollTo("end", anchor: .bottom) }
+            }
+            if recorder.lines.isEmpty && recorder.partials.isEmpty {
+                Text(T("Listening… Words appear here a moment after they are said.", "Dinleniyor… Söylenenler birkaç saniye içinde burada görünür."))
+                    .foregroundStyle(.secondary).padding(16)
+            }
+        }
+    }
+    func line(_ u: Utterance, faded: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(clock(u.start)).font(.caption.monospacedDigit()).foregroundStyle(.secondary).frame(width: 46, alignment: .leading)
+            Text(who(u.speaker)).font(.caption.weight(.semibold)).foregroundStyle(u.speaker == "me" ? Color.accentColor : .orange).frame(width: 80, alignment: .leading)
+            Text(u.text).foregroundStyle(faded ? .secondary : .primary).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+        }
+    }
+}
+
+/// The menu bar item: record or stop a meeting, open Carry.
+struct MeetingMenu: View {
+    @ObservedObject var recorder = MeetingRecorder.shared
+    var body: some View {
+        if recorder.recording {
+            Text(T("Recording · ", "Kaydediliyor · ") + clock(recorder.elapsed))
+            Button(T("Stop and save", "Durdur ve kaydet")) { recorder.stop() }
+        } else if recorder.saving {
+            Text(T("Saving the transcript…", "Transkript kaydediliyor…"))
+        } else {
+            Button(T("Record a meeting", "Toplantı kaydet")) { recorder.start() }
+        }
+        Divider()
+        Button(T("Open Carry", "Carry'yi aç")) { MainWindow.show() }
+        Button(T("Meetings", "Toplantılar")) { MainWindow.show(); recorder.openMeetings += 1 }
+        Divider()
+        Button(T("Quit Carry", "Carry'den çık")) { NSApp.terminate(nil) }
+    }
+}
+
+/// The Carry logo for the menu bar: the rounded square with its C cut out, as a template
+/// image so macOS tints it for a light or dark menu bar.
+let menuBarLogo: NSImage = {
+    let image = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { rect in
+        NSBezierPath(roundedRect: rect.insetBy(dx: 1, dy: 1), xRadius: 3.6, yRadius: 3.6).fill()
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return true }
+        ctx.setBlendMode(.clear)
+        ctx.setLineWidth(2.5); ctx.setLineCap(.round)
+        let open = CGFloat.pi / 4.2  // the icon's own opening
+        ctx.addArc(center: CGPoint(x: 9, y: 9), radius: 4.4, startAngle: open, endAngle: -open, clockwise: false)
+        ctx.strokePath()
+        return true
+    }
+    image.isTemplate = true
+    return image
+}()
+
+/// The logo, and the elapsed time while a meeting is being recorded.
+struct MeetingMenuLabel: View {
+    @ObservedObject var recorder = MeetingRecorder.shared
+    @Environment(\.openWindow) private var openWindow
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(nsImage: menuBarLogo).accessibilityLabel("Carry")
+            if recorder.recording { Text(clock(recorder.elapsed)).monospacedDigit() }
+        }
+        .onAppear { MainWindow.open = openWindow }
+    }
+}
+
 struct ContentView: View {
     @StateObject private var model = Model()
-    let pages = [("Overview", "house"), ("Review", "checkmark.circle"), ("Vault", "books.vertical"), ("Graph", "circle.hexagongrid"), ("Search", "magnifyingglass"), ("Settings", "gearshape")]
+    @ObservedObject private var recorder = MeetingRecorder.shared
+    @Environment(\.openWindow) private var openWindow
+    let pages = [("Overview", "house"), ("Review", "checkmark.circle"), ("Meetings", "waveform"), ("Vault", "books.vertical"), ("Graph", "circle.hexagongrid"), ("Search", "magnifyingglass"), ("Settings", "gearshape")]
     var body: some View {
         Group { if model.onboarding { Onboarding(model: model) } else {
         NavigationSplitView {
@@ -3224,6 +4069,7 @@ struct ContentView: View {
                     case "Graph": GraphView(model: model)
                     case "Search": Search(model: model).disabled(model.busy)
                     case "Review": ReviewView(model: model)
+                    case "Meetings": MeetingsView(model: model)
                     case "Proposals": Activity(model: model).disabled(model.busy)
                     case "Settings": SettingsView(model: model).disabled(model.busy)
                     default: Overview(model: model)
@@ -3246,8 +4092,10 @@ struct ContentView: View {
         .sheet(isPresented: $model.showGuide) { GuideSheet(model: model) }
         .sheet(isPresented: $model.showNewNote) { NewNoteSheet(model: model) }.onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in model.tick() }.onAppear {
             if ProcessInfo.processInfo.environment["CARRY_MEASURE_STARTUP"] == "1" { print("carry_ui_ready"); fflush(stdout) }
+            MainWindow.open = openWindow
             model.refresh()
         }
+        .onReceive(recorder.$openMeetings.dropFirst()) { _ in model.page = "Meetings" }
     }
     func banner(_ text: String, color: Color) -> some View {
         HStack(alignment: .top) {
@@ -3261,8 +4109,10 @@ struct ContentView: View {
 @main struct CarryApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     var body: some Scene {
-        WindowGroup("Carry") { ContentView() }.defaultSize(width: 1240, height: 820)
+        WindowGroup("Carry", id: "main") { ContentView() }.defaultSize(width: 1240, height: 820)
+        MenuBarExtra(isInserted: $menuBar) { MeetingMenu() } label: { MeetingMenuLabel() }
     }
+    @AppStorage("meetingMenuBar") private var menuBar = true
 }
 #endif
 

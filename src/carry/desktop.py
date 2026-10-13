@@ -399,6 +399,26 @@ class Bridge:
             return dict(started=True, **harvest_job(ws, proc))
         if action == 'harvest_status':
             return harvest_job(ws, getattr(self, 'harvest_proc', None))
+        if action == 'meeting_list':
+            from . import meet
+            return meet.listing(ws)
+        if action in ('meeting_save', 'meeting_summarize'):
+            # Carry Meet: the app sends the transcript at Stop; it is saved at once and
+            # summarised in the background, so the bridge never waits for the assistant.
+            from . import meet
+            root = meet.meeting_vault(ws)
+            if action == 'meeting_save':
+                saved = meet.save(ws, request.get('segments'), request.get('title', ''), request.get('started'),
+                                  request.get('duration'), root=root)
+                meet.spawn(ws, saved['path'], root)
+                maintenance.start(ws)
+                return saved
+            rel = request.get('path', '')
+            meet.read(root, rel)
+            if next((m for m in meet.listing(ws)['meetings'] if m['path'] == rel and m['status'] == 'running'), None):
+                raise CarryError('meeting_summary_running')
+            meet.spawn(ws, rel, root)
+            return dict(started=True, path=rel)
         if action == 'connection_rollback':
             return connections.rollback(ws, request['id'])
         if action == 'connection_test':
