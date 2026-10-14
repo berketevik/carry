@@ -16,6 +16,10 @@ dependencies = [
     # Windows has no compiler by default, so there Carry uses Ollama or searches by words.
     "numpy>=1.26,<3",
     "llama-cpp-python>=0.3.36,<0.4; sys_platform != 'win32'",
+    # Carry Meet transcribes a meeting again after it ends with Whisper (whisper_model), on
+    # the GPU of an Apple Silicon Mac; the wheel ships whisper.cpp built for it. Elsewhere the
+    # live on-device transcript stays.
+    "pywhispercpp>=1.5.1,<2; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
 
 [project.optional-dependencies]

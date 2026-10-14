@@ -74,6 +74,10 @@ struct UIError: LocalizedError {
         case "invalid_github_repository": return L("Enter a GitHub repository URL or owner/repository.")
         case "github_no_markdown_in_folder": return L("No Markdown files were found in that folder. Check the repository, branch and folder.")
         case "model_download_failed", "model_download_incomplete": return L("The model download did not finish. Check your connection and try again.")
+        case "no_connected_assistant": return T("No assistant is connected to summarise it: connect Claude Code or Codex under Settings › Assistants, then retry.",
+                                                "Özetleyecek bağlı bir asistan yok: Ayarlar › Asistanlar bölümünden Claude Code ya da Codex'i bağlayın, sonra yeniden deneyin.")
+        case "meeting_summary_running": return T("This meeting is already being transcribed or summarised.", "Bu toplantı zaten yazıya dökülüyor ya da özetleniyor.")
+        case "whisper_runtime_missing": return T("This Mac cannot run Whisper (it needs Apple Silicon); the live transcript stays.", "Bu Mac Whisper'ı çalıştıramıyor (Apple Silicon gerekir); canlı transkript kalır.")
         case "reranker_install_failed": return L("The relevance model could not be installed. Try again; the embedding model may already be ready.")
         case "ollama_runtime_missing": return L("This build is missing its model runtime. Use the complete Carry pilot package or install Ollama.")
         case "ollama_start_failed": return L("The local model service could not start. Open Ollama and retry.")
@@ -737,8 +741,8 @@ let glossary: [(String, String, String, String)] = [
      "When a chat with your assistant ends, Carry picks out decisions, facts and unfinished work and saves them as drafts for you.",
      "Asistanınızla bir sohbet bittiğinde Carry kararları, bilgileri ve yarım kalan işleri seçip sizin için taslak olarak kaydeder."),
     ("Meetings", "Toplantılar",
-     "Carry records a meeting on this Mac and writes down what is said, from your microphone and the sound of the call; no audio is kept. When it ends the transcript is saved with your notes and your assistant summarises it once; with no assistant that answers, Apple's model on this Mac does. Its decisions, open items and facts wait for you on the Review page.",
-     "Carry toplantıyı bu Mac'te kaydeder ve konuşulanı yazıya döker: mikrofonunuzdan ve görüşmenin sesinden; ses saklanmaz. Toplantı bitince transkript notlarınıza kaydedilir, asistanınız bir kez özetler; cevap veren bir asistan yoksa Apple'ın bu Mac'teki modeli özetler. Kararlar, açık işler ve bilgiler İncele sayfasında sizi bekler."),
+     "Carry records a meeting on this Mac and writes down what is said, from your microphone and the sound of the call. When it ends the transcript is saved with your notes; Whisper then transcribes the audio again on this Mac and the audio is deleted. Your connected assistant summarises the meeting once; with none connected the transcript stays as it is. Its decisions, open items and facts wait for you on the Review page.",
+     "Carry toplantıyı bu Mac'te kaydeder ve konuşulanı yazıya döker: mikrofonunuzdan ve görüşmenin sesinden. Toplantı bitince transkript notlarınıza kaydedilir; ardından Whisper sesi bu Mac'te yeniden yazıya döker ve ses silinir. Bağlı asistanınız toplantıyı bir kez özetler; bağlı asistan yoksa transkript olduğu gibi kalır. Kararlar, açık işler ve bilgiler İncele sayfasında sizi bekler."),
     ("Inbox", "Gelen kutusu",
      "The + folder, where new chat drafts and captures collect. What waits for you there is on the Review page.",
      "Yeni sohbet taslaklarının ve kayıtların toplandığı + klasörü. Orada sizi bekleyenler İncele sayfasındadır."),
@@ -3228,9 +3232,11 @@ struct GraphView: View {
 
 // MARK: - Carry Meet
 // A meeting is recorded from the microphone and, on macOS 14.2+, the system audio (the other
-// side of a call, also in headphones), and transcribed on this Mac by Apple's on-device
-// recognizer. No audio is written to disk. At Stop the transcript goes to carry.meet, which
-// saves it as a note at once and summarises it in the background with the owner's assistant.
+// side of a call, also in headphones), and transcribed live on this Mac by Apple's on-device
+// recognizer. Each side is also written to a temporary WAV file in the workspace. At Stop the
+// transcript and that folder go to carry.meet, which saves the note at once; in the background
+// Whisper transcribes the audio again on this Mac, the audio is deleted, and the owner's
+// connected assistant summarises the meeting.
 
 /// One line of a meeting transcript: who spoke ("me" is the microphone, "others" the system
 /// audio), seconds from the start of the recording, and what the recognizer heard.
@@ -3256,6 +3262,41 @@ final class MonoConverter {
     }
 }
 
+/// One side of a meeting as a temporary 16 kHz mono 16-bit WAV for Whisper. A gap (the
+/// microphone restarting, the call audio rebuilt) is filled with silence, so both sides keep
+/// the recording's clock. Writes run on their own queue, off the capture thread.
+final class AudioTrack {
+    static let rate = 16_000.0
+    private var file: AVAudioFile?
+    private let origin: Date
+    private var written: AVAudioFramePosition = 0
+    private let queue = DispatchQueue(label: "carry.meet.track", qos: .utility)
+    init?(url: URL, origin: Date) {
+        let settings: [String: Any] = [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: Self.rate, AVNumberOfChannelsKey: 1,
+                                       AVLinearPCMBitDepthKey: 16, AVLinearPCMIsFloatKey: false, AVLinearPCMIsBigEndianKey: false]
+        guard let file = try? AVAudioFile(forWriting: url, settings: settings, commonFormat: .pcmFormatFloat32, interleaved: false) else { return nil }
+        self.file = file; self.origin = origin
+    }
+    func write(_ mono: AVAudioPCMBuffer) {
+        // Where the buffer belongs on the recording's clock: it ends now.
+        let due = AVAudioFramePosition(Date().timeIntervalSince(origin) * Self.rate) - AVAudioFramePosition(mono.frameLength)
+        queue.async {
+            guard let file = self.file else { return }
+            while due - self.written > AVAudioFramePosition(Self.rate / 2) {
+                let n = AVAudioFrameCount(min(due - self.written, AVAudioFramePosition(Self.rate)))
+                guard let gap = AVAudioPCMBuffer(pcmFormat: MonoConverter.format, frameCapacity: n), let data = gap.floatChannelData else { break }
+                gap.frameLength = n
+                memset(data[0], 0, Int(n) * MemoryLayout<Float>.size)
+                guard (try? file.write(from: gap)) != nil else { return }
+                self.written += AVAudioFramePosition(n)
+            }
+            if (try? file.write(from: mono)) != nil { self.written += AVAudioFramePosition(mono.frameLength) }
+        }
+    }
+    /// Waits for the last writes and closes the file.
+    func close() { queue.sync { file = nil } }
+}
+
 /// On-device speech recognition for one audio source. One recognition task is unreliable past
 /// about a minute, so a new request starts at the first sentence end after 45 s (at the latest
 /// at 58 s, mid-sentence). Words are split into utterances at pauses.
@@ -3271,6 +3312,8 @@ final class SpeechStream {
     private var finals: [Utterance] = []
     private var partialText = ""
     private let converter = MonoConverter()
+    /// Where this side's audio is kept for Whisper until the meeting is transcribed again.
+    var track: AudioTrack?
     /// Called once when macOS refuses recognition because Siri and Dictation are off.
     var onUnavailable: (() -> Void)?
     private var refused = false
@@ -3301,6 +3344,7 @@ final class SpeechStream {
     func append(_ buffer: AVAudioPCMBuffer) {
         guard let mono = converter.convert(buffer) else { return }
         locked { request }?.append(mono)
+        track?.write(mono)
     }
     /// One request: what it has kept (in its own time), the sentence being heard, and whether
     /// its final result has come.
@@ -3402,11 +3446,13 @@ final class SpeechStream {
     }
 }
 
-/// The default microphone through AVAudioEngine; restarts itself when the input device changes.
+/// The default microphone through AVAudioEngine; restarts itself when the input device changes
+/// and says so when it cannot (`onLost`).
 final class MicCapture {
     private let engine = AVAudioEngine()
     private var observer: NSObjectProtocol?
     var onBuffer: ((AVAudioPCMBuffer) -> Void)?
+    var onLost: (() -> Void)?
     func start() throws {
         let input = engine.inputNode
         input.removeTap(onBus: 0)
@@ -3416,8 +3462,16 @@ final class MicCapture {
         if observer == nil {
             observer = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
                 guard let self else { return }
-                self.engine.stop(); try? self.start()
+                self.engine.stop(); self.restart(attempt: 1)
             }
+        }
+    }
+    /// A new device can take a moment to come up: try again for five seconds.
+    private func restart(attempt: Int) {
+        guard observer != nil else { return }  // stopped meanwhile
+        do { try start() } catch {
+            guard attempt < 5 else { onLost?(); return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.restart(attempt: attempt + 1) }
         }
     }
     func stop() {
@@ -3449,16 +3503,34 @@ func audioObjects(_ object: AudioObjectID, _ selector: AudioObjectPropertySelect
 
 /// Everything this Mac plays, through a Core Audio process tap (macOS 14.2+): a private
 /// aggregate device around the tap, read by an IO block. macOS asks once for system audio
-/// recording; nothing is written to disk.
+/// recording. When the output device changes (headphones in or out) the tap is built again;
+/// `onLost` says when it cannot be.
 @available(macOS 14.2, *)
 final class SystemAudioCapture {
     private var tap = AudioObjectID(kAudioObjectUnknown)
     private var aggregate = AudioObjectID(kAudioObjectUnknown)
     private var proc: AudioDeviceIOProcID?
     private let queue = DispatchQueue(label: "carry.meet.system", qos: .userInitiated)
+    private var listener: AudioObjectPropertyListenerBlock?
+    private static let outputs = [kAudioHardwarePropertyDefaultOutputDevice, kAudioHardwarePropertyDefaultSystemOutputDevice]
     var onBuffer: ((AVAudioPCMBuffer) -> Void)?
+    var onLost: (() -> Void)?
 
     func start() throws {
+        try build()
+        guard listener == nil else { return }
+        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            guard let self, self.listener != nil else { return }
+            self.teardown()
+            do { try self.build() } catch { self.onLost?() }
+        }
+        for selector in Self.outputs {
+            var address = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+            AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, .main, block)
+        }
+        listener = block
+    }
+    private func build() throws {
         let description = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
         description.uuid = UUID()
         description.muteBehavior = .unmuted
@@ -3470,7 +3542,7 @@ final class SystemAudioCapture {
         status = audioProperty(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultSystemOutputDevice, &output)
         var uid: CFString = "" as CFString
         if status == noErr { status = audioProperty(output, kAudioDevicePropertyDeviceUID, &uid) }
-        guard status == noErr else { stop(); throw AudioError(what: "output device", status: status) }
+        guard status == noErr else { teardown(); throw AudioError(what: "output device", status: status) }
         let settings: [String: Any] = [
             kAudioAggregateDeviceNameKey: "Carry Meet",
             kAudioAggregateDeviceUIDKey: UUID().uuidString,
@@ -3482,17 +3554,17 @@ final class SystemAudioCapture {
             kAudioAggregateDeviceTapListKey: [[kAudioSubTapDriftCompensationKey: true, kAudioSubTapUIDKey: description.uuid.uuidString]],
         ]
         status = AudioHardwareCreateAggregateDevice(settings as CFDictionary, &aggregate)
-        guard status == noErr else { stop(); throw AudioError(what: "aggregate device", status: status) }
+        guard status == noErr else { teardown(); throw AudioError(what: "aggregate device", status: status) }
         var stream = AudioStreamBasicDescription()
         status = audioProperty(tap, kAudioTapPropertyFormat, &stream)
-        guard status == noErr, let format = AVAudioFormat(streamDescription: &stream) else { stop(); throw AudioError(what: "tap format", status: status) }
+        guard status == noErr, let format = AVAudioFormat(streamDescription: &stream) else { teardown(); throw AudioError(what: "tap format", status: status) }
         status = AudioDeviceCreateIOProcIDWithBlock(&proc, aggregate, queue) { [weak self] _, input, _, _, _ in
             guard let self, let copy = Self.copy(input, format) else { return }
             self.onBuffer?(copy)
         }
-        guard status == noErr else { stop(); throw AudioError(what: "io proc", status: status) }
+        guard status == noErr else { teardown(); throw AudioError(what: "io proc", status: status) }
         status = AudioDeviceStart(aggregate, proc)
-        guard status == noErr else { stop(); throw AudioError(what: "device start", status: status) }
+        guard status == noErr else { teardown(); throw AudioError(what: "device start", status: status) }
     }
     /// The IO block's buffers live only during the call: copy them out.
     private static func copy(_ list: UnsafePointer<AudioBufferList>, _ format: AVAudioFormat) -> AVAudioPCMBuffer? {
@@ -3509,6 +3581,16 @@ final class SystemAudioCapture {
         return out
     }
     func stop() {
+        if let listener {
+            for selector in Self.outputs {
+                var address = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+                AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, .main, listener)
+            }
+        }
+        listener = nil
+        teardown()
+    }
+    private func teardown() {
         if aggregate != kAudioObjectUnknown {
             if let proc { AudioDeviceStop(aggregate, proc); AudioDeviceDestroyIOProcID(aggregate, proc) }
             AudioHardwareDestroyAggregateDevice(aggregate)
@@ -3543,7 +3625,10 @@ enum MicUsers {
         var parts = id.split(separator: ".").map(String.init)
         while parts.count >= 2 {
             if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: parts.joined(separator: ".")) {
-                return FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: "")
+                // A helper inside an app (Teams' "ModuleHost") is named by the app around it.
+                let components = url.pathComponents
+                let outer = components.firstIndex { $0.hasSuffix(".app") }.map { NSString.path(withComponents: Array(components[...$0])) } ?? url.path
+                return FileManager.default.displayName(atPath: outer).replacingOccurrences(of: ".app", with: "")
             }
             parts.removeLast()
         }
@@ -3615,6 +3700,7 @@ var meetingMenuBar: Bool { UserDefaults.standard.object(forKey: "meetingMenuBar"
     private var mic: MicCapture?
     private var system: AnyObject?
     private var streams: [SpeechStream] = []
+    private var audio: URL?  // this meeting's WAV files, until carry.meet has transcribed them again
     private var timer: Timer?
     private var summaries: [String: String] = [:]  // path: title, while the summary runs
     private var poll: Timer?
@@ -3659,26 +3745,63 @@ var meetingMenuBar: Bool { UserDefaults.standard.object(forKey: "meetingMenuBar"
             tap = capture; all.append(others)
         }
         started = Date()
+        audio = keepAudio(all)
         for s in all {
             s.onUnavailable = { DispatchQueue.main.async { MainActor.assumeIsolated { MeetingRecorder.shared.dictationOff() } } }
             s.start(origin: started)
         }
         let mic = MicCapture()
         mic.onBuffer = { me.append($0) }
+        mic.onLost = { MainActor.assumeIsolated { MeetingRecorder.shared.lost(T("The microphone stopped after the input device changed. Carry still records the call audio; choose a microphone in System Settings › Sound.", "Giriş aygıtı değişince mikrofon durdu. Carry görüşmenin sesini kaydetmeye devam ediyor; Sistem Ayarları › Ses bölümünden bir mikrofon seçin.")) } }
         do { try mic.start() } catch {
             for s in all { Task { await s.finish() } }
+            dropAudio(all)
             return fail(T("The microphone could not start: \(error.localizedDescription)", "Mikrofon açılamadı: \(error.localizedDescription)"))
         }
         hearsSystem = false
         if #available(macOS 14.2, *), let capture = tap as? SystemAudioCapture {
+            capture.onLost = { MainActor.assumeIsolated {
+                MeetingRecorder.shared.hearsSystem = false
+                MeetingRecorder.shared.lost(T("The call audio stopped after the output device changed; only the microphone is recorded now.", "Çıkış aygıtı değişince görüşmenin sesi kesildi; artık yalnız mikrofon kaydediliyor."))
+            } }
             do { try capture.start(); hearsSystem = true } catch {
                 let unheard = all.removeLast()  // the microphone alone still works
+                unheard.track?.close(); unheard.track = nil
+                if let audio { try? FileManager.default.removeItem(at: audio.appendingPathComponent("others.wav")) }
                 Task { await unheard.finish() }
             }
         }
         self.mic = mic; system = hearsSystem ? tap : nil; streams = all
         elapsed = 0; lines = []; partials = []; recording = true
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in MainActor.assumeIsolated { MeetingRecorder.shared.tick() } }
+    }
+    /// A folder for this meeting's audio in the workspace, one WAV a side; nil when there is no
+    /// workspace or the files cannot be made (Apple's transcript still is).
+    private func keepAudio(_ all: [SpeechStream]) -> URL? {
+        guard !workspace.isEmpty else { return nil }
+        let folder = URL(fileURLWithPath: workspace).appendingPathComponent("meet-audio").appendingPathComponent(UUID().uuidString)
+        guard (try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)) != nil else { return nil }
+        for s in all { s.track = AudioTrack(url: folder.appendingPathComponent("\(s.speaker).wav"), origin: started) }
+        return folder
+    }
+    private func dropAudio(_ all: [SpeechStream]) {
+        for s in all { s.track?.close(); s.track = nil }
+        if let audio { try? FileManager.default.removeItem(at: audio) }
+        audio = nil
+    }
+    /// Part of the recording stopped mid-meeting: say so, the rest goes on.
+    private func lost(_ message: String) {
+        guard recording else { return }
+        problem = message; problemSettings = ""
+        MeetingNotice.post("meeting.lost", T("Part of the recording stopped", "Kaydın bir kısmı durdu"), message)
+    }
+    /// Tells a running Whisper job to pause: a call has the microphone, or Carry records. The
+    /// job reads the flag's age, so a quit app never leaves it paused.
+    func markBusy(_ busy: Bool) {
+        guard !workspace.isEmpty else { return }
+        let flag = URL(fileURLWithPath: workspace).appendingPathComponent("meet-busy").path
+        if busy { FileManager.default.createFile(atPath: flag, contents: nil) }
+        else if FileManager.default.fileExists(atPath: flag) { try? FileManager.default.removeItem(atPath: flag) }
     }
     private func tick() {
         elapsed = Date().timeIntervalSince(started)
@@ -3695,7 +3818,7 @@ var meetingMenuBar: Bool { UserDefaults.standard.object(forKey: "meetingMenuBar"
     /// Siri and Dictation are off: macOS refuses every recognition, so nothing would be saved.
     func dictationOff() {
         guard recording else { return }
-        halt(); streams = []; lines = []; partials = []
+        halt(); dropAudio(streams); streams = []; lines = []; partials = []
         fail(T("Turn on Dictation to transcribe meetings: System Settings › Keyboard › Dictation. Carry uses the recognizer on this Mac; no audio leaves it.",
                "Toplantıları yazıya dökmek için Dikte'yi açın: Sistem Ayarları › Klavye › Dikte. Carry bu Mac'teki tanıyıcıyı kullanır; ses Mac'ten çıkmaz."),
              settings: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension")
@@ -3703,22 +3826,27 @@ var meetingMenuBar: Bool { UserDefaults.standard.object(forKey: "meetingMenuBar"
     func stop(then done: (() -> Void)? = nil) {
         guard recording else { done?(); return }
         let duration = Date().timeIntervalSince(started), started = started, title = title, streams = streams
+        let micOnly = !hearsSystem, audio = audio
         halt(); saving = true
         Task {
             for s in streams { await s.finish() }
+            for s in streams { s.track?.close(); s.track = nil }
             let all = streams.flatMap { $0.utterances }.sorted { $0.start < $1.start }
             await MainActor.run {
-                self.streams = []; self.lines = all; self.partials = []
+                self.streams = []; self.lines = all; self.partials = []; self.audio = nil
                 guard !all.isEmpty else {
+                    if let audio { try? FileManager.default.removeItem(at: audio) }
                     self.saving = false
                     self.notice = T("Nothing was heard, so nothing was saved.", "Hiçbir şey duyulmadı, bu yüzden bir şey kaydedilmedi.")
                     done?(); return
                 }
                 let iso = ISO8601DateFormatter(); iso.timeZone = .current
                 // The note is in the language the meeting was transcribed in.
-                self.save(["action": "meeting_save", "title": title, "started": iso.string(from: started), "duration": duration,
-                           "language": MeetingRecorder.locale.hasPrefix("tr") ? "Turkish" : "English",
-                           "segments": all.map { ["start": $0.start, "speaker": $0.speaker, "text": $0.text] }], then: done)
+                var request: [String: Any] = ["action": "meeting_save", "title": title, "started": iso.string(from: started), "duration": duration,
+                                              "language": MeetingRecorder.locale.hasPrefix("tr") ? "Turkish" : "English", "mic_only": micOnly,
+                                              "segments": all.map { ["start": $0.start, "speaker": $0.speaker, "text": $0.text] }]
+                if let audio { request["audio"] = audio.path }
+                self.save(request, then: done)
             }
         }
     }
@@ -3735,8 +3863,11 @@ var meetingMenuBar: Bool { UserDefaults.standard.object(forKey: "meetingMenuBar"
                 case .success(let value):
                     let path = str(value, "path", "")
                     self.title = ""; self.changed += 1
-                    self.notice = T("Saved to \(path). Your assistant is summarising it; the items will wait on the Review page.",
-                                    "\(path) dosyasına kaydedildi. Asistanınız özetliyor; maddeler İncele sayfasında sizi bekleyecek.")
+                    self.notice = value["whisper"] as? Bool == true
+                        ? T("Saved to \(path). Carry now transcribes it again on this Mac, deletes the audio and has your connected assistant summarise it; the items will wait on the Review page.",
+                            "\(path) dosyasına kaydedildi. Carry şimdi bu Mac'te yeniden yazıya döküyor, sesi siliyor ve bağlı asistanınıza özetletiyor; maddeler İncele sayfasında sizi bekleyecek.")
+                        : T("Saved to \(path). Your connected assistant summarises it; the items will wait on the Review page.",
+                            "\(path) dosyasına kaydedildi. Bağlı asistanınız özetliyor; maddeler İncele sayfasında sizi bekleyecek.")
                     self.follow(path, str(value, "title", name))
                 case .failure(let e):
                     self.unsaved = request
@@ -3759,12 +3890,16 @@ var meetingMenuBar: Bool { UserDefaults.standard.object(forKey: "meetingMenuBar"
                 guard case .success(let value) = result else { return }
                 for m in value["meetings"] as? [[String: Any]] ?? [] {
                     let path = str(m, "path", "")
-                    guard let title = self.summaries[path], ["done", "failed"].contains(str(m, "status")) else { continue }
+                    guard let title = self.summaries[path], ["done", "failed", "raw"].contains(str(m, "status")) else { continue }
                     self.summaries[path] = nil; self.changed += 1
                     if str(m, "status") == "done" {
                         MeetingNotice.post("meeting.done." + path, T("Meeting summary ready", "Toplantı özeti hazır"),
                                            str(m, "digest", "") != "" ? T("\(title): its decisions and open items wait on the Review page.", "\(title): kararları ve açık işleri İncele sayfasında sizi bekliyor.")
                                                                        : T("\(title): summary written to the meeting note.", "\(title): özet toplantı notuna yazıldı."))
+                    } else if str(m, "status") == "raw" {
+                        MeetingNotice.post("meeting.raw." + path, T("Meeting transcript saved", "Toplantı transkripti kaydedildi"),
+                                           T("\(title): no assistant is connected, so it was not summarised. Connect one under Settings › Assistants.",
+                                             "\(title): bağlı asistan olmadığı için özetlenmedi. Ayarlar › Asistanlar bölümünden bağlayın."))
                     } else {
                         MeetingNotice.post("meeting.failed." + path, T("No meeting summary", "Toplantı özeti çıkmadı"),
                                            T("\(title): the transcript is saved. Retry the summary on the Meetings page.", "\(title): transkript kayıtlı. Özeti Toplantılar sayfasından yeniden deneyin."))
@@ -3791,6 +3926,7 @@ var meetingMenuBar: Bool { UserDefaults.standard.object(forKey: "meetingMenuBar"
         let recorder = MeetingRecorder.shared
         let users = MicUsers.current().filter { $0 != Bundle.main.bundleIdentifier }
         defer { last = users }
+        recorder.markBusy(!users.isEmpty || recorder.recording)
         guard meetingMenuBar else { return }
         if recorder.recording {
             if !users.isEmpty { heard = true; quiet = 0 } else if heard { quiet += 1 }
@@ -3805,8 +3941,8 @@ var meetingMenuBar: Bool { UserDefaults.standard.object(forKey: "meetingMenuBar"
         guard last.isEmpty, let first = users.first, !recorder.saving else { return }
         let app = MicUsers.appName(first)
         MeetingNotice.post("meeting.start", T("A meeting started. Record it?", "Toplantı başladı, kaydedilsin mi?"),
-                           app.map { T("\($0) is using the microphone. Carry transcribes on this Mac and keeps no audio.", "\($0) mikrofonu kullanıyor. Carry bu Mac'te yazıya döker, ses saklamaz.") }
-                               ?? T("An app is using the microphone. Carry transcribes on this Mac and keeps no audio.", "Bir uygulama mikrofonu kullanıyor. Carry bu Mac'te yazıya döker, ses saklamaz."),
+                           app.map { T("\($0) is using the microphone. Carry transcribes on this Mac; the audio never leaves it and is deleted once transcribed.", "\($0) mikrofonu kullanıyor. Carry bu Mac'te yazıya döker; ses Mac'ten çıkmaz, yazıya döküldükten sonra silinir.") }
+                               ?? T("An app is using the microphone. Carry transcribes on this Mac; the audio never leaves it and is deleted once transcribed.", "Bir uygulama mikrofonu kullanıyor. Carry bu Mac'te yazıya döker; ses Mac'ten çıkmaz, yazıya döküldükten sonra silinir."),
                            category: "meeting.start")
         pendingTitle = app.map { T("\($0) meeting", "\($0) toplantısı") } ?? ""
     }
@@ -3821,14 +3957,18 @@ struct MeetingsView: View {
     @State private var source = ""  // the notes folder meetings are saved to
     @AppStorage("meetingMenuBar") private var menuBar = true
     @AppStorage("meetingLocale") private var locale = Lang.code == "tr" ? "tr-TR" : "en-US"
-    var running: Bool { meetings.contains { ["pending", "running"].contains(str($0, "status")) } }
+    @AppStorage("whisperAsked") private var whisperAsked = false  // the download is offered once
+    @State private var whisper: [String: Any] = [:]
+    var running: Bool { meetings.contains { ["pending", "transcribing", "running"].contains(str($0, "status")) } || downloading }
+    var downloading: Bool { str(whisper["download"] as? [String: Any] ?? [:], "state") == "running" }
     var body: some View {
         HSplitView {
             VStack(alignment: .leading, spacing: 12) {
                 Text(pageName("Meetings")).font(.title.bold())
-                Text(T("Record a meeting on this Mac. Carry writes it down as it is said, from your microphone and, on macOS 14.2 or later, the sound of the call; no audio is kept. When you stop, the transcript is saved to your notes and your assistant summarises it once. Its decisions, open items and facts wait for you on the Review page.",
-                       "Toplantıyı bu Mac'te kaydedin. Carry konuşulanı anında yazıya döker: mikrofonunuzdan ve macOS 14.2 ya da sonrasında görüşmenin sesinden; ses saklanmaz. Durdurduğunuzda transkript notlarınıza kaydedilir, asistanınız bir kez özetler. Kararlar, açık işler ve bilgiler İncele sayfasında sizi bekler."))
+                Text(T("Record a meeting on this Mac. Carry writes it down as it is said, from your microphone and, on macOS 14.2 or later, the sound of the call. When you stop, the transcript is saved to your notes; Whisper transcribes the audio again on this Mac, pausing while a call has the microphone, and the audio is deleted. Your connected assistant summarises it once. Its decisions, open items and facts wait for you on the Review page.",
+                       "Toplantıyı bu Mac'te kaydedin. Carry konuşulanı anında yazıya döker: mikrofonunuzdan ve macOS 14.2 ya da sonrasında görüşmenin sesinden. Durdurduğunuzda transkript notlarınıza kaydedilir; Whisper sesi bu Mac'te yeniden yazıya döker (mikrofon bir görüşmede açıkken bekler) ve ses silinir. Bağlı asistanınız bir kez özetler. Kararlar, açık işler ve bilgiler İncele sayfasında sizi bekler."))
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                whisperBox
                 if !recorder.problem.isEmpty {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(recorder.problem).fixedSize(horizontal: false, vertical: true)
@@ -3896,6 +4036,31 @@ struct MeetingsView: View {
             }
         }.padding(12).background(Color.secondary.opacity(0.06)).clipShape(RoundedRectangle(cornerRadius: 10))
     }
+    /// The Whisper model is offered once (874 MB); without it Apple's live transcript stays.
+    @ViewBuilder var whisperBox: some View {
+        let job = whisper["download"] as? [String: Any] ?? [:]
+        if whisper["runtime"] as? Bool == true, whisper["installed"] as? Bool != true, !whisperAsked || downloading {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(T("More accurate transcripts", "Daha doğru transkript")).fontWeight(.medium)
+                Text(T("Whisper transcribes each meeting again on this Mac once it ends, more accurately than the live transcript. It needs a one-time download of \(megabytes(whisper["bytes"])) MB; the audio never leaves this Mac and is deleted once transcribed.",
+                       "Whisper her toplantıyı bitince bu Mac'te yeniden, canlı transkriptten daha doğru yazıya döker. Bir kez \(megabytes(whisper["bytes"])) MB indirmesi gerekir; ses Mac'ten çıkmaz, yazıya döküldükten sonra silinir."))
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                if downloading {
+                    ProgressView(value: Double(megabytes(job["completed"])), total: Double(max(megabytes(job["total"]), 1)))
+                    Text(T("Downloading… \(megabytes(job["completed"])) of \(megabytes(job["total"])) MB", "İndiriliyor… \(megabytes(job["total"])) MB'ın \(megabytes(job["completed"])) MB'ı")).font(.caption).foregroundStyle(.secondary)
+                } else {
+                    if ["failed", "interrupted"].contains(str(job, "state")) {
+                        Text(T("The download did not finish. Try again.", "İndirme tamamlanmadı. Yeniden deneyin.")).font(.caption).foregroundStyle(.red)
+                    }
+                    HStack {
+                        Button(T("Download", "İndir")) { model.run("whisper_download") { _ in load() } }.buttonStyle(.borderedProminent)
+                        Button(T("Not now", "Şimdi değil")) { whisperAsked = true }
+                    }
+                }
+            }.padding(12).background(Color.accentColor.opacity(0.07)).clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+    }
+    func megabytes(_ value: Any?) -> Int { Int(((value as? NSNumber)?.doubleValue ?? 0) / 1_000_000) }
     @ViewBuilder func row(_ m: [String: Any]) -> some View {
         let status = str(m, "status")
         VStack(alignment: .leading, spacing: 4) {
@@ -3916,6 +4081,12 @@ struct MeetingsView: View {
                 case "failed":
                     Badge(text: T("No summary", "Özet çıkmadı"), color: .red)
                     Button(T("Retry", "Yeniden dene")) { model.run("meeting_summarize", ["path": str(m, "path")]) { _ in load() } }.buttonStyle(.link).font(.caption)
+                case "raw":
+                    Badge(text: T("Transcript only", "Yalnız transkript"), color: .orange)
+                    Button(T("Summarise", "Özetle")) { model.run("meeting_summarize", ["path": str(m, "path")]) { _ in load() } }.buttonStyle(.link).font(.caption)
+                case "transcribing":
+                    ProgressView().controlSize(.mini)
+                    Text(T("Transcribing on this Mac…", "Bu Mac'te yazıya dökülüyor…")).font(.caption).foregroundStyle(.secondary)
                 default:
                     ProgressView().controlSize(.mini)
                     Text(T("Summarising…", "Özetleniyor…")).font(.caption).foregroundStyle(.secondary)
@@ -3928,14 +4099,15 @@ struct MeetingsView: View {
         model.run("meeting_list", clearError: false, quiet: true) { value in
             meetings = value["meetings"] as? [[String: Any]] ?? []; source = str(value, "source_id", "")
         }
+        model.run("whisper_status", clearError: false, quiet: true) { whisper = $0 }
     }
 }
 
 /// Why a summary did not come out, in words the owner can act on.
 func meetingError(_ error: String) -> String {
-    let nobody = T("No assistant could summarise: install and sign in to Claude Code or Codex, or turn on Apple Intelligence in System Settings, then retry.",
-                   "Özetleyecek bir asistan yok: Claude Code ya da Codex kurup giriş yapın veya Sistem Ayarları'nda Apple Intelligence'ı açın, sonra yeniden deneyin.")
-    if error == "no_extraction_client" { return nobody }
+    let nobody = T("No assistant is connected to summarise it: connect Claude Code or Codex under Settings › Assistants, then retry.",
+                   "Özetleyecek bağlı bir asistan yok: Ayarlar › Asistanlar bölümünden Claude Code ya da Codex'i bağlayın, sonra yeniden deneyin.")
+    if ["no_extraction_client", "no_connected_assistant"].contains(error) { return nobody }
     guard error.hasPrefix("assistant_failed") else {
         return error == "extraction_unparseable" ? T("Your assistant's answer could not be read. Retry.", "Asistanınızın cevabı okunamadı. Yeniden deneyin.") : error
     }

@@ -403,23 +403,40 @@ class Bridge:
             from . import meet
             return meet.listing(ws)
         if action in ('meeting_save', 'meeting_summarize'):
-            # Carry Meet: the app sends the transcript at Stop; it is saved at once and
-            # summarised in the background, so the bridge never waits for the assistant.
+            # Carry Meet: the app sends the transcript and its audio folder at Stop; the note is
+            # saved at once, then Whisper and the summary run in the background, so the bridge
+            # never waits for either.
             from . import meet
             root = meet.meeting_vault(ws)
             if action == 'meeting_save':
                 language = request.get('language') if request.get('language') in meet.LABELS else None
-                saved = meet.save(ws, request.get('segments'), request.get('title', ''), request.get('started'),
-                                  request.get('duration'), root=root, language=language)
-                meet.spawn(ws, saved['path'], root)
+                audio = meet.take_audio(ws, request.get('audio'))
+                try:
+                    saved = meet.save(ws, request.get('segments'), request.get('title', ''), request.get('started'),
+                                      request.get('duration'), root=root, language=language,
+                                      mic_only=request.get('mic_only') is True)
+                except CarryError:
+                    meet.drop_audio(ws, audio)
+                    raise
+                meet.spawn(ws, saved['path'], root, audio=audio)
                 maintenance.start(ws)
-                return saved
+                return dict(saved, whisper=bool(audio))
             rel = request.get('path', '')
             meet.read(root, rel)
-            if next((m for m in meet.listing(ws)['meetings'] if m['path'] == rel and m['status'] == 'running'), None):
+            if next((m for m in meet.listing(ws)['meetings'] if m['path'] == rel and m['status'] in ('running', 'transcribing')), None):
                 raise CarryError('meeting_summary_running')
-            meet.spawn(ws, rel, root)
+            audio = meet.leftover_audio(ws, rel)
+            if not audio and not meet.clients(ws, root):
+                raise CarryError('no_connected_assistant')
+            meet.spawn(ws, rel, root, audio=audio)
             return dict(started=True, path=rel)
+        if action == 'whisper_status':
+            from . import meet, whisper_model
+            return dict(runtime=whisper_model.runtime_available(), installed=whisper_model.installed(),
+                        bytes=whisper_model.DOWNLOAD_BYTES, download=meet.whisper_download_job(ws))
+        if action == 'whisper_download':
+            from . import meet
+            return meet.start_whisper_download(ws)
         if action == 'connection_rollback':
             return connections.rollback(ws, request['id'])
         if action == 'connection_test':

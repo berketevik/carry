@@ -23,9 +23,9 @@ LSREGISTER = ('/System/Library/Frameworks/CoreServices.framework/Versions/A/Fram
 # What macOS shows when Carry Meet first asks for the microphone, speech recognition and
 # the system audio of a call; without these keys macOS refuses the access outright.
 USAGE = dict(
-    NSMicrophoneUsageDescription='Carry transcribes the meetings you record on this Mac. No audio is kept.',
+    NSMicrophoneUsageDescription='Carry transcribes the meetings you record on this Mac. The audio stays on this Mac until it is transcribed, then it is deleted.',
     NSSpeechRecognitionUsageDescription="Carry turns a meeting into text with this Mac's on-device recognizer. Nothing leaves this Mac.",
-    NSAudioCaptureUsageDescription='Carry hears the other side of a call to transcribe the meeting you record. No audio is kept.',
+    NSAudioCaptureUsageDescription='Carry hears the other side of a call to transcribe the meeting you record. The audio stays on this Mac until it is transcribed, then it is deleted.',
 )
 
 

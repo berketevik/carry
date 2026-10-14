@@ -3,6 +3,7 @@ import io
 import json
 from pathlib import Path
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -221,7 +222,7 @@ class MeetTest(unittest.TestCase):
         self.assertEqual(meet.listing(self.ws)['meetings'][0]['status'], 'failed')
         self.assertFalse(list((self.root / '+').glob('*toplantı*')))
 
-    def test_a_signed_out_assistant_hands_the_summary_to_apple_s_on_device_model(self):
+    def test_a_signed_out_assistant_hands_the_summary_to_the_next_connected_one(self):
         rel = self.saved()['path']
         calls = []
 
@@ -230,32 +231,56 @@ class MeetTest(unittest.TestCase):
             if which.startswith('claude'):
                 raise CarryError('assistant_failed: Failed to authenticate: OAuth session expired')
             return [dict(type='decision', statement='Ses diske yazılmaz.', line=2, quote='ses diske yazılmayacak, buna karar verdik')]
-        with patch.object(harvest, 'assistants', return_value=['claude:sonnet']), \
+        with patch.object(harvest, 'assistants', return_value=['claude:sonnet', 'codex:gpt-6-astra']), \
                 patch.object(harvest, 'apple_model', return_value=Path('/Apps/carry-model')), \
                 patch.object(harvest, 'ask_agent', side_effect=ask):
             report = meet.summarize(self.ws, rel)
-        self.assertEqual(calls, ['claude:sonnet', meet.APPLE])
+        self.assertEqual(calls, ['claude:sonnet', 'codex:gpt-6-astra'])  # Apple's model only when named by hand
         self.assertEqual(report['items'], 1)
+        front, body = parse_frontmatter((self.root / rel).read_text(encoding='utf-8'))
+        self.assertEqual(front['meet_extractor'], 'codex:gpt-6-astra')
+        self.assertIn('*Özeti Codex (gpt-6-astra) çıkardı.*', body)
+
+    def test_apple_s_on_device_model_summarises_only_when_named(self):
+        rel = self.saved()['path']
+        ask, calls = agent([dict(type='decision', statement='Ses diske yazılmaz.', line=2, quote='ses diske yazılmayacak, buna karar verdik')])
+        with patch.object(harvest, 'ask_agent', side_effect=ask):
+            report = meet.summarize(self.ws, rel, which=meet.APPLE)
+        self.assertEqual([c['which'] for c in calls], [meet.APPLE])
         self.compare.assert_not_called()  # the on-device window cannot hold the notes to compare with
         self.assertIn(meet.APPLE, (self.root / report['digest']).read_text(encoding='utf-8'))
 
     def test_when_no_one_can_summarise_every_reason_is_kept(self):
         rel = self.saved()['path']
         reasons = {'claude:sonnet': 'assistant_failed: Failed to authenticate: OAuth session expired',
-                   meet.APPLE: 'assistant_failed: apple_model_unavailable: appleIntelligenceNotEnabled'}
+                   'codex:gpt-6-astra': 'assistant_failed: usage limit reached'}
 
         def ask(system, body, which, field):
             raise CarryError(reasons[which])
-        with patch.object(harvest, 'assistants', return_value=['claude:sonnet']), \
-                patch.object(harvest, 'apple_model', return_value=Path('/Apps/carry-model')), \
+        with patch.object(harvest, 'assistants', return_value=['claude:sonnet', 'codex:gpt-6-astra']), \
                 patch.object(harvest, 'ask_agent', side_effect=ask):
             with self.assertRaises(CarryError) as caught:
                 meet.summarize(self.ws, rel)
         self.assertEqual(str(caught.exception), 'assistant_failed: claude: Failed to authenticate: OAuth session expired'
-                                                ' | apple: apple_model_unavailable: appleIntelligenceNotEnabled')
-        with patch.object(harvest, 'assistants', return_value=[]), patch.object(harvest, 'apple_model', return_value=None):
-            with self.assertRaisesRegex(CarryError, 'no_extraction_client'):
-                meet.summarize(self.ws, rel)
+                                                ' | codex: usage limit reached')
+
+    def test_without_a_connected_assistant_the_transcript_stays_raw(self):
+        rel = self.saved()['path']
+        unplugged = dict(claude=dict(connected=False), codex=dict(connected=False))
+        with patch.object(harvest, 'assistants', return_value=['claude:sonnet', 'codex:gpt-6-astra']), \
+                patch.object(vaultview, 'assistants', return_value=unplugged), \
+                patch.object(harvest, 'ask_agent', side_effect=AssertionError('nothing is asked')):
+            report = meet.summarize(self.ws, rel)
+            self.assertTrue(report['raw'])
+            front, body = parse_frontmatter((self.root / rel).read_text(encoding='utf-8'))
+            self.assertEqual(front['meet_status'], 'raw')
+            self.assertIn('Ayarlar › Asistanlar', body)
+            self.assertIn('- **[3 · 00:21] Ben:** Ayşe cuma gününe kadar', body)
+            self.assertEqual(meet.listing(self.ws)['meetings'][0]['status'], 'raw')
+            self.reindex.assert_called()
+            # Asked again from the Meetings page, it says why instead of starting nothing.
+            with self.assertRaisesRegex(CarryError, 'no_connected_assistant'):
+                desktop.Bridge().dispatch(dict(action='meeting_summarize', workspace=str(self.ws.state_dir), path=rel))
 
     def test_a_part_over_the_on_device_window_is_asked_again_in_halves(self):
         lines = meet.read(self.root, self.saved()['path'])[2]
@@ -292,13 +317,165 @@ class MeetTest(unittest.TestCase):
 
     def test_spawn_gives_the_summary_the_assistants_path(self):
         rel = self.saved()['path']
-        with patch.object(meet, 'detached') as run, patch.dict('os.environ', {'PATH': '/usr/bin:/bin'}):
+        env = {'PATH': '/usr/bin:/bin', 'CLAUDECODE': '1', 'CLAUDE_CODE_ENTRYPOINT': 'cli', 'LANG': 'tr_TR.UTF-8'}
+        with patch.object(meet, 'detached') as run, patch.dict('os.environ', env, clear=True):
             run.return_value.pid = 4321
-            meet.spawn(self.ws, rel, self.root)
+            meet.spawn(self.ws, rel, self.root, audio='7f3e-11')
         args, options = run.call_args.args[0], run.call_args.kwargs
-        self.assertEqual(args[-6:], ['meet', 'summarize', '--path', rel, '--vault', str(self.root)])
+        self.assertEqual(args[-8:], ['meet', 'summarize', '--path', rel, '--vault', str(self.root), '--audio', '7f3e-11'])
+        if Path(meet.TASKPOLICY).exists():
+            self.assertEqual(args[:3], [meet.TASKPOLICY, '-c', 'utility'])
         self.assertIn(str(Path.home() / '.local' / 'bin'), options['env']['PATH'].split(':'))
-        self.assertEqual(json.loads((self.ws.state_dir / 'meet.json').read_text())[rel]['pid'], 4321)
+        # Started from a Claude Code session, the app's job must not look like one.
+        self.assertEqual(sorted(options['env']), ['LANG', 'PATH'])
+        job = json.loads((self.ws.state_dir / 'meet.json').read_text())[rel]
+        self.assertEqual((job['pid'], job['audio']), (4321, '7f3e-11'))
+
+    # -- Whisper after the meeting
+
+    def audio(self, name='5d1c2a7e-0b9f-4e3a-9d10-2f6b8c1e4a01', sides=('me', 'others'), age=0):
+        """A meeting's audio folder as the app writes it: one 16 kHz mono 16-bit WAV a side."""
+        import os, wave
+        folder = self.ws.state_dir / 'meet-audio' / name
+        folder.mkdir(parents=True)
+        for side in sides:
+            with wave.open(str(folder / f'{side}.wav'), 'wb') as w:
+                w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000); w.writeframes(b'\0\0' * 1600)
+        if age:
+            for f in [folder, *folder.iterdir()]:
+                os.utime(f, (time.time() - age, time.time() - age))
+        return folder
+
+    def whisper(self, said):
+        """whisper_model with a fake engine: `said[side]` is what it hears on that side."""
+        from carry import whisper_model
+        heard = iter(said[side] for side in meet.SPEAKERS if side in said)
+        return [patch.object(meet, 'whisper_ready', return_value=True),
+                patch.object(whisper_model, 'load', return_value=object()),
+                patch.object(whisper_model, 'transcribe', side_effect=lambda model, samples, busy=None: next(heard))]
+
+    def test_whisper_s_transcript_replaces_apple_s_and_the_audio_is_deleted(self):
+        rel = meet.save(self.ws, SEGMENTS, title='Whisper', started='2026-10-15T10:00:00+03:00', duration=95, mic_only=True)['path']
+        folder = self.audio()
+        said = dict(me=[(1.5, 6.0, 'Merhaba, bugün Carry toplantı kaydını konuşuyoruz.'),
+                        (11.0, 16.0, 'Kayıtlar cihazda yazıya dökülecek ve ses silinecek.')],  # the speaker heard through the mic
+                    others=[(9.0, 15.0, 'Kayıtlar cihazda yazıya dökülecek ve ses silinecek, buna karar verdik.')])
+        patches = self.whisper(said)
+        for p in patches:
+            p.start(); self.addCleanup(p.stop)
+        ask, _ = agent([dict(type='decision', statement='Ses silinir.', line=2, quote='ses silinecek, buna karar verdik')], [])
+        with patch.object(harvest, 'ask_agent', side_effect=ask):
+            report = meet.summarize(self.ws, rel, which='claude:sonnet', audio=folder.name)
+        self.assertFalse(folder.exists())
+        front, body = parse_frontmatter((self.root / rel).read_text(encoding='utf-8'))
+        self.assertEqual((front['meet_status'], front['meet_transcript'], front['meet_mic_only']), ('done', 'whisper', True))
+        self.assertIn('- **[1 · 00:01] Ben:** Merhaba, bugün Carry', body)
+        self.assertIn('- **[2 · 00:09] Karşı taraf:** Kayıtlar cihazda yazıya dökülecek ve ses silinecek, buna karar verdik.', body)
+        self.assertNotIn('[3 ·', body)  # the echo left the transcript
+        self.assertNotIn('Ayşe', body)  # Apple's transcript is gone
+        self.assertIn('Sistem sesi alınamadı', body)
+        self.assertEqual(report['items'], 1)
+
+    def test_when_whisper_fails_apple_s_transcript_stays_and_the_audio_is_deleted(self):
+        from carry import whisper_model
+        from carry.errors import ProviderUnavailable
+        rel = self.saved()['path']
+        before = (self.root / rel).read_text(encoding='utf-8')
+        folder = self.audio()
+        with patch.object(whisper_model, 'load', side_effect=ProviderUnavailable('whisper_load_failed:RuntimeError')), \
+                patch('sys.stderr', io.StringIO()) as log:
+            self.assertFalse(meet.transcribe(self.ws, rel, self.root, folder.name))
+        self.assertFalse(folder.exists())
+        self.assertEqual((self.root / rel).read_text(encoding='utf-8'), before)
+        self.assertIn('whisper_load_failed', log.getvalue())
+
+    def test_audio_is_taken_only_from_the_app_s_folder_and_only_when_whisper_can_use_it(self):
+        folder = self.audio()
+        outside = Path(self.tmp.name) / 'elsewhere' / folder.name
+        outside.mkdir(parents=True)
+        self.assertIsNone(meet.audio_folder(self.ws, str(outside)))
+        self.assertIsNone(meet.audio_folder(self.ws, '../../Vault'))
+        with patch.object(meet, 'whisper_ready', return_value=True):
+            self.assertEqual(meet.take_audio(self.ws, str(folder)), folder.name)
+        self.assertTrue(folder.exists() and outside.exists())
+        with patch.object(meet, 'whisper_ready', return_value=False):
+            self.assertIsNone(meet.take_audio(self.ws, str(folder)))
+        self.assertFalse(folder.exists())  # no model: Apple's transcript stays, the audio goes at once
+        self.assertTrue(outside.exists())
+
+    def test_a_path_given_by_hand_is_never_transcribed_or_deleted(self):
+        rel = self.saved()['path']
+        precious = Path(self.tmp.name) / 'precious'
+        precious.mkdir()
+        (precious / 'me.wav').write_bytes(b'not a meeting')
+        with patch.object(meet, 'transcribe') as transcribe, patch.object(harvest, 'ask_agent', return_value=[]):
+            meet.summarize(self.ws, rel, which='claude:sonnet', audio=str(precious))
+        transcribe.assert_not_called()
+        self.assertTrue((precious / 'me.wav').exists())
+
+    def test_audio_left_behind_is_deleted_after_a_day(self):
+        old = self.audio('0ld', age=25 * 3600)
+        recent = self.audio('rec3nt', age=3600)
+        meet.take_audio(self.ws, None)
+        self.assertEqual((old.exists(), recent.exists()), (False, True))
+
+    def test_whisper_pauses_while_the_app_says_a_call_has_the_microphone(self):
+        import os
+        flag = self.ws.state_dir / meet.BUSY_NAME
+        self.assertFalse(meet.busy(self.ws))
+        flag.touch()
+        self.assertTrue(meet.busy(self.ws))
+        os.utime(flag, (time.time() - 30, time.time() - 30))  # the app quit or the call ended
+        self.assertFalse(meet.busy(self.ws))
+
+    def test_the_bridge_hands_the_audio_to_the_background_job(self):
+        bridge = desktop.Bridge()
+        folder = self.audio()
+        with patch.object(meet, 'spawn') as spawn, patch.object(desktop.maintenance, 'start'), \
+                patch.object(meet, 'whisper_ready', return_value=True):
+            saved = bridge.dispatch(dict(action='meeting_save', workspace=str(self.ws.state_dir), segments=SEGMENTS,
+                                         title='Ses', started='2026-10-15T09:05:00+03:00', duration=40,
+                                         audio=str(folder), mic_only=True))
+        self.assertEqual(spawn.call_args.kwargs['audio'], folder.name)
+        self.assertIn('meet_mic_only: true', (self.root / saved['path']).read_text(encoding='utf-8'))
+        empty = self.audio('3mpty')
+        with patch.object(meet, 'whisper_ready', return_value=True), self.assertRaisesRegex(CarryError, 'meeting_transcript_empty'):
+            bridge.dispatch(dict(action='meeting_save', workspace=str(self.ws.state_dir), segments=[], audio=str(empty)))
+        self.assertFalse(empty.exists())
+
+    def test_the_whisper_model_downloads_once_in_its_own_job(self):
+        from carry import whisper_model
+        bridge = desktop.Bridge()
+        with patch.object(whisper_model, 'runtime_available', return_value=True), \
+                patch.object(whisper_model, 'installed', return_value=False), patch.object(meet, 'detached') as run:
+            run.return_value.pid = 999999  # no such process: the job looks interrupted
+            started = bridge.dispatch(dict(action='whisper_download', workspace=str(self.ws.state_dir)))
+            self.assertEqual(run.call_args.args[0][-2:], ['meet', 'download-whisper'])
+            status = bridge.dispatch(dict(action='whisper_status', workspace=str(self.ws.state_dir)))
+        self.assertTrue(started['started'])
+        self.assertEqual((status['installed'], status['bytes'], status['download']['state']), (False, 874188075 + 885098, 'interrupted'))
+
+        def fetch(progress=None):
+            progress(100, 200)
+            self.assertEqual(meet.whisper_download_job(self.ws)['completed'], 100)  # this process is alive
+            progress(200, 200)
+        with patch.object(whisper_model, 'download', side_effect=fetch), patch.object(whisper_model, 'DOWNLOAD_BYTES', 200):
+            meet.download_whisper(self.ws)
+        self.assertEqual(meet.whisper_download_job(self.ws)['state'], 'done')
+        with patch.object(whisper_model, 'runtime_available', return_value=True), \
+                patch.object(whisper_model, 'installed', return_value=True), patch.object(meet, 'detached') as run:
+            self.assertFalse(meet.start_whisper_download(self.ws)['started'])
+        run.assert_not_called()
+
+    def test_a_failed_summary_keeps_who_wrote_the_transcript(self):
+        rel = meet.save(self.ws, SEGMENTS, title='Kalır', started='2026-10-15T11:00:00+03:00', duration=95, mic_only=True)['path']
+        meet.write_transcript(self.root, rel, meet.clean_lines(SEGMENTS[:2]), 'whisper')
+        with self.assertRaises(CarryError):
+            meet.summarize(self.ws, rel, which='claude:sonnet')
+        front, body = parse_frontmatter((self.root / rel).read_text(encoding='utf-8'))
+        self.assertEqual((front['meet_status'], front['meet_transcript'], front['meet_mic_only']), ('failed', 'whisper', True))
+        self.assertIn('Sistem sesi alınamadı', body)
+        self.assertEqual(len(meet.read(self.root, rel)[2]), 2)
 
     def test_cli_lists_meetings(self):
         from carry import cli

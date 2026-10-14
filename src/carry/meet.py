@@ -1,16 +1,21 @@
 """Carry Meet: a meeting transcribed on this Mac, kept as a note, summarised once.
 
 The app records the microphone (the owner) and, on macOS 14.2+, the system audio (the
-other side, also in headphones) and transcribes both on the Mac with Apple's on-device
-recognizer; no audio is written to disk and nothing goes online. At Stop the transcript
-is saved at once, as one file under sources/carry/meet/, so a failed summary never loses
-a meeting. The summary runs once in the background on the owner's own assistant (harvest's
-path: Claude Sonnet, else Codex) and, when none answers, on Apple's on-device model, the
-transcript in parts within a fixed budget. Every
-summary point and item carries a quote that code finds word for word in the cited line,
-or it is dropped. The file gets the summary and the minutes; decisions, open items and
-facts also go to one draft digest in +/, which the owner reviews item by item like chat
-drafts (carry.digest). Nothing is accepted automatically.
+other side, also in headphones) and transcribes both live with Apple's on-device recognizer.
+It also writes each side to a temporary WAV file in the workspace (meet-audio/). At Stop the
+transcript is saved at once, as one file under sources/carry/meet/, so nothing later can lose
+a meeting. Then, in the background and still on this Mac, Whisper transcribes each side again
+(carry.whisper_model; it pauses while a call has the microphone) and its transcript replaces
+Apple's; the audio is deleted whatever happens, and nothing goes online. When no Whisper model
+is installed the audio is deleted at Stop and Apple's transcript stays.
+
+The summary runs once, only on an assistant connected to the notes folder (Claude Sonnet,
+else Codex), the transcript in parts within a fixed budget; with none connected the note
+keeps its raw transcript and says how to connect one. Every summary point and item carries a
+quote that code finds word for word in the cited line, or it is dropped. The file gets the
+summary and the minutes; decisions, open items and facts also go to one draft digest in +/,
+which the owner reviews item by item like chat drafts (carry.digest). Nothing is accepted
+automatically.
 """
 import bisect
 import datetime
@@ -19,11 +24,12 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import time
 
-from . import harvest
+from . import filelock, harvest
 from .background import detached
 from .errors import CarryError
 from .markdown import parse_frontmatter
@@ -34,6 +40,13 @@ from .persistence import atomic_text
 MEET_DIR = 'sources/carry/meet'
 STATE_NAME = 'meet.json'
 LOG_NAME = 'meet.log'
+AUDIO_DIR = 'meet-audio'          # in the workspace: the app's temporary WAV files, one folder a meeting
+AUDIO_NAME = re.compile(r'^[A-Za-z0-9-]{1,64}$')
+ORPHAN_SECONDS = 24 * 3600        # audio left behind by a job that never ended is deleted after a day
+BUSY_NAME = 'meet-busy'           # the app touches it every 3 s while a call has the microphone
+BUSY_SECONDS = 10
+LOCK_NAME = 'meet-whisper.lock'   # one transcription at a time: two meetings in a row take turns
+WHISPER_LANGUAGES = {'Turkish': 'tr', 'English': 'en'}
 # Budget, measured on Turkish speech at about 900 characters a minute: a part is about
 # 18 minutes, twelve parts about three and a half hours. A longer meeting is summarised up
 # to there and says so. At most PARTS + 1 calls, plus one per ten items to compare them
@@ -56,12 +69,20 @@ LABELS = {
                     transcript='Transkript', decision='Kararlar', open_item='Açık işler', fact='Bilgiler',
                     pending='Özet hazırlanıyor; Carry toplantı bitince bir kez özetler.',
                     failed='Özet çıkarılamadı: {error}. Carry uygulamasında Toplantılar sayfasından yeniden deneyin.',
+                    raw='Özet yok: bu not klasörüne bağlı bir asistan yok, transkript ham kaldı. Ayarlar › Asistanlar '
+                        'bölümünden Claude Code ya da Codex\'i bağlayıp Toplantılar sayfasından özetleyin.',
+                    mic_only='Sistem sesi alınamadı; yalnız mikrofon kaydedildi, karşı tarafın sözleri transkriptte yok.',
+                    by='Özeti {who} çıkardı.',
                     nothing='Bu toplantıdan kaydedilecek bir karar, açık iş ya da bilgi çıkmadı.',
                     cut='Bütçe aşıldı: transkriptin {line}. satırdan sonrası özetlenmedi.'),
     'English': dict(me='Me', others='Others', meeting='Meeting', summary='Summary', minutes='Minutes',
                     transcript='Transcript', decision='Decisions', open_item='Open items', fact='Facts',
                     pending='Summary in progress; Carry summarises once the meeting ends.',
                     failed='No summary: {error}. Retry from the Meetings page in the Carry app.',
+                    raw='No summary: no assistant is connected to this notes folder, so the transcript stays raw. '
+                        'Connect Claude Code or Codex under Settings › Assistants, then summarise it from the Meetings page.',
+                    mic_only='The system audio could not be recorded; only the microphone was, so the other side is missing.',
+                    by='Summarised by {who}.',
                     nothing='No decision, open item or fact worth keeping came out of this meeting.',
                     cut='Over budget: the transcript after line {line} was not summarised.'),
 }
@@ -191,9 +212,16 @@ def drop_echo(lines):
     return out
 
 
-def save(ws, segments, title='', started=None, duration=None, root=None, language=None):
+def _section(lines, L, mic_only=False):
+    """The transcript section: numbered lines, and a word when the other side was not heard."""
+    head = f"## {L['transcript']}\n\n" + (f"*{L['mic_only']}*\n\n" if mic_only else '')
+    return head + '\n'.join(f"- **[{i + 1} · {_clock(x['start'])}] {L[x['speaker']]}:** {x['text']}" for i, x in enumerate(lines)) + '\n'
+
+
+def save(ws, segments, title='', started=None, duration=None, root=None, language=None, mic_only=False):
     """Write the transcript as a meeting note at once and return its path in the vault.
-    `started` is the recording's start (ISO 8601, local time); `duration` its length in seconds."""
+    `started` is the recording's start (ISO 8601, local time); `duration` its length in seconds;
+    `mic_only` says the system audio could not be recorded."""
     root = meeting_vault(ws, root)
     language = language or harvest.draft_language(ws, root)
     L = labels(language)
@@ -214,11 +242,11 @@ def save(ws, segments, title='', started=None, duration=None, root=None, languag
     rel = f'{MEET_DIR}/{stem}.md'
     while (root / rel).exists():
         rel, n = f'{MEET_DIR}/{stem} ({n}).md', n + 1
-    body = '\n'.join(f"- **[{i + 1} · {_clock(x['start'])}] {L[x['speaker']]}:** {x['text']}" for i, x in enumerate(lines))
     summary = f'{name}, {when:%Y-%m-%d %H:%M}, {minutes} min'
     text = (f'---\ntype: meeting\nsummary: {json.dumps(summary, ensure_ascii=False)}\ncreated: {when:%Y-%m-%d}\n'
             f'started: {when.isoformat(timespec="seconds")}\nduration_minutes: {minutes}\nsource_type: meet\n'
-            f'meet_language: {language}\nmeet_status: pending\n---\n\n# {name}\n\n## {L["summary"]}\n\n*{L["pending"]}*\n\n## {L["transcript"]}\n\n{body}\n')
+            f'meet_language: {language}\nmeet_status: pending\n' + ('meet_mic_only: true\n' if mic_only else '') +
+            f'---\n\n# {name}\n\n## {L["summary"]}\n\n*{L["pending"]}*\n\n' + _section(lines, L, mic_only))
     atomic_text(root / rel, text)
     return dict(path=rel, root=str(root), lines=len(lines), minutes=minutes, title=name)
 
@@ -381,6 +409,8 @@ def _front(front, status, **extra):
     head = ['---', 'type: meeting'] + [f'{k}: {json.dumps(front[k], ensure_ascii=False) if k == "summary" else front[k]}'
                                        for k in keep if front.get(k) is not None]
     head += ['source_type: meet', f'meet_status: {status}']
+    # Who wrote the transcript and whether the other side was heard outlive every rewrite.
+    extra = dict(dict(transcript=front.get('meet_transcript'), mic_only=front.get('meet_mic_only')), **extra)
     head += [f'meet_{k}: {json.dumps(v, ensure_ascii=False)}' for k, v in extra.items() if v]
     return '\n'.join(head + ['---', '', ''])
 
@@ -398,13 +428,23 @@ def _transcript(body):
     return body[min(at):] if at else ''
 
 
-def write_note(root, rel, front, title, body, points, items, language, digest_rel=None, cut=None):
+def _who(which):
+    """'claude:sonnet' as Claude (sonnet); Apple's model by its name."""
+    if which == APPLE:
+        return 'Apple Foundation Models'
+    client, _, model = str(which).partition(':')
+    return f"{dict(claude='Claude', codex='Codex').get(client, client)} ({model})" if model else client
+
+
+def write_note(root, rel, front, title, body, points, items, language, digest_rel=None, cut=None, which=None):
     """The meeting note with its summary and minutes above the transcript, which stays as it was."""
     L = labels(language)
     day = str(front.get('created') or datetime.date.today().isoformat())
     transcript = _transcript(body)
     out = [f'# {title}', '', f"## {L['summary']}", '']
     out += [f"- {p['statement']} *({p['clock']})*" for p in points] or [f"*{L['nothing']}*"]
+    if which:
+        out += ['', f"*{L['by'].format(who=_who(which))}*"]
     out += ['', f"## {L['minutes']}", '']
     for kind in TYPES:
         chosen = [it for it in items if it['type'] == kind]
@@ -414,7 +454,7 @@ def write_note(root, rel, front, title, body, points, items, language, digest_re
         out += [f"*{L['nothing']}*", '']
     if cut:
         out += [f"*{L['cut'].format(line=cut - 1)}*", '']
-    atomic_text(root / rel, _front(front, 'done', digest=digest_rel) + '\n'.join(out) + '\n' + transcript)
+    atomic_text(root / rel, _front(front, 'done', digest=digest_rel, extractor=which) + '\n'.join(out) + '\n' + transcript)
 
 
 def mark_failed(root, rel, error, language):
@@ -426,28 +466,58 @@ def mark_failed(root, rel, error, language):
     atomic_text(root / rel, _front(front, 'failed', error=str(error)[:200]) + text + transcript)
 
 
-def clients(which=None):
-    """Who summarises, in order: the owner's own assistants, then Apple's on-device model."""
-    chain = [which] if which else harvest.assistants() + ([APPLE] if harvest.apple_model() else [])
-    if not chain:
-        raise CarryError('no_extraction_client')
-    return chain
+def mark_raw(root, rel, language):
+    """No assistant is connected: the note keeps its transcript and says how to summarise it."""
+    front, title, _, body = read(root, rel)
+    L = labels(language)
+    text = f"# {title}\n\n## {L['summary']}\n\n*{L['raw']}*\n\n"
+    atomic_text(root / rel, _front(front, 'raw') + text + _transcript(body))
 
 
-def summarize(ws, rel, root=None, language=None, which=None):
-    """The one summary of a saved meeting. The owner's assistant compares the items with the
-    notes (known or a real conflict); meeting text never goes to an online checker. When an
-    assistant cannot answer (signed out, say), the next one in clients() summarises."""
+def write_transcript(root, rel, lines, transcript):
+    """Another transcript in place of the note's: the summary part above it stays as it was."""
+    front, _, _, body = read(root, rel)
+    L = labels(note_language(front, body) or 'English')
+    old = _transcript(body)
+    head = body[:len(body) - len(old)] if old else body
+    atomic_text(root / rel, _front(front, str(front.get('meet_status') or 'pending'), transcript=transcript) + head.lstrip('\n')
+                + _section(lines, L, bool(front.get('meet_mic_only'))))
+
+
+def clients(ws=None, root=None, which=None):
+    """Who summarises, in order: the owner's assistants that are connected to the notes folder
+    (Settings › Assistants). `which` names one by hand, Apple's on-device model too."""
+    if which:
+        return [which]
+    from .vaultview import assistants
+    connected = assistants(ws, root) if ws is not None else {}
+    return [c for c in harvest.assistants() if (connected.get(c.split(':')[0]) or {}).get('connected')]
+
+
+def summarize(ws, rel, root=None, language=None, which=None, audio=None):
+    """The one summary of a saved meeting, after Whisper's transcript when the app left its
+    `audio`. The owner's assistant compares the items with the notes (known or a real
+    conflict); meeting text never goes to an online checker. When an assistant cannot answer
+    (signed out, say), the next connected one summarises; with none connected the note stays raw."""
     root = meeting_vault(ws, root)
+    audio = audio_folder(ws, audio)  # only the app's own folder is read, then deleted
+    if audio:
+        transcribe(ws, rel, root, audio)
     front, title, lines, body = read(root, rel)
     language = language or note_language(front, body) or harvest.draft_language(ws, root)
     if not lines:
         raise CarryError('meeting_transcript_empty')
     day = str(front.get('created') or datetime.date.today().isoformat())
+    chain = clients(ws, root, which)
+    if not chain:
+        mark_raw(root, rel, language)
+        _record(ws, rel, status='raw')
+        reindex(ws)
+        return dict(path=rel, raw=True, digest=None, points=0, items=0, dropped=0, cut=None)
     _record(ws, rel, status='running', pid=os.getpid(), started_at=time.time())
     try:
         failures = []
-        for which in clients(which):
+        for which in chain:
             try:
                 points, items, dropped, cut = extract(lines, language, which)
                 break
@@ -471,7 +541,7 @@ def summarize(ws, rel, root=None, language=None, which=None):
         meta = dict(extractor=which, judge='agent' if ran else None, compared=ran, kind='meeting', meeting=rel,
                     dropped_without_quote=dropped)
         digest_rel = write_digest(root, rel, title, groups, meta, language, day) if items else None
-        write_note(root, rel, front, title, body, points, items, language, digest_rel, cut)
+        write_note(root, rel, front, title, body, points, items, language, digest_rel, cut, which)
     except (CarryError, subprocess.SubprocessError, OSError) as exc:
         _record(ws, rel, status='failed', error=str(exc))
         try:
@@ -482,7 +552,121 @@ def summarize(ws, rel, root=None, language=None, which=None):
         raise exc if isinstance(exc, CarryError) else CarryError(f'meeting_summary_failed: {exc}') from exc
     _record(ws, rel, status='done', digest=digest_rel)
     reindex(ws)
-    return dict(path=rel, digest=digest_rel, points=len(points), items=len(items), dropped=dropped, cut=cut)
+    return dict(path=rel, raw=False, digest=digest_rel, points=len(points), items=len(items), dropped=dropped, cut=cut)
+
+
+# -- Whisper after the meeting --------------------------------------------------------
+
+def _audio_root(ws):
+    return Path(ws.state_dir) / AUDIO_DIR
+
+
+def audio_folder(ws, audio):
+    """The name of a meeting's audio folder the app wrote under meet-audio/, or None for any
+    other path (the request names it; nothing outside that folder is ever read or deleted)."""
+    if not audio:
+        return None
+    path = Path(str(audio)).expanduser()
+    name = path.name
+    if not AUDIO_NAME.match(name):
+        return None
+    if path.is_absolute() and path.resolve().parent != _audio_root(ws).resolve():
+        return None
+    return name if (_audio_root(ws) / name).is_dir() else None
+
+
+def drop_audio(ws, name):
+    if name and AUDIO_NAME.match(name):
+        shutil.rmtree(_audio_root(ws) / name, ignore_errors=True)
+
+
+def whisper_ready():
+    from . import whisper_model
+    return whisper_model.runtime_available() and whisper_model.installed()
+
+
+def clean_audio(ws, keep=()):
+    """Audio a job left behind (the Mac restarted mid-way) is deleted after a day."""
+    folder = _audio_root(ws)
+    if not folder.is_dir():
+        return
+    live = {job.get('audio') for job in _state(ws).values() if _alive(job.get('pid'))}
+    for each in folder.iterdir():
+        if each.name in keep or each.name in live or not each.is_dir():
+            continue
+        try:
+            newest = max([each.stat().st_mtime] + [f.stat().st_mtime for f in each.iterdir()])
+        except OSError:
+            continue
+        if time.time() - newest > ORPHAN_SECONDS:
+            shutil.rmtree(each, ignore_errors=True)
+
+
+def take_audio(ws, audio):
+    """At Stop: the folder Whisper will transcribe, or None. Without Whisper the audio is
+    deleted at once and Apple's transcript stays."""
+    name = audio_folder(ws, audio)
+    clean_audio(ws, keep={name})
+    if name and not whisper_ready():
+        drop_audio(ws, name)
+        return None
+    return name
+
+
+def busy(ws):
+    """A call has the microphone, or Carry records: the app has touched the flag lately."""
+    try:
+        return time.time() - (Path(ws.state_dir) / BUSY_NAME).stat().st_mtime < BUSY_SECONDS
+    except OSError:
+        return False
+
+
+def _whisper_lock(ws):
+    """Wait for any other transcription to end: one model on the GPU at a time."""
+    handle = open(Path(ws.state_dir) / LOCK_NAME, 'a+')
+    while not filelock.try_lock(handle):
+        time.sleep(10)
+    return handle
+
+
+def transcribe(ws, rel, root, name):
+    """Whisper's transcript of each side in place of Apple's, merged in time order with the
+    echo left out; the audio is deleted whatever happens. When Whisper cannot run, Apple's
+    transcript stays and the summary goes on. Returns whether Whisper's transcript was kept."""
+    from . import whisper_model
+    folder = _audio_root(ws) / name
+    try:
+        front, _, _, body = read(root, rel)
+        language = WHISPER_LANGUAGES.get(note_language(front, body), 'en')
+        lock = _whisper_lock(ws)
+        try:
+            _record(ws, rel, status='transcribing', pid=os.getpid(), started_at=time.time(), audio=name)
+            model = whisper_model.load(language)
+            segments = []
+            for speaker in SPEAKERS:
+                wav = folder / f'{speaker}.wav'
+                if not wav.is_file():
+                    continue
+                samples = whisper_model.read_wav(wav)
+                segments += [dict(start=t0, speaker=speaker, text=text)
+                             for t0, _, text in whisper_model.transcribe(model, samples, busy=lambda: busy(ws))]
+                del samples  # a two-hour side is about 460 MB
+            del model
+        finally:
+            filelock.unlock(lock)
+            lock.close()
+        lines = clean_lines(segments)
+        if not lines:
+            return False
+        write_transcript(root, rel, lines, 'whisper')
+        return True
+    except Exception as exc:  # Whisper never costs a meeting: Apple's transcript is already saved
+        print(f"{time.strftime('%Y-%m-%d %H:%M')} whisper {rel}: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
+        return False
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+        import gc
+        gc.collect()
 
 
 # -- background run and the Meetings page ---------------------------------------------
@@ -521,20 +705,83 @@ def _alive(pid):
     return True
 
 
-def spawn(ws, rel, root, python=None):
-    """Start the summary in the background and return at once. Started from the app, the
-    process has launchd's short PATH: give it the folders Claude Code and Codex live in."""
+TASKPOLICY = '/usr/sbin/taskpolicy'
+
+
+def spawn(ws, rel, root, python=None, audio=None):
+    """Start Whisper (when the app left `audio`) and the summary in the background, at low
+    priority, and return at once. Started from the app, the process has launchd's short PATH:
+    give it the folders Claude Code and Codex live in. Variables Claude Code sets in its own
+    sessions are left out, so an app started from one still runs the assistant."""
     args = [python or sys.executable, '-I', '-m', 'carry.cli', '--workspace', str(ws.state_dir), 'meet', 'summarize',
-            '--path', rel, '--vault', str(root)]
-    env = dict(os.environ, PATH=':'.join(dict.fromkeys(harvest.schedule_path_env().split(':') + os.environ.get('PATH', '').split(':'))))
+            '--path', rel, '--vault', str(root)] + (['--audio', audio] if audio else [])
+    if sys.platform == 'darwin' and os.path.exists(TASKPOLICY):
+        args = [TASKPOLICY, '-c', 'utility'] + args  # measured: no stutter in a video call while it runs
+    env = {k: v for k, v in os.environ.items() if k != 'CLAUDECODE' and not k.startswith('CLAUDE_CODE_')}
+    env['PATH'] = ':'.join(dict.fromkeys(harvest.schedule_path_env().split(':') + os.environ.get('PATH', '').split(':')))
     with open(ws.state_dir / LOG_NAME, 'a') as log:
         proc = detached(args, stdin=subprocess.DEVNULL, stdout=log, stderr=log, env=env)
-    _record(ws, rel, status='running', pid=proc.pid, started_at=time.time())
+    _record(ws, rel, status='running', pid=proc.pid, started_at=time.time(), audio=audio)
     return proc
 
 
+WHISPER_JOB = 'whisper.json'
+
+
+def _whisper_note(ws, **fields):
+    atomic_text(Path(ws.state_dir) / WHISPER_JOB, json.dumps(dict(fields, at=time.time())) + '\n')
+
+
+def download_whisper(ws):
+    """The Whisper model, downloaded once, with its progress for the Meetings page."""
+    from . import whisper_model
+    total = whisper_model.DOWNLOAD_BYTES
+    _whisper_note(ws, state='running', pid=os.getpid(), completed=0, total=total)
+    try:
+        whisper_model.download(progress=lambda done, size: _whisper_note(ws, state='running', pid=os.getpid(), completed=done, total=size))
+    except CarryError as exc:
+        _whisper_note(ws, state='failed', error=str(exc).split(':')[0])
+        raise
+    _whisper_note(ws, state='done', completed=total, total=total)
+    return dict(installed=True, bytes=total)
+
+
+def whisper_download_job(ws):
+    try:
+        job = json.loads((Path(ws.state_dir) / WHISPER_JOB).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return dict(state='idle')
+    if job.get('state') == 'running' and not _alive(job.get('pid')):
+        job['state'] = 'interrupted'
+    return job
+
+
+def start_whisper_download(ws):
+    """Start the download in the background (its own job: the index never waits for it)."""
+    from . import whisper_model
+    if not whisper_model.runtime_available():
+        raise CarryError('whisper_runtime_missing')
+    if whisper_model.installed():
+        return dict(started=False, installed=True)
+    job = whisper_download_job(ws)
+    if job.get('state') == 'running':
+        return dict(job, started=False)
+    args = [sys.executable, '-I', '-m', 'carry.cli', '--workspace', str(ws.state_dir), 'meet', 'download-whisper']
+    with open(Path(ws.state_dir) / LOG_NAME, 'a') as log:
+        proc = detached(args, stdin=subprocess.DEVNULL, stdout=log, stderr=log)
+    _whisper_note(ws, state='running', pid=proc.pid, completed=0, total=whisper_model.DOWNLOAD_BYTES)
+    return dict(started=True, pid=proc.pid)
+
+
+def leftover_audio(ws, rel):
+    """The audio of a meeting whose job ended before Whisper did, for a retry."""
+    name = _state(ws).get(rel, {}).get('audio')
+    return name if name and AUDIO_NAME.match(name) and (_audio_root(ws) / name).is_dir() else None
+
+
 def listing(ws, root=None, limit=100):
-    """Meetings, newest first, with their summary state: pending, running, done or failed."""
+    """Meetings, newest first, with their state: pending, transcribing (Whisper), running (the
+    summary), raw (no assistant connected), done or failed."""
     try:
         source = meeting_source(ws, root)
     except CarryError:
@@ -553,8 +800,8 @@ def listing(ws, root=None, limit=100):
             continue
         status = str(front.get('meet_status') or 'pending')
         job = state.get(rel, {})
-        if status != 'done' and job.get('status') == 'running':  # a retry runs over a failed one
-            status = 'running' if _alive(job.get('pid')) else 'failed'
+        if status != 'done' and job.get('status') in ('running', 'transcribing'):  # a retry runs over a failed one
+            status = job['status'] if _alive(job.get('pid')) else 'failed'
         title = path.stem.split(' — ', 1)[-1]
         out.append(dict(path=rel, title=title, started=str(front.get('started') or ''), minutes=front.get('duration_minutes'),
                         status=status, digest=front.get('meet_digest') or job.get('digest'),
