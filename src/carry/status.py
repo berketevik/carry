@@ -65,8 +65,11 @@ def _status(workspace, probe_provider=False):
     if review_info['target_conflicts']:
         degradation.append('correction_target_conflict')
     from .maintenance import job_status, sync_status
+    from .team import clone_degradations
+    syncs = sync_status(workspace)
+    degradation += clone_degradations(syncs, [s.source_id for s in workspace.sources])
     return dict(
-        maintenance=job_status(workspace), github_sync=sync_status(workspace),
+        maintenance=job_status(workspace), github_sync=syncs,
         review=review_info,
         workspace=dict(state_dir=str(workspace.state_dir),
                        sources=[dict(source_id=s.source_id, scope=s.scope,
