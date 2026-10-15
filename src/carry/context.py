@@ -53,11 +53,14 @@ def _digests(root, days=DAYS, today=None):
 
 
 def _still_draft(path):
+    """A digest still waits while it is `status: draft` (or carries the legacy `draft: true`)."""
+    from . import okf
+    from .markdown import parse_frontmatter
     try:
-        head = path.read_text(encoding='utf-8', errors='ignore').split('\n---', 1)[0]
+        front, _ = parse_frontmatter(path.read_text(encoding='utf-8', errors='ignore'))
     except OSError:
         return False
-    return bool(re.search(r'(?m)^draft:\s*true\s*$', head))
+    return okf.is_draft(front)
 
 
 def _items(path):

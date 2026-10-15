@@ -5,13 +5,15 @@ raw chat, so recall finds it under the day it was said. Accepting a conflict nev
 note it contradicts; the log line links it for conflict resolution. The digest line keeps the
 decision as a trailing HTML comment: Obsidian hides it and the state pack still reads the line.
 Already recorded, done and dropped items are folded and need no decision. A digest leaves the
-review queue (its draft flag is removed) once no item waits.
+review queue (its `status: draft` becomes `stable`, with the owner's check in `verified`) once
+no item waits.
 """
 import datetime
 import hashlib
 from pathlib import Path
 import re
 
+from . import okf
 from .errors import CarryError
 from .markdown import parse_frontmatter
 from .paths import resolve_within
@@ -90,10 +92,13 @@ def parse(text):
         elif section in FOLDED and (m := FOLDED_ITEM.match(bare)):
             items.append(dict(id=item_id(m['statement']), section=section, statement=m['statement'].strip(),
                               match=m['match'], decision='folded', line=n))
-    raw = next((s for s in front.get('sources') or [] if isinstance(s, str)), '')
+    # The raw chat (or meeting) the digest came from: its first `sources` entry. Log lines link
+    # it as a wikilink; a new log file's frontmatter keeps it as an OKF entry.
+    entries = okf.source_entries(front)
+    raw = okf.as_wikilink(entries[0]['resource']) if entries else ''
     run = front.get('harvest') if isinstance(front.get('harvest'), dict) else {}
-    return dict(items=items, raw=raw, language=language or 'English', created=str(front.get('created') or ''),
-                kind='meeting' if run.get('kind') == 'meeting' else 'chat')
+    return dict(items=items, raw=raw, raw_entry=entries[0] if entries else None, language=language or 'English',
+                created=str(front.get('created') or ''), kind='meeting' if run.get('kind') == 'meeting' else 'chat')
 
 
 def _open(ws, source_id, relative):
@@ -147,10 +152,25 @@ def items(ws, source_id, relative):
         if it['match'] and it['decision'] is None:
             it['match_path'], it['match_text'] = note_side(ws, source_id, it)
     waiting = sum(1 for it in parsed['items'] if it['decision'] is None)
-    return dict(path=relative, items=parsed['items'], waiting=waiting, draft=front.get('draft') is True)
+    return dict(path=relative, items=parsed['items'], waiting=waiting, draft=okf.is_draft(front))
 
 
-def _append_log(root, day, language, entry, raw, kind='chat'):
+def _log_source(root, raw_entry):
+    """The OKF `sources` entry of a new log file: the digest's raw as a bundle path. A legacy
+    digest names its raw as a [[wikilink]]; it is resolved only when exactly one file matches."""
+    if not raw_entry:
+        return []
+    resource = raw_entry['resource']
+    link = okf.WIKILINK.match(resource)
+    if link:
+        from .paths import walk_markdown
+        stem = link.group(1).strip()
+        found = [rel for rel, _ in walk_markdown(root) if Path(rel).stem == stem]
+        return [okf.entry(found[0])] if len(found) == 1 else [dict(resource=resource, title=stem)]
+    return [dict(raw_entry)]
+
+
+def _append_log(root, day, language, entry, raw_entry, kind='chat'):
     rel = f'log/{day}.md'
     path = root / rel
     headings, summaries = (MEETING_LOG_HEADING, MEETING_LOG_SUMMARY) if kind == 'meeting' else (LOG_HEADING, LOG_SUMMARY)
@@ -163,8 +183,9 @@ def _append_log(root, day, language, entry, raw, kind='chat'):
         text += '\n' + entry + '\n'
     else:
         summary = summaries.get(language, summaries['English']).format(day=day)
-        text = (f'---\ntype: daily\nsummary: "{summary}"\ncreated: {day}\nsources:\n  - "{raw}"\n---\n\n'
-                f'# {day}\n\n{heading}\n\n{entry}\n')
+        front = ['---', 'type: daily', f'description: {okf.flow(summary)}', f'created: {day}',
+                 f'generated: {okf.flow(okf.event(okf.carry_actor()))}'] + okf.source_lines(_log_source(root, raw_entry)) + ['---']
+        text = '\n'.join(front) + f'\n\n# {day}\n\n{heading}\n\n{entry}\n'
     atomic_text(path, text)
     return rel
 
@@ -204,14 +225,15 @@ def decide(ws, source_id, relative, item, action, text=None, today=None):
         entry = f"- **{found['tag']}:** {said}{where} ({source})"
         if found['quote']:
             entry += f"\n  > {found['quote']}"
-        logged = _append_log(root, found['date'] or parsed['created'] or today, parsed['language'], entry, parsed['raw'],
-                             parsed['kind'])
+        logged = _append_log(root, found['date'] or parsed['created'] or today, parsed['language'], entry,
+                             parsed['raw_entry'], parsed['kind'])
     atomic_text(path, '\n'.join(lines))
     waiting = sum(1 for it in parse('\n'.join(lines))['items'] if it['decision'] is None)
     done = False
-    if waiting == 0 and front.get('draft') is True:
+    if waiting == 0 and okf.is_draft(front):
+        # Every item decided by the owner: the digest is human-reviewed (OKF §5.3).
         from .vaultview import clear_draft
-        done = clear_draft(path, relative).get('changed', False)
+        done = clear_draft(path, relative, actor=okf.owner(ws.state_dir)).get('changed', False)
     return dict(item=item, decision=decision, logged=logged, waiting=waiting, done=done)
 
 

@@ -8,6 +8,7 @@ from .lifecycle import catalog
 from .embedding import build_provider
 from .errors import ProviderUnavailable
 from .index import db_is_usable, health
+from .okf import conformance
 from . import sidecar as sidecar_map
 
 
@@ -29,6 +30,7 @@ def status(workspace, probe_provider=False, visible=None):
         team_settings=payload["team_settings"],
         team_packs={k: v for k, v in payload["team_packs"].items() if k in visible},
         index=dict(usable=payload["index"]["usable"], state=payload["index"]["state"]),
+        okf={k: v for k, v in payload["okf"].items() if k in visible},
         embedding=payload["embedding"],
         degradation=[d for d in payload["degradation"] if d not in SCOPED_DEGRADATIONS],
         ok=payload["ok"])
@@ -84,6 +86,8 @@ def _status(workspace, probe_provider=False):
                                      root_available=s.root.expanduser().exists())
                                 for s in workspace.sources]),
         index=dict(usable=db_is_usable(workspace.db_path), **index_health),
+        # OKF v0.2 conformance (§11) of each source's whole tree, counts only.
+        okf={s.source_id: conformance(s.root, s.extensions) for s in workspace.sources},
         embedding=provider_info,
         records=dict(tracked=len(sidecar.get("entries", {})),
                      needs_reconciliation=len(sidecar.get("reconcile", []))),
