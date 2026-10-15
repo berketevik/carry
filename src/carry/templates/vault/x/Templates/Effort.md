@@ -1,9 +1,9 @@
 ---
 type: effort
-status: ongoing
-summary: ""
+intensity: ongoing
+description: ""
 created: {{date}}
-draft: true
+status: draft
 sources: []
 ---
 

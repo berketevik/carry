@@ -1,7 +1,7 @@
 ---
 type: agent-instruction
 audience: llm
-summary: "This vault's local rules, loaded after the LLM-GUIDE core."
+description: "This vault's local rules, loaded after the LLM-GUIDE core."
 created: {{CREATED}}
 ---
 

@@ -1,8 +1,8 @@
 ---
 type: thing
-summary: ""
+description: ""
 created: {{date}}
-draft: true
+status: draft
 sources: []
 ---
 
