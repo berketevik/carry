@@ -301,13 +301,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         str(job, "state") != "running"
             && !(str(job, "action", "") == "maintain" && str(job["result"] as? [String: Any] ?? [:], "status", "") == "fresh")
     }
-    /// The banner of a running job. The automatic check usually ends within a second, so its
-    /// banner waits three: shown at once it pushed the page down and back every minute.
-    var jobBanner: Bool { Model.showsBanner(job) }
+    /// Whether the status bar shows a running job. The automatic check usually ends within a
+    /// second, so it shows after three: at once it flickered every minute.
+    var jobShown: Bool { Model.showsBanner(job) }
     private var bannerShown = false
     static func showsBanner(_ job: [String: Any]) -> Bool {
         str(job, "state") == "running"
             && (str(job, "action", "") != "maintain" || Date().timeIntervalSince1970 - num(job, "started_at") >= 3)
+    }
+    /// What the status bar says about it. Jobs that read the sources say so in plain words
+    /// instead of their stage ("Queued", "Indexing").
+    var jobText: String {
+        var text = ["maintain", "index", "github_sync"].contains(str(job, "action", "maintain")) ? T("Updating vaults", "Vault'lar güncelleniyor")
+            : L(str(job, "stage", "Preparing").replacingOccurrences(of: "_", with: " ").capitalized)
+        if let done = job["completed"] as? Double, let total = job["total"] as? Double, total > 0 { text += " \(Int(done / total * 100))%" }
+        return text
     }
     func loadRepositories(page: Int = 1) {
         run("github_repositories", ["page": page]) { value in
@@ -4802,14 +4810,6 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 if !model.error.isEmpty { banner(model.error, color: .red) }
                 if !model.notice.isEmpty { banner(model.notice, color: .secondary) }
-                if model.jobBanner {
-                    HStack {
-                        ProgressView().controlSize(.small)
-                        Text(L(str(model.job, "stage", "Preparing").replacingOccurrences(of: "_", with: " ").capitalized))
-                        if let done = model.job["completed"] as? Double, let total = model.job["total"] as? Double, total > 0 { Text("\(Int(done / total * 100))%") }
-                        Spacer()
-                    }.padding(12)
-                }
                 if ["failed", "interrupted"].contains(str(model.job, "state")) {
                     banner(UIError(str(model.job, "error", L("The background task was interrupted. Retry from Settings."))).localizedDescription, color: .red)
                 }
@@ -4829,12 +4829,14 @@ struct ContentView: View {
                 // one-line text width (which pushed the sidebar off-screen).
                 .frame(minWidth: 560, idealWidth: 780, maxWidth: .infinity, maxHeight: .infinity)
                 Divider()
+                // A running job shows here, not above the page: the bar keeps one height, so the page never moves.
                 HStack {
                     if model.busy { ProgressView().controlSize(.small); Text(L("Working locally…")) }
+                    else if model.jobShown { ProgressView().controlSize(.small); Text(model.jobText) }
                     else { Image(systemName: "internaldrive"); Text(model.workspace.isEmpty ? L("No workspace selected") : model.workspace).lineLimit(1).truncationMode(.middle).textSelection(.enabled) }
                     Spacer()
                     if !model.vault.isEmpty { Text(str(model.vault, "root")).lineLimit(1).truncationMode(.head) }
-                }.font(.caption).foregroundStyle(.secondary).padding(10)
+                }.frame(height: 16).font(.caption).foregroundStyle(.secondary).padding(10)
             }.navigationTitle(pageName(model.page)).toolbar {
                 Button(L("Refresh"), systemImage: "arrow.clockwise") { model.refresh() }.disabled(model.busy || model.workspace.isEmpty)
             }
