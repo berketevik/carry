@@ -118,6 +118,36 @@ def settings_flags(report):
     return flags
 
 
+def pack_report(workspace):
+    """For each team source that ships a pack: is it usable by this workspace? A pack built
+    with another model or chunking is skipped by the index without a word; this says so."""
+    import sqlite3
+    from contextlib import closing
+    from .embedding import build_provider
+    from .index import PACK_PATH, fingerprint, open_readonly
+    packs = {s.source_id: Path(s.root).expanduser() / PACK_PATH for s in workspace.sources if s.scope == "team"}
+    packs = {sid: p for sid, p in packs.items() if p.is_file()}
+    if not packs:
+        return {}
+    try:
+        expected = fingerprint(workspace, build_provider(workspace.embedding))
+    except Exception:
+        return {}
+    report = {}
+    for source_id, path in packs.items():
+        try:
+            with closing(open_readonly(path)) as con:
+                found = dict(con.execute("SELECT key,value FROM meta")).get("fingerprint")
+        except sqlite3.Error:
+            found = None
+        report[source_id] = "usable" if found == expected else "incompatible"
+    return report
+
+
+def pack_flags(report):
+    return ["team_pack_incompatible"] if "incompatible" in (report or {}).values() else []
+
+
 def apply_settings(workspace):
     """Write the team's search settings into the workspace. Conflicting team sources apply nothing."""
     report = settings_report(workspace)
