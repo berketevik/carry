@@ -128,8 +128,15 @@ def run(workspace, action, arguments):
         from .models import setup
         setup(workspace, arguments['model'])
     elif action == 'maintain':
+        from . import team
         states = sync_status(workspace)
         for source in workspace.sources:
+            if team.is_clone(source):
+                previous = states.get(source.source_id, {})
+                if time.time() - previous.get('checked_at', 0) >= workspace.retrieval.github_sync_seconds:
+                    states[source.source_id] = dict(team.pull(source), kind='team_clone', checked_at=time.time())
+                    atomic_text(workspace.state_dir / 'github.status.json', json.dumps(states))
+                continue
             if not source.github:
                 continue
             previous = states.get(source.source_id, {})

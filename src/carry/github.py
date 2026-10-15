@@ -21,6 +21,7 @@ from .background import which
 from .config import SOURCE_ID_RE, SourceConfig, Workspace
 from .errors import CarryError
 from .persistence import writer_lock
+from .team import MAX_SETTINGS
 
 MAX_ARCHIVE = 200_000_000
 MAX_CONTENT = 100_000_000
@@ -179,9 +180,13 @@ def extract_markdown(archive, destination, folder=''):
                     relative = relative.relative_to(folder)
                 except ValueError:
                     continue
-            # The shared index pack (index.PACK_PATH) is the one non-Markdown file kept.
+            # Two non-Markdown files are kept: the shared index pack (index.PACK_PATH) and the
+            # team's shared search settings (team.SETTINGS_PATH).
             if relative == PurePosixPath('.carry/index.db'):
                 if item.size > MAX_PACK:
+                    continue
+            elif relative == PurePosixPath('.carry/team.json'):
+                if item.size > MAX_SETTINGS:
                     continue
             else:
                 if relative.suffix.lower() != '.md':

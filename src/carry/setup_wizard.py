@@ -369,6 +369,18 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
        'Kelimeye göre arama açık. Bu bilgisayarda anlamına göre arama için Ollama gerekiyor: '
        'carry search --semantic on --install-ollama')
     ws = Workspace.load(ws.state_dir)
+    if team_root:
+        # After the search preset, which would otherwise overwrite them.
+        from . import team
+        try:
+            result = team.apply_settings(ws)
+            if result['applied']:
+                ok('Ekip bilgi bankasının ortak arama ayarları uygulandı.')
+            if result['report'] and result['report']['too_old']:
+                warn(f"Ekip, Carry {result['report']['min_carry_version']} ya da daha yenisini istiyor: carry update")
+        except CarryError:
+            warn('Ekip bilgi bankalarının arama ayarları birbirini tutmuyor; hiçbiri uygulanmadı.')
+        ws = Workspace.load(ws.state_dir)
 
     # 3. Assistants: a new notes folder carries its own wiring; an existing one is connected for each assistant found.
     step(3, total, 'Asistan bağlantısı')
