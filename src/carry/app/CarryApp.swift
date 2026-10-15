@@ -3503,32 +3503,41 @@ func audioObjects(_ object: AudioObjectID, _ selector: AudioObjectPropertySelect
 
 /// Everything this Mac plays, through a Core Audio process tap (macOS 14.2+): a private
 /// aggregate device around the tap, read by an IO block. macOS asks once for system audio
-/// recording. When the output device changes (headphones in or out) the tap is built again;
+/// recording. When the output device changes (headphones in or out) or its sample rate does
+/// (AirPods drop to 24 kHz once a call opens their microphone) the tap is built again;
 /// `onLost` says when it cannot be.
 @available(macOS 14.2, *)
 final class SystemAudioCapture {
     private var tap = AudioObjectID(kAudioObjectUnknown)
     private var aggregate = AudioObjectID(kAudioObjectUnknown)
+    private var clock = AudioObjectID(kAudioObjectUnknown), rate: Float64 = 0  // the output device the aggregate runs on, and its rate
     private var proc: AudioDeviceIOProcID?
     private let queue = DispatchQueue(label: "carry.meet.system", qos: .userInitiated)
     private var listener: AudioObjectPropertyListenerBlock?
     private static let outputs = [kAudioHardwarePropertyDefaultOutputDevice, kAudioHardwarePropertyDefaultSystemOutputDevice]
+    private static let rateAddress = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyNominalSampleRate, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
     var onBuffer: ((AVAudioPCMBuffer) -> Void)?
     var onLost: (() -> Void)?
 
     func start() throws {
-        try build()
         guard listener == nil else { return }
-        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-            guard let self, self.listener != nil else { return }
+        listener = { [weak self] _, _ in
+            guard let self, self.listener != nil, self.stale else { return }
             self.teardown()
             do { try self.build() } catch { self.onLost?() }
         }
+        do { try build() } catch { listener = nil; throw error }
         for selector in Self.outputs {
             var address = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
-            AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, .main, block)
+            AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, .main, listener!)
         }
-        listener = block
+    }
+    /// Whether the system output, or its sample rate, is no longer the one the tap was built on.
+    private var stale: Bool {
+        var output = AudioObjectID(kAudioObjectUnknown), now: Float64 = 0
+        guard audioProperty(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultSystemOutputDevice, &output) == noErr,
+              audioProperty(output, kAudioDevicePropertyNominalSampleRate, &now) == noErr else { return true }
+        return output != clock || now != rate
     }
     private func build() throws {
         let description = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
@@ -3543,6 +3552,11 @@ final class SystemAudioCapture {
         var uid: CFString = "" as CFString
         if status == noErr { status = audioProperty(output, kAudioDevicePropertyDeviceUID, &uid) }
         guard status == noErr else { teardown(); throw AudioError(what: "output device", status: status) }
+        if let listener {
+            var address = Self.rateAddress
+            _ = audioProperty(output, kAudioDevicePropertyNominalSampleRate, &rate)
+            if AudioObjectAddPropertyListenerBlock(output, &address, .main, listener) == noErr { clock = output }
+        }
         let settings: [String: Any] = [
             kAudioAggregateDeviceNameKey: "Carry Meet",
             kAudioAggregateDeviceUIDKey: UUID().uuidString,
@@ -3557,6 +3571,10 @@ final class SystemAudioCapture {
         guard status == noErr else { teardown(); throw AudioError(what: "aggregate device", status: status) }
         var stream = AudioStreamBasicDescription()
         status = audioProperty(tap, kAudioTapPropertyFormat, &stream)
+        // The IO block runs at the aggregate's rate. Taken from the tap alone, a call on AirPods
+        // (24 kHz) came out at twice its speed, half of each second silence (measured 15 Oct).
+        var running: Float64 = 0
+        if status == noErr, audioProperty(aggregate, kAudioDevicePropertyNominalSampleRate, &running) == noErr, running > 0 { stream.mSampleRate = running }
         guard status == noErr, let format = AVAudioFormat(streamDescription: &stream) else { teardown(); throw AudioError(what: "tap format", status: status) }
         status = AudioDeviceCreateIOProcIDWithBlock(&proc, aggregate, queue) { [weak self] _, input, _, _, _ in
             guard let self, let copy = Self.copy(input, format) else { return }
@@ -3587,10 +3605,15 @@ final class SystemAudioCapture {
                 AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, .main, listener)
             }
         }
-        listener = nil
         teardown()
+        listener = nil
     }
     private func teardown() {
+        if clock != kAudioObjectUnknown, let listener {
+            var address = Self.rateAddress
+            AudioObjectRemovePropertyListenerBlock(clock, &address, .main, listener)
+        }
+        clock = AudioObjectID(kAudioObjectUnknown); rate = 0
         if aggregate != kAudioObjectUnknown {
             if let proc { AudioDeviceStop(aggregate, proc); AudioDeviceDestroyIOProcID(aggregate, proc) }
             AudioHardwareDestroyAggregateDevice(aggregate)
