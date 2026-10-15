@@ -1,6 +1,6 @@
 ---
 type: topic-index
-summary: "Starting page of the vault."
+description: "Starting page of the vault."
 created: {{CREATED}}
 ---
 

@@ -7,7 +7,8 @@ This file is for an assistant (Claude Code, Codex or another agent) that has bee
 Carry gives Claude Code and Codex a searchable memory made of the owner's own Markdown notes.
 
 - It indexes a folder of `.md` files (a new notes folder Carry sets up, or an existing one) into a local SQLite index in Carry's own folder (default `~/CarryState`). The notes stay the original; the index can always be rebuilt.
-- It runs a local MCP server, `carry.mcp_server`, that the assistant starts in the notes folder. Tools: `carry_recall` (search with citations), `carry_catalog` (list every file with its summary), `carry_status` (index health), and optionally `carry_propose` (draft a correction that only the owner can accept).
+- It runs a local MCP server, `carry.mcp_server`, that the assistant starts in the notes folder. Tools: `carry_recall` (search with citations), `carry_catalog` (list every file with its description), `carry_status` (index health and OKF conformance), and optionally `carry_propose` (draft a correction that only the owner can accept).
+- Notes follow the [Open Knowledge Format v0.2](https://github.com/GoogleCloudPlatform/open-knowledge-format) (`src/carry/okf.py`): Carry reads `description`, `status` (draft, stable, deprecated), `generated`, `verified`, `sources` and `stale_after`, still accepts the keys notes used before (`summary`, `draft: true`, `valid_until`, plain-string `sources`), and writes OKF only. Every passage carries the trust tier and whether it is stale; a `deprecated` note is history. Approving a draft writes `verified: {by: human:<owner id>}` (`carry owner --set <id>`).
 - When a chat ends, Carry drafts its decisions, facts and open work into the notes folder's `+/` inbox, using the owner's own Claude or Codex, and compares them with existing notes.
 - A macOS app reviews those drafts and shows the settings. On Windows and Linux there is no app yet; everything works from the command line and the assistant.
 

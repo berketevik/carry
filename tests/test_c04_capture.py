@@ -47,7 +47,9 @@ class CaptureTest(WorkspaceCase):
             fm, body = parse_frontmatter((self.records / r['proposal_path']).read_text(encoding='utf-8'))
             self.assertEqual(fm['carry_state'], 'draft')
             self.assertEqual(fm['carry_event'], r['event_id'])
-            self.assertIn('records:' + r['event_path'], fm['sources'])
+            self.assertIn('records:' + r['event_path'], fm['carry_source_refs'])
+            # OKF `sources`: a file in the record's own folder is a bundle path.
+            self.assertIn('/' + r['event_path'], [e['resource'] for e in fm['sources']])
             raw = (self.records / r['event_path']).read_text(encoding='utf-8')
             self.assertNotIn('/unused/transcript', raw)
             self.assertNotIn('not captured', raw)

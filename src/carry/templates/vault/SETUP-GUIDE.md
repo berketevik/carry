@@ -1,6 +1,6 @@
 ---
 type: topic-index
-summary: "How this vault was created by Carry and how to use it day to day."
+description: "How this vault was created by Carry and how to use it day to day."
 created: {{CREATED}}
 ---
 
