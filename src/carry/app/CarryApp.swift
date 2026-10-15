@@ -1610,6 +1610,11 @@ struct RecentChats: View {
                 }
             }
         }
+        .environment(\.openURL, OpenURLAction { url in
+            guard url.scheme == "carry-note" else { return .systemAction }
+            model.followLink(url.absoluteString.dropFirst("carry-note:".count).removingPercentEncoding ?? "")
+            return .handled
+        })
     }
     func item(_ entry: [String: Any], icon: String, color: Color) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -1684,8 +1689,8 @@ struct VaultView: View {
             default: return true
             }
         }
-        if !q.isEmpty { list = list.filter { (str($0, "path") + " " + str($0, "title", "") + " " + str($0, "summary", "") + " " + str($0, "type", "")).lowercased().contains(q) } }
-        return sort == "name" ? list.sorted { str($0, "title", str($0, "name")).localizedStandardCompare(str($1, "title", str($1, "name"))) == .orderedAscending } : list.sorted { num($0, "modified") > num($1, "modified") }
+        if !q.isEmpty { list = list.filter { (str($0, "path") + " " + displayTitle($0) + " " + str($0, "title", "") + " " + str($0, "summary", "") + " " + str($0, "type", "")).lowercased().contains(q) } }
+        return sort == "name" ? list.sorted { displayTitle($0).localizedStandardCompare(displayTitle($1)) == .orderedAscending } : list.sorted { num($0, "modified") > num($1, "modified") }
     }
     func topFolder(_ f: [String: Any]) -> String { str(f, "path").contains("/") ? String(str(f, "path").split(separator: "/")[0]) : "" }
     var approvable: [String] { filtered.filter { $0["approvable"] as? Bool == true }.map { str($0, "path") } }
