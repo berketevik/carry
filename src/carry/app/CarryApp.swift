@@ -3252,6 +3252,9 @@ struct MapLayer: View, Animatable, Equatable {
         return Canvas(rendersAsynchronously: true) { ctx, size in layer.draw(&ctx, size) }
     }
     func draw(_ ctx: inout GraphicsContext, _ size: CGSize) {
+        // A refreshed map can arrive while the pointer is on a note of the old one.
+        let hover = hover.flatMap { $0 < map.nodes.count ? $0 : nil }
+        let matches = matches.map { $0.filter { $0 < map.nodes.count } }
         let t = map.transform(camera, size), s = t.a
         let detail = Double(min(1, max(0, (camera.zoom - 1.6) / 1.2)))
         let surface = Color(nsColor: .textBackgroundColor)
