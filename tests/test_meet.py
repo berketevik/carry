@@ -439,9 +439,46 @@ class MeetTest(unittest.TestCase):
         self.assertEqual(spawn.call_args.kwargs['audio'], folder.name)
         self.assertIn('meet_mic_only: true', (self.root / saved['path']).read_text(encoding='utf-8'))
         empty = self.audio('3mpty')
-        with patch.object(meet, 'whisper_ready', return_value=True), self.assertRaisesRegex(CarryError, 'meeting_transcript_empty'):
+        with patch.object(meet, 'whisper_ready', return_value=False), self.assertRaisesRegex(CarryError, 'meeting_transcript_empty'):
             bridge.dispatch(dict(action='meeting_save', workspace=str(self.ws.state_dir), segments=[], audio=str(empty)))
         self.assertFalse(empty.exists())
+
+    def test_a_meeting_the_live_recognizer_heard_nothing_of_is_left_to_whisper(self):
+        bridge = desktop.Bridge()
+        folder = self.audio('h3ard-n0thing')
+        with patch.object(meet, 'spawn') as spawn, patch.object(desktop.maintenance, 'start'), \
+                patch.object(meet, 'whisper_ready', return_value=True):
+            saved = bridge.dispatch(dict(action='meeting_save', workspace=str(self.ws.state_dir), segments=[], title='Yüz yüze',
+                                         started='2026-10-15T09:05:00+03:00', duration=40, audio=str(folder), mic_only=True))
+        self.assertEqual(spawn.call_args.kwargs['audio'], folder.name)
+        self.assertIn('transkripti bu Mac\'te Whisper yazıyor', (self.root / saved['path']).read_text(encoding='utf-8'))
+        for p in self.whisper(dict(me=[(1.0, 5.0, 'Bütçeyi cuma günü kapatıyoruz, Ayşe onaylayacak.')], others=[])):
+            p.start(); self.addCleanup(p.stop)
+        self.assertTrue(meet.transcribe(self.ws, saved['path'], self.root, folder.name))
+        front, body = parse_frontmatter((self.root / saved['path']).read_text(encoding='utf-8'))
+        self.assertEqual(front['meet_transcript'], 'whisper')
+        self.assertIn('- **[1 · 00:01] Ben:** Bütçeyi cuma günü kapatıyoruz', body)
+        self.assertNotIn('Whisper yazıyor', body)
+
+    def test_a_meeting_whisper_heard_nothing_of_either_says_it_failed(self):
+        rel = meet.save(self.ws, [], title='Sessiz', started='2026-10-15T09:05:00+03:00', duration=40, whisper=True)['path']
+        with self.assertRaisesRegex(CarryError, 'meeting_transcript_empty'):
+            meet.summarize(self.ws, rel, which='claude:sonnet')
+        front, body = parse_frontmatter((self.root / rel).read_text(encoding='utf-8'))
+        self.assertEqual(front['meet_status'], 'failed')
+        self.assertEqual(meet.listing(self.ws)['meetings'][0]['status'], 'failed')
+
+    def test_a_short_echo_of_the_other_side_is_left_out(self):
+        lines = meet.clean_lines([
+            dict(start=26.0, speaker='others', text='Aslında sesim geliyor. Aynen geliyor. Ama senin sesin gelmiyor.'),
+            dict(start=27.0, speaker='me', text='Aslında sesim geliyor.'),
+            dict(start=28.0, speaker='me', text='Aynen geliyor.'),
+            dict(start=29.0, speaker='me', text='Evet.'),             # one word: always kept
+            dict(start=31.0, speaker='me', text='Bence geliyor.'),    # a word the other side did not say
+            dict(start=45.0, speaker='me', text='Aynen geliyor.'),    # long after: kept
+        ])
+        self.assertEqual([(x['start'], x['text']) for x in lines if x['speaker'] == 'me'],
+                         [(29.0, 'Evet.'), (31.0, 'Bence geliyor.'), (45.0, 'Aynen geliyor.')])
 
     def test_the_whisper_model_downloads_once_in_its_own_job(self):
         from carry import whisper_model

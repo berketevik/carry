@@ -3921,7 +3921,9 @@ var meetingMenuBar: Bool { UserDefaults.standard.object(forKey: "meetingMenuBar"
             let all = streams.flatMap { $0.utterances }.sorted { $0.start < $1.start }
             await MainActor.run {
                 self.streams = []; self.lines = all; self.partials = []; self.audio = nil
-                guard !all.isEmpty else {
+                // The live recognizer can hear nothing of a side the audio holds: the audio still
+                // goes to Whisper, which writes the transcript.
+                guard !all.isEmpty || audio != nil else {
                     if let audio { try? FileManager.default.removeItem(at: audio) }
                     self.saving = false
                     self.notice = T("Nothing was heard, so nothing was saved.", "Hiçbir şey duyulmadı, bu yüzden bir şey kaydedilmedi.")
@@ -3953,6 +3955,10 @@ var meetingMenuBar: Bool { UserDefaults.standard.object(forKey: "meetingMenuBar"
                         : T("Saved to \(path). Your connected assistant summarises it; the items will wait on the Review page.",
                             "\(path) dosyasına kaydedildi. Bağlı asistanınız özetliyor; maddeler İncele sayfasında sizi bekleyecek.")
                     self.follow(path, str(value, "title", name))
+                case .failure(let e) where (e as? UIError)?.message == "meeting_transcript_empty"
+                                            && ((request["segments"] as? [Any]) ?? []).isEmpty:
+                    self.dropJournal(request)  // no Whisper on this Mac, and the live recognizer heard nothing
+                    self.notice = T("Nothing was heard, so nothing was saved.", "Hiçbir şey duyulmadı, bu yüzden bir şey kaydedilmedi.")
                 case .failure(let e):
                     self.unsaved = request
                     self.problem = T("The transcript could not be saved: \(e.localizedDescription). It is kept until you save it again.",
