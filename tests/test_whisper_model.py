@@ -130,6 +130,34 @@ class WhisperModelTest(unittest.TestCase):
         self.assertEqual(out, [(0, 12, 'İlk satır.'), (12, 17, 'Kalanı.')])
         self.assertEqual(len(waits), 1)
 
+    def test_an_app_that_never_lets_go_of_the_microphone_pauses_whisper_only_so_long(self):
+        def script(call, length, abort):
+            if call == 1:
+                self.assertTrue(abort())
+                return [(0, 12, 'İlk satır.')]
+            self.assertFalse(abort())  # the cap is reached: no more pauses
+            return [(0, 5, 'Kalanı.')]
+        model = FakeModel(script)
+        waits = []
+        with patch.object(wm.time, 'sleep', side_effect=waits.append):
+            out = wm.transcribe(model, np.zeros(60 * wm.RATE, dtype=np.float32), busy=lambda: True)
+        self.assertEqual(out, [(0, 12, 'İlk satır.'), (12, 17, 'Kalanı.')])
+        self.assertEqual(sum(waits), wm.MAX_PAUSE)
+
+    def test_a_download_cut_short_leaves_nothing_behind(self):
+        import http.client
+        _, table = self.serve({'model.bin': b'model'})
+        target = self.base / 'models'
+
+        class Cut:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self, n): raise http.client.IncompleteRead(b'mo', 3)
+        with patch.object(wm, 'FILES', table), patch('urllib.request.urlopen', return_value=Cut()), \
+                self.assertRaisesRegex(ProviderUnavailable, 'model_download_failed:IncompleteRead'):
+            wm.download(directory=target, base_url='https://example.invalid')
+        self.assertEqual([p for p in target.rglob('*') if p.is_file()], [])
+
     def test_made_up_lines_leave_the_transcript(self):
         model = FakeModel(lambda call, length, abort: [(0, 4, 'Bütçeyi konuştuk.'), (30, 34, 'Altyazı M.K.')])
         self.assertEqual(wm.transcribe(model, np.zeros(40 * wm.RATE, dtype=np.float32)), [(0, 4, 'Bütçeyi konuştuk.')])

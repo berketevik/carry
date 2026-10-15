@@ -11,6 +11,7 @@ silence it makes up the endings of subtitled videos ("Altyazı M.K."); those sho
 dropped.
 """
 import hashlib
+import http.client
 import os
 from pathlib import Path
 import re
@@ -35,6 +36,7 @@ LOOP_RUN = 6        # the same 1-4 word phrase this many times in a row is a loo
 LOOP_PAD = 15       # seconds around a loop transcribed again with it
 CHECK_SECONDS = 1   # how often a running transcription asks whether to pause
 WAIT_SECONDS = 5    # how often a paused one asks whether to go on
+MAX_PAUSE = 30 * 60  # an app that keeps the microphone open outside a call pauses no longer than this
 MADE_UP_WORDS = 10  # a made-up line is short; a real sentence that says the same words stays
 MADE_UP = re.compile(r'altyaz[ıi]|izlediğiniz için|abone olmayı unutmayın|^\W*abone ol\w*\W*$|\bm\.\s?k\.'
                      r'|thanks? (you )?for watching|subtitles? by')
@@ -92,7 +94,7 @@ def download(progress=None, directory=None, base_url='https://huggingface.co'):
                     if progress and done - reported >= 8 << 20:
                         progress(done, DOWNLOAD_BYTES)
                         reported = done
-        except OSError as exc:
+        except (OSError, http.client.HTTPException) as exc:  # IncompleteRead is not an OSError
             temp.unlink(missing_ok=True)
             raise ProviderUnavailable('model_download_failed:' + type(exc).__name__)
         if digest.hexdigest() != expected:
@@ -213,7 +215,9 @@ def transcribe(model, audio, busy=None):
     """One side of a meeting as (start, end, text). While `busy()` is true (a call has the
     microphone) whisper stops within a check and goes on from its last line when it is free."""
     total = len(audio) / RATE
-    segments, at = [], 0.0
+    segments, at, paused = [], 0.0, [0.0]
+    if busy:
+        held, busy = busy, lambda: paused[0] < MAX_PAUSE and bool(held())
     while total - at >= MIN_SECONDS:
         stopped, last = [False], [None]
 
@@ -233,4 +237,5 @@ def transcribe(model, audio, busy=None):
         at = part[-1][1] if part else at
         while busy():
             time.sleep(WAIT_SECONDS)
+            paused[0] += WAIT_SECONDS
     return [s for s in guard(model, audio, segments) if not made_up(s[2])]
