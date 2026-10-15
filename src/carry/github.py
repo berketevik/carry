@@ -1,6 +1,7 @@
 """Read-only GitHub sources, using the official CLI's credential store.
 
-Only GET API requests are used. Downloads become immutable, commit-pinned
+Carry only reads: GET requests to the REST API, and GraphQL queries (never a mutation)
+for the date each file last changed. Downloads become immutable, commit-pinned
 Markdown snapshots, never checkouts of a user's working repository.
 """
 import json
@@ -17,6 +18,7 @@ import time
 from dataclasses import replace
 from urllib.parse import quote, urlsplit
 
+from . import commits
 from .background import which
 from .config import SOURCE_ID_RE, SourceConfig, Workspace
 from .errors import CarryError
@@ -89,6 +91,49 @@ def api(path, timeout=45):
         return json.loads(result.stdout)
     except (ValueError, UnicodeError):
         raise CarryError('github_invalid_response')
+
+
+def graphql(query, variables, timeout=45):
+    """One GraphQL read. Carry writes `query` itself and never a mutation; every value, file
+    paths included, travels in `variables`, so nothing from a repository becomes query text."""
+    if not query.startswith('query('):
+        raise CarryError('invalid_github_query')
+    body = json.dumps(dict(query=query, variables=variables)).encode('utf-8')
+    try:
+        result = subprocess.run([executable(), 'api', '--hostname', 'github.com', 'graphql', '--input', '-'],
+                                input=body, env=environment(), capture_output=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired):
+        raise CarryError('github_unreachable')
+    if result.returncode:
+        raise CarryError('github_access_failed')
+    try:
+        data = json.loads(result.stdout)
+    except (ValueError, UnicodeError):
+        raise CarryError('github_invalid_response')
+    if not isinstance(data, dict) or data.get('errors') or not isinstance(data.get('data'), dict):
+        raise CarryError('github_invalid_response')
+    return data['data']
+
+
+def _history_query(count):
+    params = ''.join(f', $p{i}: String!' for i in range(count))
+    fields = ' '.join(f'f{i}: history(first: 1, path: $p{i}) {{ nodes {{ committedDate }} }}' for i in range(count))
+    return ('query($owner: String!, $name: String!, $oid: GitObjectID!' + params + ') '
+            '{ repository(owner: $owner, name: $name) { object(oid: $oid) { ... on Commit { ' + fields + ' } } } }')
+
+
+def last_commits(repository, commit, paths):
+    """For each repository path, the committer date of the last commit up to `commit` that
+    touched it, or None. GitHub no longer reports push times; this is the nearest record."""
+    if not re.fullmatch(r'[a-f0-9]{40}', commit or ''):
+        raise CarryError('github_invalid_commit')
+    if not paths:
+        return []
+    owner, name = repository_name(repository).split('/')
+    variables = dict(owner=owner, name=name, oid=commit, **{f'p{i}': p for i, p in enumerate(paths)})
+    found = (graphql(_history_query(len(paths)), variables).get('repository') or {}).get('object') or {}
+    return [(((found.get(f'f{i}') or {}).get('nodes') or [{}])[0] or {}).get('committedDate')
+            for i in range(len(paths))]
 
 
 def account():
@@ -250,7 +295,11 @@ def _sync(workspace, source_id, config, adding=False, progress=None):
                 raise CarryError('github_source_changed_retry')
             current.with_sources([replace(s, github=updated_config) if s.source_id == source_id else s
                                   for s in current.sources]).save()
-        return dict(status='unchanged', source_id=source_id, commit=commit)
+        result = dict(status='unchanged', source_id=source_id, commit=commit)
+        # A snapshot made before commit dates existed, or whose dates GitHub could not give.
+        if not commits.sidecar(old.root).exists():
+            result['commit_dates'] = commits.record_snapshot(repo, commit, config['folder'], old.root)
+        return result
     cache = workspace.state_dir / 'github' / source_id
     if not cache.resolve().is_relative_to(workspace.state_dir.resolve()):
         raise CarryError('github_cache_outside_workspace')
@@ -264,6 +313,10 @@ def _sync(workspace, source_id, config, adding=False, progress=None):
         count = extract_markdown(archive, content, config['folder'])
         destination = cache / (commit + '-' + str(time.time_ns()))
         os.replace(content, destination)
+    # Before the source points at the new snapshot, so recall never sees it without dates
+    # that GitHub could give.
+    dated = commits.record_snapshot(repo, commit, config['folder'], destination,
+                                    None if adding else workspace.source(source_id).root)
     updated_config = dict(config, commit=commit, synced_at=time.time())
     with writer_lock(workspace):
         current = Workspace.load(workspace.state_dir)
@@ -277,7 +330,7 @@ def _sync(workspace, source_id, config, adding=False, progress=None):
             updated = current.with_sources([replace(s, root=destination, github=updated_config)
                                             if s.source_id == source_id else s for s in current.sources])
         updated.save()
-    return dict(status='synced', source_id=source_id, commit=commit, files=count)
+    return dict(status='synced', source_id=source_id, commit=commit, files=count, commit_dates=dated)
 
 
 def citation_url(source, path):

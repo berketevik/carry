@@ -263,10 +263,23 @@ def _file_records(con, source_ids=None):
     return result
 
 
-def _evidence_date(row, record):
+def _evidence_date(row, record, committed=None):
     from .timeframe import row_date
-    day = row.get("date") or row_date(row.get("heading"), row["path"], record.get("metadata"))
+    day = row.get("date") or row_date(row.get("heading"), row["path"], record.get("metadata"), committed=committed)
     return day.isoformat() if day else None
+
+
+class _History(dict):
+    """Each source's commit dates (commits.for_source), read the first time one is needed."""
+
+    def __init__(self, workspace):
+        super().__init__()
+        self.workspace = workspace
+
+    def __missing__(self, source_id):
+        from .commits import for_source
+        self[source_id] = for_source(self.workspace.source(source_id))
+        return self[source_id]
 
 
 def citation(source_id, path, title):
@@ -354,7 +367,7 @@ def catalog_entries(workspace, source_ids=None, folder=None, max_chars=CATALOG_M
 LISTING_TEXT = 600  # per passage when a time range is listed, so more of the range fits the budget
 
 
-def _dated_rows(con, eligible, files, frame):
+def _dated_rows(con, eligible, files, frame, history):
     """Passages of eligible files that belong to the frame, with the date they belong to."""
     from .timeframe import row_date
     out = []
@@ -364,7 +377,7 @@ def _dated_rows(con, eligible, files, frame):
         if key not in eligible:
             continue
         metadata = files.get(key, {}).get("metadata")
-        day = row_date(heading, path, metadata, frame)
+        day = row_date(heading, path, metadata, frame, committed=history[sid].get(path))
         if frame.contains(day):
             out.append(dict(id=cid, source_id=sid, path=path, title=title, heading=heading, text=text, date=day, metadata=metadata))
     return out
@@ -455,6 +468,7 @@ def recall(workspace, query, source_ids=None, budget=None, include_history=False
                     diagnostics=dict(index=health(workspace)))
 
     diagnostics = {}
+    history = _History(workspace)
     try:
         with closing(open_readonly(workspace.db_path)) as con:
             index_health = health(workspace, con)
@@ -471,7 +485,7 @@ def recall(workspace, query, source_ids=None, budget=None, include_history=False
                                     queries=queries or (), files=files)
             else:
                 # A named time: only passages dated inside it may answer.
-                dated = _dated_rows(con, eligible, files, frame)
+                dated = _dated_rows(con, eligible, files, frame, history)
                 in_range = {(r["source_id"], r["path"]) for r in dated}
                 dated_ids = {r["id"]: r["date"] for r in dated}
                 diagnostics["timeframe"] = dict(frame.to_json(), documents=len(in_range))
@@ -524,6 +538,7 @@ def recall(workspace, query, source_ids=None, budget=None, include_history=False
     for row in hits:
         record = files.get((row["source_id"], row["path"]), {})
         source = workspace.source(row["source_id"])
+        committed = history[row["source_id"]].get(row["path"])
         evidence.append(dict(
             scope=source.scope, repository=(source.github or {}).get("repository"),
             source_id=row["source_id"], path=row["path"], title=row["title"],
@@ -531,7 +546,7 @@ def recall(workspace, query, source_ids=None, budget=None, include_history=False
             citation=citation(row["source_id"], row["path"], row["title"]),
             url=citation_url(workspace.source(row["source_id"]), row["path"]),
             relevance_score=row.get("relevance_score"), vector_score=row.get("vector_score"),
-            date=_evidence_date(row, record), in_range=row.get("in_range"),
+            date=_evidence_date(row, record, committed), committed_at=committed, in_range=row.get("in_range"),
             record_id=record.get("record_id", ""), revision=record.get("revision", 1),
             state=record.get("state", "imported"), current=record.get("current", True),
             superseded_by=record.get("superseded_by", ""),

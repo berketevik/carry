@@ -1,13 +1,16 @@
 """A team clone connected by `carry setup --team` stays current, and never at the cost of a
 member's own changes."""
 import json
+import os
 import subprocess
 import time
+from datetime import datetime
 
 from _support import HASHING, WorkspaceCase
 
-from carry import maintenance, team
+from carry import index, maintenance, team, vaultview
 from carry.config import RetrievalConfig, SourceConfig, Workspace
+from carry.recall import recall
 from carry.status import status
 
 
@@ -92,6 +95,23 @@ class TeamCloneTest(WorkspaceCase):
         flags = status(self.workspace)["degradation"]
         self.assertIn("team_clone_has_local_changes", flags)
         self.assertIn("team_clone_behind", flags)
+
+    def test_commit_dates_come_from_the_clone_log(self):
+        (self.author / "Heron.md").write_text("# Heron\n\nThe heron budget is fifty units.\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.author), "commit", "-q", "-am", "update"], check=True,
+                       capture_output=True, env=dict(os.environ, GIT_COMMITTER_DATE="2026-09-11T14:29:00+03:00"))
+        git(self.author, "push", "-q", "origin", "HEAD:main")
+        self.assertEqual(team.pull(self.source)["status"], "pulled")
+        index.build(self.workspace)
+        committed = datetime.fromisoformat("2026-09-11T14:29:00+03:00")
+        item = recall(self.workspace, "heron budget")["evidence"][0]
+        self.assertEqual(item["committed_at"], committed.astimezone().isoformat(timespec="seconds"))
+        listed = {f["path"]: f for f in vaultview.browse(self.workspace, "team")["files"]}
+        self.assertEqual(listed["Heron.md"]["modified"], committed.timestamp())
+        # An uncommitted edit is newer than the last commit: the file's own time shows.
+        (self.clone / "Heron.md").write_text("# Heron\n\nmember draft\n", encoding="utf-8")
+        listed = {f["path"]: f for f in vaultview.browse(self.workspace, "team")["files"]}
+        self.assertEqual(listed["Heron.md"]["modified"], (self.clone / "Heron.md").stat().st_mtime)
 
     def test_a_clone_without_upstream_is_skipped(self):
         git(self.clone, "branch", "-q", "--unset-upstream")
