@@ -4039,7 +4039,10 @@ struct MeetingsView: View {
     /// The Whisper model is offered once (874 MB); without it Apple's live transcript stays.
     @ViewBuilder var whisperBox: some View {
         let job = whisper["download"] as? [String: Any] ?? [:]
-        if whisper["runtime"] as? Bool == true, whisper["installed"] as? Bool != true, !whisperAsked || downloading {
+        if whisper["installed"] as? Bool == true {
+            Label(T("Whisper is ready: each meeting is transcribed again on this Mac once it ends.", "Whisper hazır: her toplantı bitince bu Mac'te yeniden yazıya dökülür."),
+                  systemImage: "checkmark.seal.fill").font(.callout).foregroundStyle(.green).fixedSize(horizontal: false, vertical: true)
+        } else if whisper["runtime"] as? Bool == true, !whisperAsked || downloading {
             VStack(alignment: .leading, spacing: 8) {
                 Text(T("More accurate transcripts", "Daha doğru transkript")).fontWeight(.medium)
                 Text(T("Whisper transcribes each meeting again on this Mac once it ends, more accurately than the live transcript. It needs a one-time download of \(megabytes(whisper["bytes"])) MB; the audio never leaves this Mac and is deleted once transcribed.",
