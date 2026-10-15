@@ -31,7 +31,8 @@ SELF = Path(__file__).resolve()
 def project_files():
     # This file holds the patterns themselves, so scanning it would always fail.
     for path in sorted(ROOT.rglob("*")):
-        if not path.is_file() or any(part in SKIP_DIRS for part in path.parts):
+        # Inside the project only: a checkout under someone's .claude/worktrees is still scanned.
+        if not path.is_file() or any(part in SKIP_DIRS for part in path.relative_to(ROOT).parts):
             continue
         if path.resolve() == SELF:
             continue

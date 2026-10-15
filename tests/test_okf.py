@@ -25,9 +25,9 @@ class FallbackParserTest(unittest.TestCase):
             return parse_frontmatter('---\n' + text + '\n---\nbody\n')[0]
 
     def test_flow_mapping_with_plain_keys_and_timestamps(self):
-        front = self.parse('generated: { by: human:berke, at: "2026-10-16T14:05:00+03:00" }\n'
+        front = self.parse('generated: { by: human:deniz, at: "2026-10-16T14:05:00+03:00" }\n'
                            'verified: { by: carry/0.13.0, at: 2026-10-16T14:05:00+03:00 }')
-        self.assertEqual(front['generated'], {'by': 'human:berke', 'at': '2026-10-16T14:05:00+03:00'})
+        self.assertEqual(front['generated'], {'by': 'human:deniz', 'at': '2026-10-16T14:05:00+03:00'})
         self.assertEqual(front['verified']['at'], '2026-10-16T14:05:00+03:00')
 
     def test_block_list_of_mappings_and_of_json_lines(self):
@@ -41,7 +41,7 @@ class FallbackParserTest(unittest.TestCase):
 
     def test_nested_block_mapping_and_a_bare_verified_list(self):
         front = self.parse('generated:\n  by: codex/gpt-5\n  at: 2026-10-16T09:00:00Z\n'
-                           'verified:\n- {"by": "human:berke", "at": "2026-10-16T10:00:00+03:00"}\nstatus: draft')
+                           'verified:\n- {"by": "human:deniz", "at": "2026-10-16T10:00:00+03:00"}\nstatus: draft')
         self.assertEqual(front['generated'], {'by': 'codex/gpt-5', 'at': '2026-10-16T09:00:00Z'})
         self.assertEqual(okf.trust(front), 'human-reviewed')
         self.assertTrue(okf.is_draft(front))
@@ -82,9 +82,9 @@ class ReadTest(unittest.TestCase):
         self.assertFalse(okf.is_stale({'stale_after': 'not a date'}, NOW))
 
     def test_pyyaml_datetimes_read_as_iso_text(self):
-        front, _ = parse_frontmatter('---\ngenerated: { by: human:berke, at: 2026-10-16T14:05:00+03:00 }\n'
+        front, _ = parse_frontmatter('---\ngenerated: { by: human:deniz, at: 2026-10-16T14:05:00+03:00 }\n'
                                      'created: 2026-10-16\nstale_after: 2026-11-01T00:00:00Z\n---\nx\n')
-        self.assertEqual(okf.generated(front), {'by': 'human:berke', 'at': '2026-10-16T14:05:00+03:00'})
+        self.assertEqual(okf.generated(front), {'by': 'human:deniz', 'at': '2026-10-16T14:05:00+03:00'})
         view = okf.view(front, NOW)
         self.assertEqual(view['stale_after'], '2026-11-01T00:00:00+00:00')
         self.assertFalse(view['stale'])
@@ -112,30 +112,30 @@ class ApproveTest(unittest.TestCase):
 
     def test_status_draft_becomes_stable_with_the_owners_check(self):
         raw = '---\ntype: thing\nstatus: draft\ntags: [x]\n---\n# T\nstatus: draft stays in the body\n'
-        self.assertEqual(okf.approve(raw, 'human:berke', self.AT),
+        self.assertEqual(okf.approve(raw, 'human:deniz', self.AT),
                          '---\ntype: thing\nstatus: stable\ntags: [x]\n'
-                         'verified: {"by": "human:berke", "at": "2026-10-16T10:00:00+03:00"}\n---\n# T\nstatus: draft stays in the body\n')
+                         'verified: {"by": "human:deniz", "at": "2026-10-16T10:00:00+03:00"}\n---\n# T\nstatus: draft stays in the body\n')
 
     def test_an_existing_verification_is_kept_and_extended(self):
         raw = '---\nstatus: draft\nverified: { by: process:nightly, at: "2026-10-01T00:00:00Z" }\nx: 1\n---\nb\n'
-        out = okf.approve(raw, 'human:berke', self.AT)
+        out = okf.approve(raw, 'human:deniz', self.AT)
         front, _ = parse_frontmatter(out)
-        self.assertEqual([e['by'] for e in okf.verified(front)], ['process:nightly', 'human:berke'])
+        self.assertEqual([e['by'] for e in okf.verified(front)], ['process:nightly', 'human:deniz'])
         self.assertEqual((front['status'], front['x']), ('stable', 1))
 
     def test_legacy_draft_next_to_a_legacy_status_only_drops_the_flag(self):
         raw = '---\ntype: effort\nstatus: on\ndraft: true\n---\nb\n'
-        out = okf.approve(raw, 'human:berke', self.AT)
+        out = okf.approve(raw, 'human:deniz', self.AT)
         self.assertNotIn('draft:', out)
         self.assertEqual(out.count('status:'), 1)
         self.assertEqual(okf.trust(parse_frontmatter(out)[0]), 'human-reviewed')
 
     def test_not_a_draft_or_no_frontmatter_changes_nothing(self):
-        self.assertIsNone(okf.approve('---\nstatus: stable\n---\nb\n', 'human:berke'))
-        self.assertIsNone(okf.approve('no frontmatter\n', 'human:berke'))
+        self.assertIsNone(okf.approve('---\nstatus: stable\n---\nb\n', 'human:deniz'))
+        self.assertIsNone(okf.approve('no frontmatter\n', 'human:deniz'))
 
     def test_windows_line_endings_are_kept(self):
-        out = okf.approve('---\r\nstatus: draft\r\n---\r\nb\r\n', 'human:berke', self.AT)
+        out = okf.approve('---\r\nstatus: draft\r\n---\r\nb\r\n', 'human:deniz', self.AT)
         self.assertTrue(out.startswith('---\r\nstatus: stable\r\nverified: '))
         self.assertNotIn('\n---\n', out.replace('\r\n', '#'))
 
@@ -144,10 +144,10 @@ class OwnerTest(unittest.TestCase):
     def test_owner_id_is_short_and_never_an_email(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(okf.owner(tmp), okf.DEFAULT_OWNER)
-            self.assertEqual(okf.set_owner(tmp, 'Berke'), 'human:berke')
-            self.assertEqual(okf.owner(tmp), 'human:berke')
+            self.assertEqual(okf.set_owner(tmp, 'Deniz'), 'human:deniz')
+            self.assertEqual(okf.owner(tmp), 'human:deniz')
             self.assertEqual(okf.set_owner(tmp, 'human:ismail'), 'human:ismail')
-            for bad in ('berke@example.com', '', 'two words', 'x' * 80):
+            for bad in ('deniz@example.com', '', 'two words', 'x' * 80):
                 with self.assertRaises(CarryError):
                     okf.set_owner(tmp, bad)
             self.assertEqual(okf.owner(tmp), 'human:ismail')
@@ -256,7 +256,7 @@ class WritersTest(unittest.TestCase):
         self.root = base / 'Vault'
         vault.apply(vault.plan(self.root, language='English', workspace=base / 'ws', attach=False), git=False)
         self.ws = Workspace.load(base / 'ws')
-        okf.set_owner(self.ws.state_dir, 'berke')
+        okf.set_owner(self.ws.state_dir, 'deniz')
 
     def digest(self):
         item = dict(type='decision', statement='The pilot ships on 15 October.', quote='ship the pilot on 15 October',
@@ -291,7 +291,7 @@ class WritersTest(unittest.TestCase):
         self.assertTrue(result['done'])
         front, _ = parse_frontmatter((self.root / digest_rel).read_text(encoding='utf-8'))
         self.assertEqual((front['status'], okf.trust(front)), ('stable', 'human-reviewed'))
-        self.assertEqual(okf.verified(front)[0]['by'], 'human:berke')
+        self.assertEqual(okf.verified(front)[0]['by'], 'human:deniz')
         log, body = parse_frontmatter((self.root / result['logged']).read_text(encoding='utf-8'))
         self.assertEqual((log['type'], okf.source_refs(log)), ('daily', ['/' + raw_rel]))
         self.assertIn('items approved from chats', log['description'])
