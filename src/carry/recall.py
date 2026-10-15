@@ -12,6 +12,7 @@ import sqlite3
 import time
 from contextlib import closing
 
+from . import okf
 from .embedding import build_provider
 from .errors import ProviderUnavailable
 from .index import db_is_usable, fingerprint, health, open_readonly, read_manifest, unpack
@@ -19,8 +20,11 @@ from .index import db_is_usable, fingerprint, health, open_readonly, read_manife
 MAX_QUERY_CHARS = 2000
 BUDGET_LIMITS = {"top_k": (1, 20), "max_chars": (200, 20000), "max_per_document": (1, 10)}
 
-METADATA_KEYS = ("type", "summary", "created", "date", "updated", "sources", "provenance",
-                 "confidence", "sensitivity", "draft", "valid_until", "review_by")
+# OKF v0.2 fields (description, status, generated, verified, stale_after) next to the keys
+# notes written before OKF still carry (summary, draft, valid_until).
+METADATA_KEYS = ("type", "description", "summary", "created", "date", "updated", "sources", "provenance",
+                 "confidence", "sensitivity", "status", "draft", "generated", "verified", "stale_after",
+                 "valid_until", "review_by", "intensity")
 
 try:  # optional acceleration
     import numpy as _np
@@ -181,11 +185,12 @@ def is_secret(metadata):
 
 
 def is_pending_digest(metadata):
-    """A chat digest waits for review like a proposal until approval clears its draft flag,
-    wherever it lands: a folder that does not exclude +/ must not serve it as an accepted note."""
+    """A chat digest waits for review like a proposal until the owner's decisions move it out of
+    `status: draft` (or the legacy `draft: true`), wherever it lands: a folder that does not
+    exclude +/ must not serve it as an accepted note. Any other draft stays searchable."""
     metadata = metadata or {}
     return (isinstance(metadata.get("harvest"), dict) and "extractor" in metadata["harvest"]
-            and metadata.get("draft") in (True, "true"))
+            and okf.is_draft(metadata))
 
 
 def _local_only(workspace, files, row):
@@ -255,8 +260,12 @@ def _file_records(con, source_ids=None):
             metadata = json.loads(row[2])
         except (TypeError, ValueError):
             metadata = {}
+        # OKF consumer view (§5.3-5.5): `status` is the lifecycle (a value outside OKF's set is
+        # kept as `status_unknown`), plus the trust tier and staleness, from the spec's fields.
+        kept = {k: metadata[k] for k in METADATA_KEYS if k in metadata}
+        kept.update(okf.view(metadata))
         result[(row[0], row[1])] = dict(
-            metadata={k: metadata[k] for k in METADATA_KEYS if k in metadata},
+            metadata=kept,
             pending_digest=is_pending_digest(metadata),
             record_id=row[3], revision=row[4], state=row[5],
             current=bool(row[6]), superseded_by=row[7] or "", digest=row[8])
@@ -567,6 +576,10 @@ def recall(workspace, query, source_ids=None, budget=None, include_history=False
                        returned_chars=sum(len(e["text"]) for e in evidence),
                        candidates=len(candidates), scoped_to=source_ids or "all")
     diagnostics.setdefault("semantic", False)
+    if any(e["metadata"].get("status_unknown") for e in evidence):
+        diagnostics["warnings"].append("okf_unknown_status_read_as_stable")
+    if any(e["metadata"].get("stale") for e in evidence):
+        diagnostics["warnings"].append("stale_evidence")
     if not diagnostics["semantic"]:
         diagnostics["warnings"].append("results_are_lexical_only")
     if index_health.get("state") != "fresh":

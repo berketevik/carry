@@ -70,5 +70,9 @@ def read_record_meta(frontmatter, source_id, relative_path, sidecar_id=None):
             event_id=str(frontmatter.get("carry_event") or ""), origin="carry",
             superseded_by=str(frontmatter.get("carry_superseded_by") or ""),
             supersedes=str(frontmatter.get("carry_supersedes") or ""))
+    # OKF `status: deprecated` (§5.4): kept for links and history, no longer current.
+    deprecated = str(frontmatter.get("status") or "").strip().lower() == "deprecated"
+    successor = frontmatter.get("superseded_by") if deprecated else ""
     return RecordMeta(record_id=sidecar_id or imported_record_id(source_id, relative_path),
-                      revision=1, state="imported", current=True, origin="imported")
+                      revision=1, state="imported", current=not deprecated, origin="imported",
+                      superseded_by=successor if isinstance(successor, str) else "")

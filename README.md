@@ -6,7 +6,7 @@
 
 In September you find that a client's user IDs are broken. In November you sit down to fix them, and your assistant checks your notes first: it reminds you what you found, with a link to where it's written. Your notes stay on your computer as plain Markdown (`.md`) files.
 
-**Version 0.12.0 · macOS 14+ · pilot**
+**Version 0.13.0 · macOS 14+ · pilot**
 
 ## Get started
 
@@ -32,6 +32,8 @@ Setup asks two things: what to connect (your own notes, your team's knowledge ba
 3. **Chats turn into drafts you review.** When a chat ends, Carry drafts its decisions and open tasks into your notes folder's `+/` inbox. In the Carry app you accept, fix or skip each item; accepted items go to that day's log, and nothing is recorded without you.
 4. **Meetings become notes too.** On the app's Meetings page, or from the menu bar when a call opens the microphone, Carry records a meeting and writes down what is said as it is said: your microphone and, on macOS 14.2+, the sound of the call, transcribed on your Mac. At Stop the transcript is saved under `sources/carry/meet/`. On an Apple Silicon Mac, Whisper (large-v3-turbo, a one-time download of about 875 MB) then transcribes the audio of each side again, more accurately, on your Mac's GPU; it waits while a call has the microphone, and the audio is deleted once it is done. Your connected assistant then summarises the meeting once, and its decisions, open items and facts come to Review like chat drafts, each with the line it was said in. With no assistant connected the transcript stays as it is.
 
+Notes are plain Markdown in Google's [Open Knowledge Format](https://github.com/GoogleCloudPlatform/open-knowledge-format) (OKF v0.2): the frontmatter says what a note is (`type`), whether you have checked it (`status`, `verified`), what it came from (`sources`) and when it goes stale (`stale_after`). Carry shows these next to every passage, and approving a draft in the app records your check.
+
 ## Your data
 
 Carry doesn't upload your notes anywhere and uses no online service of its own. The passages your assistant reads go only to that assistant (Claude Code or Codex, with your own account), and chat drafts are made through it too. Meetings are transcribed on your Mac, live by Apple's recognizer (it needs Dictation turned on) and afterwards by Whisper; the audio is kept in Carry's workspace only until Whisper has transcribed it, never leaves your Mac, and is then deleted. Only the transcript goes to your connected assistant for the summary; with none connected, nothing about the meeting leaves your Mac.
@@ -45,6 +47,7 @@ Carry doesn't upload your notes anywhere and uses no online service of its own. 
 | Ship the team repo's search index with it, so teammates search at once (run where the repo is cloned, then commit and push) | `carry github pack --id team --out <clone>/.carry/index.db` |
 | Get chat drafts every evening at 21:30 | `carry harvest --install-schedule` |
 | Turn search by meaning on or off | `carry search --semantic on` (or `off`) |
+| Put your name on the drafts you approve (`verified: human:<name>`) | `carry owner --set <name>` |
 | Update Carry | `carry update`, then `carry app install` |
 | Check that everything works | `carry status --probe` |
 

@@ -74,6 +74,19 @@ class GraphTest(unittest.TestCase):
         pair = lambda a, b: sorted([at[f'notes/{a}.md'], at[f'notes/{b}.md']])
         self.assertEqual(sorted(g['edges']), sorted([pair('Soup', 'Engine'), pair('Soup', 'Pasta')]))
 
+    def test_markdown_links_are_lines_too(self):
+        note(self.vault, 'notes/Bread.md', '# Bread\nSee [the brakes](Brakes.md) and [tyres](../notes/Tyres.md#wear), '
+             'not [a page](https://example.com/Soup.md). ' + ' '.join([KITCHEN['Bread']] * 20) + '\n')
+        note(self.vault, 'notes/Old Engine.md', '# Old Engine\n[Engine](Engine.md) ' + ' '.join([GARAGE['Engine']] * 20) + '\n')
+        note(self.vault, 'notes/Pasta.md', '# Pasta\n[old](Old%20Engine.md) ' + ' '.join([KITCHEN['Pasta']] * 20) + '\n')
+        index.build(self.ws)
+        g = graph.build(self.ws, 'notes')
+        at = {n['path']: i for i, n in enumerate(g['nodes'])}
+        pair = lambda a, b: sorted([at[f'notes/{a}.md'], at[f'notes/{b}.md']])
+        for a, b in (('Bread', 'Brakes'), ('Bread', 'Tyres'), ('Old Engine', 'Engine'), ('Pasta', 'Old Engine')):
+            self.assertIn(pair(a, b), g['edges'])
+        self.assertNotIn(pair('Bread', 'Soup'), g['edges'])
+
     def test_a_note_not_indexed_yet_waits_in_an_uncoloured_group(self):
         note(self.vault, 'notes/Fresh.md', '# Fresh\nWritten after the index was built.\n')
         g = graph.build(self.ws, 'notes')

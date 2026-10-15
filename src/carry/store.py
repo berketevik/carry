@@ -10,6 +10,7 @@ import json
 import re
 from pathlib import Path
 
+from . import okf
 from .errors import CarryError, RevisionConflict, SourceError
 from .mask import mask
 from .markdown import parse_frontmatter
@@ -47,6 +48,9 @@ def _frontmatter_block(fields):
             continue
         if isinstance(value, bool):
             lines.append(f"{key}: {'true' if value else 'false'}")
+        elif isinstance(value, dict):
+            # An OKF mapping (`generated`, `verified`) as one JSON flow line: valid YAML.
+            lines.append(f"{key}: {json.dumps(value, ensure_ascii=False, default=str)}")
         elif isinstance(value, (list, tuple)):
             lines.append(f"{key}:")
             lines.extend("  - " + json.dumps(item, ensure_ascii=False) for item in value)
@@ -175,10 +179,11 @@ def _write_record(workspace, title, content, source_refs=(), event_id="", state=
         "carry_author": mask(author)[0],
         "carry_surface": mask(surface)[0],
         "type": "record",
-        "summary": mask(summary)[0] if summary else masked_title,
+        "description": mask(summary)[0] if summary else masked_title,
         "created": now,
         "updated": now,
-        "sources": [mask(ref)[0] for ref in source_refs],
+        "sources": okf.ref_entries([mask(ref)[0] for ref in source_refs], source.source_id),
+        "carry_source_refs": [mask(ref)[0] for ref in source_refs],
     }
     body = f"{_frontmatter_block(frontmatter)}\n\n# {masked_title}\n\n{masked_content.strip()}\n"
     atomic_text(path, body)
@@ -240,7 +245,7 @@ def _supersede(workspace, record_id, content, expected_revision, title=None, eve
         raise RevisionConflict(f"expected_revision_{expected_revision}_found_{revision}")
 
     masked_content, categories = mask(content or "")
-    heading = mask(title or str(frontmatter.get("summary") or path.stem))[0]
+    heading = mask(title or okf.description(frontmatter) or path.stem)[0]
     new_id = new_record_id()
     new_path = record_path(workspace, source, new_id, heading, revision + 1)
     now = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
@@ -254,10 +259,11 @@ def _supersede(workspace, record_id, content, expected_revision, title=None, eve
         "carry_surface": mask(surface)[0],
         "carry_supersedes": record_id,
         "type": "record",
-        "summary": heading,
+        "description": heading,
         "created": now,
         "updated": now,
-        "sources": frontmatter.get("sources") or [],
+        "sources": okf.ref_entries(okf.carry_refs(frontmatter), source.source_id),
+        "carry_source_refs": okf.carry_refs(frontmatter),
     }
     atomic_text(new_path,
         f"{_frontmatter_block(new_frontmatter)}\n\n# {heading}\n\n{masked_content.strip()}\n")

@@ -29,7 +29,7 @@ import subprocess
 import sys
 import time
 
-from . import filelock, harvest
+from . import filelock, harvest, okf
 from .background import detached
 from .errors import CarryError
 from .markdown import FRONTMATTER_RE, parse_frontmatter
@@ -252,7 +252,8 @@ def save(ws, segments, title='', started=None, duration=None, root=None, languag
     while (root / rel).exists():
         rel, n = f'{MEET_DIR}/{stem} ({n}).md', n + 1
     summary = f'{name}, {when:%Y-%m-%d %H:%M}, {minutes} min'
-    text = (f'---\ntype: meeting\nsummary: {json.dumps(summary, ensure_ascii=False)}\ncreated: {when:%Y-%m-%d}\n'
+    text = (f'---\ntype: meeting\ndescription: {json.dumps(summary, ensure_ascii=False)}\ncreated: {when:%Y-%m-%d}\n'
+            f'generated: {okf.flow(okf.event(okf.carry_actor()))}\n'
             f'started: {when.isoformat(timespec="seconds")}\nduration_minutes: {minutes}\nsource_type: meet\n'
             f'meet_language: {language}\nmeet_status: pending\n' + ('meet_mic_only: true\n' if mic_only else '') +
             f'---\n\n# {name}\n\n## {L["summary"]}\n\n*{L["pending"]}*\n\n'
@@ -393,8 +394,9 @@ def write_digest(root, rel, title, groups, meta, language, day):
     stem = Path(rel).stem
     counts = {k: len(v) for k, v in groups.items()}
     summary = f"{title}: {counts.get('new', 0)} new, {counts.get('conflict', 0)} conflict, {counts.get('known', 0)} already recorded"
-    lines = ['---', 'type: output', f'summary: {json.dumps(summary, ensure_ascii=False)}', f'created: {day}',
-             'draft: true', 'provenance: meeting', 'sources:', f'  - "[[{stem}]]"',
+    lines = ['---', 'type: output', f'description: {json.dumps(summary, ensure_ascii=False)}', f'created: {day}',
+             'status: draft', f'generated: {okf.flow(okf.event(okf.carry_actor()))}', 'provenance: meeting',
+             *okf.source_lines([okf.entry(rel)]),
              f'harvest: {json.dumps(meta, ensure_ascii=False)}', '---', '', f"# {L['meeting']}: {title}", '']
 
     def item_line(it):
@@ -415,13 +417,13 @@ def write_digest(root, rel, title, groups, meta, language, day):
 
 
 def _own_front(text):
-    """The owner's frontmatter lines, as written: every key but type, source_type and meet_*."""
+    """The owner's frontmatter lines, as written: every key but type, source_type, generated and meet_*."""
     m = FRONTMATTER_RE.match(text.replace('\r\n', '\n'))
     out, keep = [], False
     for l in m.group(1).splitlines() if m else []:
         if l and not l[0].isspace() and not l.startswith('-'):
             key = l.split(':', 1)[0].strip()
-            keep = key not in ('type', 'source_type') and not key.startswith('meet_')
+            keep = key not in ('type', 'source_type', 'generated') and not key.startswith('meet_')
         if keep:
             out.append(l)
     return out
@@ -429,10 +431,12 @@ def _own_front(text):
 
 def _front(text, front, status, **extra):
     """The note's frontmatter for a rewrite: the owner's keys (tags, related, sources...) stay as
-    they were written; Carry sets only type, source_type and meet_*."""
-    own = _own_front(text) or [f'{k}: {json.dumps(front[k], ensure_ascii=False) if k == "summary" else front[k]}'
-                               for k in ('summary', 'created', 'started', 'duration_minutes') if front.get(k) is not None]
-    head = ['---', 'type: meeting'] + own + ['source_type: meet']
+    they were written; Carry sets only type, source_type, `generated` (it rewrote the summary and
+    minutes) and meet_*."""
+    own = _own_front(text) or [f'{k}: {json.dumps(front[k], ensure_ascii=False) if k in ("description", "summary") else front[k]}'
+                               for k in ('description', 'summary', 'created', 'started', 'duration_minutes')
+                               if front.get(k) is not None]
+    head = ['---', 'type: meeting'] + own + [f'generated: {okf.flow(okf.event(okf.carry_actor()))}', 'source_type: meet']
     if front.get('meet_language'):
         head.append(f"meet_language: {front['meet_language']}")
     head.append(f'meet_status: {status}')

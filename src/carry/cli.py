@@ -86,8 +86,25 @@ def cmd_status(args):
              f"sources: {len(payload['workspace']['sources'])}",
              f"capture: {payload['capture']['state']}",
              f"degradation: {', '.join(payload['degradation']) or 'none'}"]
+    for sid, c in payload.get("okf", {}).items():
+        if not c.get("available"):
+            continue
+        gaps = [f"{c[k]} {k.replace('_', ' ')}" for k in ("no_frontmatter", "no_type", "reserved_misuse",
+                                                            "invalid_status", "legacy_keys") if c.get(k)]
+        lines.append(f"okf {sid}: {'conformant' if c['conformant'] else 'not conformant'} "
+                     f"({c['files']} files{', ' + ', '.join(gaps) if gaps else ''})")
     _print(payload, args.json, lines)
     return EXIT_OK if payload["ok"] else EXIT_FAILED
+
+
+def cmd_owner(args):
+    """Who the owner is in OKF `verified` (`human:<id>`), written when they approve a draft."""
+    from . import okf
+    workspace = open_workspace(args.workspace)
+    actor = okf.set_owner(workspace.state_dir, args.set) if args.set else okf.owner(workspace.state_dir)
+    hint = [] if actor != okf.DEFAULT_OWNER else ["set it with: carry owner --set <short id, not an email>"]
+    _print(dict(actor=actor), args.json, [f"owner: {actor}"] + hint)
+    return EXIT_OK
 
 
 def cmd_team(args):
@@ -558,6 +575,10 @@ def build_parser():
     st = sub.add_parser("status", help="integration and index status")
     st.add_argument("--probe", action="store_true", help="contact the embedding provider")
     st.set_defaults(func=cmd_status)
+
+    ow = sub.add_parser("owner", help="the owner's id in OKF `verified` (human:<id>), written when they approve a draft")
+    ow.add_argument("--set", metavar="ID", help="a short id such as your first name; never an email address")
+    ow.set_defaults(func=cmd_owner)
 
     tm = sub.add_parser("team", help="the team knowledge base's shared search settings (.carry/team.json)")
     tm.add_argument("--apply", action="store_true", help="write the team's search settings into this workspace")

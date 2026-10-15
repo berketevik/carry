@@ -78,7 +78,8 @@ class HarvestTest(unittest.TestCase):
         self.assertEqual(report['harvested'], 1)
         digest = (self.root / report['digests'][0]).read_text(encoding='utf-8')
         self.assertTrue(report['digests'][0].startswith('+/'))
-        self.assertIn('draft: true', digest)
+        self.assertIn('\nstatus: draft\n', digest)
+        self.assertNotIn('draft: true', digest)
         self.assertIn('The pilot ships on 15 October.', digest)
         self.assertNotIn('1M', digest)
         self.assertIn('"dropped_without_quote": 1', digest)
@@ -166,7 +167,7 @@ class HarvestTest(unittest.TestCase):
         self.assertNotIn(digest, served())
         self.assertIn(digest, served(include_drafts=True))
         path = self.root / digest
-        path.write_text(path.read_text(encoding='utf-8').replace('draft: true\n', ''), encoding='utf-8')
+        path.write_text(path.read_text(encoding='utf-8').replace('status: draft\n', 'status: stable\n'), encoding='utf-8')
         build(self.ws)
         self.assertIn(digest, served())
 

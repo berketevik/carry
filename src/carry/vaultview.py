@@ -10,8 +10,11 @@ import fnmatch
 import os
 from dataclasses import replace
 from pathlib import Path
+import posixpath
 import re
+from urllib.parse import unquote
 
+from . import okf
 from .config import RetrievalConfig, Workspace
 from .errors import CarryError
 from .markdown import parse_frontmatter
@@ -23,7 +26,52 @@ HEAD_BYTES = 4096
 MAX_NOTE_BYTES = 2_000_000
 MARK = re.compile(r' ?<!-- carry: (?:accepted|fixed|skipped) \d{4}-\d{2}-\d{2} -->')
 WIKILINK_RE = re.compile(r"\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]")
+# A plain Markdown link, as GitHub knowledge bases write them: [text](folder/Note%20name.md).
+MDLINK_RE = re.compile(r"(?<!!)\[[^\]\n]*\]\((?:<([^>\n]+)>|([^)\s]+))(?:\s+\"[^\"]*\")?\)")
 INBOX = '+'
+
+
+def link_targets(text, from_rel):
+    """What a note links to: [[wikilink]] targets as written, and Markdown links to other
+    notes as paths from the root (resolved against the linking note's folder, without `.md`)."""
+    targets = [m.group(1).strip() for m in WIKILINK_RE.finditer(text)]
+    folder = from_rel.rsplit('/', 1)[0] if '/' in from_rel else ''
+    for m in MDLINK_RE.finditer(text):
+        target = unquote((m.group(1) or m.group(2)).split('#', 1)[0])
+        if not target.lower().endswith('.md') or ':' in target.split('/', 1)[0]:
+            continue    # web pages, mail, images and other files
+        joined = posixpath.normpath(target.lstrip('/') if target.startswith('/') else posixpath.join(folder, target))
+        if joined != '..' and not joined.startswith('../'):
+            targets.append(joined[:-3])
+    return targets
+
+
+class Resolver:
+    """Obsidian-style resolution: exact path, then next to the linking note, then a basename
+    (the shortest path wins when several notes share it). None when nothing matches.
+    The lookup tables are built once, so resolving every link of a vault stays cheap."""
+
+    def __init__(self, paths):
+        self.bare = {p.removesuffix('.md'): p for p in paths}
+        self.by_name = {}
+        for key, p in self.bare.items():
+            self.by_name.setdefault(key.rsplit('/', 1)[-1], []).append(p)
+
+    def __call__(self, target, from_rel):
+        wanted = target.strip().removesuffix('.md').strip('/')
+        if not wanted:
+            return None
+        if wanted in self.bare:
+            return self.bare[wanted]
+        if from_rel and '/' in from_rel:
+            near = posixpath.normpath(from_rel.rsplit('/', 1)[0] + '/' + wanted)
+            if near in self.bare:
+                return self.bare[near]
+        if '/' in wanted:
+            ends = [p for k, p in self.bare.items() if k.endswith('/' + wanted)]
+        else:
+            ends = self.by_name.get(wanted, [])
+        return min(ends, key=lambda p: (p.count('/'), p)) if ends else None
 
 
 def excluded(relative, patterns):
@@ -33,7 +81,11 @@ def excluded(relative, patterns):
 def _meta(path):
     try:
         with open(path, 'rb') as f:
-            head = f.read(HEAD_BYTES).decode('utf-8', errors='ignore')
+            data = f.read(HEAD_BYTES)
+            # OKF `sources` entries can make frontmatter longer than the first read.
+            if data.startswith(b'---') and b'\n---' not in data[3:]:
+                data += f.read(MAX_NOTE_BYTES)
+        head = data.decode('utf-8', errors='ignore')
     except OSError:
         return {}
     front, body = parse_frontmatter(head)
@@ -174,8 +226,9 @@ def browse(ws, source_id):
             folder=rel.rsplit('/', 1)[0] if '/' in rel else '',
             modified=modified, committed=committed, size=st.st_size, indexed=not excluded(rel, src.exclude),
             index_state=_index_state(rel, src, indexed, path),
-            type=_text(front.get('type')), summary=_text(front.get('summary')),
-            status=_text(front.get('status')), draft=front.get('draft') is True,
+            type=_text(front.get('type')), summary=okf.description(front),
+            status=_text(front.get('status')), lifecycle=okf.lifecycle(front)[0], intensity=okf.intensity(front),
+            trust=okf.trust(front), stale=okf.is_stale(front), draft=okf.is_draft(front),
             locked=front.get('lock') is True, system=is_system(rel, managed),
             approvable=not is_system(rel, managed) and cannot_approve(front) is None,
             review=not is_system(rel, managed) and awaits_review(rel, front),
@@ -194,34 +247,19 @@ def note(ws, source_id, relative):
     front, body = parse_frontmatter(raw)
     rel = path.relative_to(root).as_posix()
     modified, committed = _modified(rel, path, *_history(src))
-    links = sorted({m.group(1).strip() for m in WIKILINK_RE.finditer(body)})
+    links = sorted(set(link_targets(body, rel)))
     heading = next((l[2:].strip() for l in body.splitlines() if l.startswith('# ')), '')
     return dict(source_id=src.source_id, path=rel, absolute=str(path), title=_text(front.get('title')) or heading or path.stem,
-                frontmatter={k: v if isinstance(v, (str, int, float, bool, list)) or v is None else str(v)
-                             for k, v in (front or {}).items()},
+                frontmatter={k: okf.plain(v) if isinstance(v, (str, int, float, bool, list, dict)) or v is None
+                             or hasattr(v, 'isoformat') else str(v) for k, v in (front or {}).items()},
+                okf=okf.view(front),
                 body=MARK.sub('', body) if is_digest(front) else body, modified=modified, committed=committed,
                 indexed=not excluded(rel, src.exclude),
                 index_state=_index_state(rel, src, _indexed_paths(ws, src.source_id), path), links=links)
 
 
 def _resolve(target, from_rel, paths):
-    """Obsidian-style resolution: exact path, then next to the linking note, then a basename
-    (the shortest path wins when several notes share it). None when nothing matches."""
-    wanted = target.strip().removesuffix('.md').strip('/')
-    if not wanted:
-        return None
-    bare = {p.removesuffix('.md'): p for p in paths}
-    if wanted in bare:
-        return bare[wanted]
-    if from_rel and '/' in from_rel:
-        near = from_rel.rsplit('/', 1)[0] + '/' + wanted
-        if near in bare:
-            return bare[near]
-    if '/' in wanted:
-        ends = [p for k, p in bare.items() if k.endswith('/' + wanted)]
-    else:
-        ends = [p for k, p in bare.items() if k.rsplit('/', 1)[-1] == wanted]
-    return min(ends, key=lambda p: (p.count('/'), p)) if ends else None
+    return Resolver(paths)(target, from_rel)
 
 
 def _all_paths(root, src):
@@ -229,11 +267,15 @@ def _all_paths(root, src):
 
 
 def backlinks(ws, source_id, relative, limit=200):
-    """Notes whose [[links]] resolve to this note."""
+    """Notes whose [[links]] or Markdown links resolve to this note."""
+    from urllib.parse import quote
     src, root = _local(ws, source_id)
     target = resolve_within(root, relative).relative_to(root).as_posix()
     paths = _all_paths(root, src)
+    resolve = Resolver(paths)
     stem, found, skipped = Path(target).stem, [], 0
+    # A Markdown link spells the name URL-encoded: `Kişisel%20Vault%20Ayrımı.md`.
+    needles = {stem, stem.replace(' ', '%20'), quote(stem)}
     for rel in paths:
         if rel == target:
             continue
@@ -244,9 +286,9 @@ def backlinks(ws, source_id, relative, limit=200):
             text = (root / rel).read_text(encoding='utf-8', errors='ignore')
         except OSError:
             continue
-        if stem not in text:
+        if not any(n in text for n in needles):
             continue
-        if any(_resolve(m.group(1), rel, paths) == target for m in WIKILINK_RE.finditer(text)):
+        if any(resolve(t, rel) == target for t in link_targets(text, rel)):
             found.append(rel)
             if len(found) >= limit:
                 break
@@ -266,7 +308,9 @@ def create_note(ws, source_id, title, body=''):
     path, n = folder / f'{name}.md', 2
     while path.exists():
         path, n = folder / f'{name} ({n}).md', n + 1
-    text = f"---\ncreated: {_dt.date.today().isoformat()}\n---\n\n# {title.strip() or name}\n\n{body.strip()}\n"
+    # The owner wrote it: an OKF concept (type required) generated by the owner.
+    text = (f"---\ntype: thing\ncreated: {_dt.date.today().isoformat()}\n"
+            f"generated: {okf.flow(okf.event(okf.owner(ws.state_dir)))}\n---\n\n# {title.strip() or name}\n\n{body.strip()}\n")
     with open(path, 'x', encoding='utf-8') as f:
         f.write(text)
     return dict(path=path.relative_to(root).as_posix())
@@ -284,7 +328,7 @@ def _blocked(front):
         return 'locked'
     if str(front.get('type', '')).lower() in RAW_TYPES or front.get('source_type') == 'clip':
         return 'raw'
-    if front.get('draft') is not True:
+    if not okf.is_draft(front):
         return 'not_draft'
     return None
 
@@ -298,13 +342,14 @@ def cannot_approve(front):
 
 def awaits_review(rel, front):
     """What waits for the owner: drafts in the inbox (chat digests, captures). Agent notes elsewhere
-    keep `draft: true` as an unchecked mark and stay searchable; they are not a queue. A capture
-    already routed (`routed_into:` set) is done even if its draft flag stayed."""
+    keep `status: draft` as an unchecked mark and stay searchable; they are not a queue. A capture
+    already routed (`routed_into:` set) is done even if its draft mark stayed."""
     return rel.startswith(INBOX + '/') and _blocked(front) is None and not front.get('routed_into')
 
 
 def approve_note(ws, source_id, relative):
-    """The owner checked a draft: drop its `draft: true` line. Locked notes and raw material are refused."""
+    """The owner checked a draft: it becomes `status: stable` with the owner's check in `verified`.
+    Locked notes and raw material are refused."""
     src, root = _editable(ws, source_id)
     path = resolve_within(root, relative)
     if not path.is_file():
@@ -316,20 +361,18 @@ def approve_note(ws, source_id, relative):
         return dict(path=relative, changed=False)
     if reason:
         raise CarryError(f'note_{reason}')
-    return clear_draft(path, relative, raw)
+    return clear_draft(path, relative, raw, actor=okf.owner(ws.state_dir))
 
 
-def clear_draft(path, relative, raw=None):
-    """Drop the frontmatter `draft: true` line and nothing else."""
+def clear_draft(path, relative, raw=None, actor=okf.DEFAULT_OWNER):
+    """OKF approval, line by line: `status: draft` (or a legacy `draft: true`) becomes `status:
+    stable` and `verified` gains the owner's check; every other line stays as written."""
     from .persistence import atomic_text
     raw = path.read_text(encoding='utf-8') if raw is None else raw
-    end = raw.find('\n---', 3)
-    head, rest = raw[:end], raw[end:]
-    import re as _re
-    new_head = _re.sub(r'(?m)^draft:\s*(true|True|yes)\s*\n?', '', head)
-    if new_head == head:
+    approved = okf.approve(raw, actor)
+    if approved is None:
         raise CarryError('draft_flag_not_simple')
-    atomic_text(path, new_head + rest)
+    atomic_text(path, approved)
     return dict(path=relative, changed=True)
 
 
