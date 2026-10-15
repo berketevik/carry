@@ -20,11 +20,15 @@ from .background import detached
 from .embedding import build_provider
 from .errors import ProviderUnavailable
 from .filelock import try_lock
-from .markdown import chunk_body, parse_document
+from . import okf
+from .markdown import chunk_body, parse_document, parse_frontmatter
 from .paths import walk_markdown
 from .records import read_record_meta
 
 SCHEMA_VERSION = 1
+# What a file's passages are made of (OKF `description` as the summary passage, OKF listings
+# skipped). A change re-splits every file but keeps the vectors of unchanged text.
+CHUNKING = "okf-0.2"
 
 
 # --- low level helpers ---
@@ -157,6 +161,9 @@ def corpus_snapshot(workspace):
                 data = path.read_bytes()
             except OSError:
                 continue
+            if Path(relative).name in okf.RESERVED and okf.is_reserved_listing(
+                    relative, parse_frontmatter(data.decode("utf-8", "replace"))[0]):
+                continue    # an OKF index.md / log.md lists notes; it is not one
             snapshot[(source.source_id, relative)] = hashlib.sha256(data).hexdigest()
     return snapshot
 
@@ -212,7 +219,8 @@ def health(workspace, con=None):
         compatible = bool(expected) and config.get("fingerprint") == expected
         changed = sum(manifest.get(key) != digest for key, digest in snapshot.items())
         removed = len(manifest.keys() - snapshot.keys())
-        state = "fresh" if compatible and not changed and not removed else "stale"
+        rechunk = compatible and config.get("chunking") != CHUNKING
+        state = "fresh" if compatible and not changed and not removed and not rechunk else "stale"
         return dict(state=state, compatible=compatible, changed_files=changed,
                     removed_files=removed, indexed_files=len(manifest),
                     corpus_files=len(snapshot), built_at=config.get("built_at"),
@@ -258,12 +266,14 @@ def _build_locked(workspace):
         stage = "prepare"
         expected = fingerprint(workspace, provider)
         previous = {}
-        reusable = False
+        reusable = rechunk = False
         if db_is_usable(db_path):
             old = open_readonly(db_path)
             try:
                 config, previous = read_manifest(old)
                 reusable = config.get("fingerprint") == expected
+                # New chunking rules re-split every file; vectors of unchanged text are kept.
+                rechunk = reusable and config.get("chunking") != CHUNKING
                 if reusable:
                     old.backup(con)
             finally:
@@ -273,14 +283,16 @@ def _build_locked(workspace):
             previous = {}
         sidecar = sidecar_map.reconcile(sidecar_map.load(workspace.sidecar_path), snapshot)
 
-        changed = [key for key, digest in snapshot.items() if previous.get(key) != digest]
+        changed = [key for key, digest in snapshot.items() if rechunk or previous.get(key) != digest]
         removed = previous.keys() - snapshot.keys()
         embedded = reused = packed = 0
         by_id = {s.source_id: s for s in workspace.sources}
         packs = {}
+        shared = ({text: (dim, vec) for text, dim, vec in con.execute("SELECT text,dim,vec FROM chunks")}
+                  if rechunk else {})
         for source_id, relative in [*sorted(removed), *sorted(changed)]:
             # Reuse unchanged windows of an appended file instead of re-embedding it.
-            cache = {text: (dim, vec) for text, dim, vec in con.execute(
+            cache = shared or {text: (dim, vec) for text, dim, vec in con.execute(
                 "SELECT text,dim,vec FROM chunks WHERE source_id=? AND path=?",
                 (source_id, relative))}
             con.execute("DELETE FROM chunks WHERE source_id=? AND path=?", (source_id, relative))
@@ -295,7 +307,7 @@ def _build_locked(workspace):
             title, frontmatter, body = parse_document(data.decode("utf-8", "replace"), path)
             record = read_record_meta(frontmatter, source_id, relative,
                                       sidecar_map.lookup(sidecar, source_id, relative))
-            for heading, text in chunk_body(title, frontmatter.get("summary", ""), body,
+            for heading, text in chunk_body(title, okf.description(frontmatter), body,
                                             chunk_chars=workspace.retrieval.chunk_chars,
                                             overlap=workspace.retrieval.chunk_overlap):
                 if source_id not in packs:
@@ -320,7 +332,7 @@ def _build_locked(workspace):
                     (source_id, relative, title, heading, text, dim, blob))
             con.execute("INSERT INTO files VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                         (source_id, relative, snapshot[(source_id, relative)],
-                         json.dumps(frontmatter, ensure_ascii=False, default=str),
+                         json.dumps(frontmatter, ensure_ascii=False, default=okf.json_default),
                          *record.to_row()))
         stage = "validate"
         dims = con.execute("SELECT DISTINCT dim FROM chunks").fetchall()
@@ -328,6 +340,7 @@ def _build_locked(workspace):
             raise ValueError("mixed_embedding_dimensions")
         con.execute("INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild')")
         con.execute("INSERT OR REPLACE INTO meta VALUES('fingerprint',?)", (expected,))
+        con.execute("INSERT OR REPLACE INTO meta VALUES('chunking',?)", (CHUNKING,))
         con.execute("INSERT OR REPLACE INTO meta VALUES('built_at',?)", (str(time.time()),))
         con.execute("INSERT OR REPLACE INTO meta VALUES('provider',?)", (provider.name,))
         con.execute("INSERT OR REPLACE INTO meta VALUES('semantic',?)",

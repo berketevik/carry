@@ -1871,10 +1871,15 @@ struct NoteView: View {
                     }.buttonStyle(.borderless)
                     Text(displayTitle(note)).font(.title.bold()).textSelection(.enabled)
                     Text(str(note, "path")).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
+                    // OKF v0.2: `status` is the lifecycle (draft, stable, deprecated); an effort's intensity has its own key.
+                    let okfView = note["okf"] as? [String: Any] ?? [:]
+                    let isDraft = okfView["status"] as? String == "draft" || front["draft"] as? Bool == true
                     FlowLayout(spacing: 6) {
                         if let t = front["type"] as? String { Badge(text: metaValue(t), color: .accentColor) }
-                        if let s = front["status"] as? String { Badge(text: metaValue(s)) }
-                        if front["draft"] as? Bool == true { Badge(text: L("draft"), color: .orange) }
+                        if let s = okfView["intensity"] as? String { Badge(text: metaValue(s)) }
+                        if isDraft { Badge(text: L("draft"), color: .orange) }
+                        if okfView["status"] as? String == "deprecated" { Badge(text: T("deprecated", "eskimiş"), color: .gray) }
+                        if okfView["stale"] as? Bool == true { Badge(text: T("stale", "güncelliğini yitirmiş"), color: .gray) }
                         if front["lock"] as? Bool == true { Badge(text: L("locked"), color: .red) }
                         if let s = front["sensitivity"] as? String { Badge(text: T("Privacy label: ", "Gizlilik etiketi: ") + metaValue(s), color: .purple) }
                         switch str(note, "index_state") {
@@ -1884,7 +1889,7 @@ struct NoteView: View {
                         }
                         Text(L("modified ") + ago(num(note, "modified"))).font(.caption).foregroundStyle(.secondary)
                     }
-                    if let summary = front["summary"] as? String, !isDigestCount(summary) { Text(summary).italic().foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).textSelection(.enabled) }
+                    if let summary = (front["description"] as? String) ?? (front["summary"] as? String), !isDigestCount(summary) { Text(summary).italic().foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).textSelection(.enabled) }
                     let listed = model.files.first { str($0, "path") == str(note, "path") } ?? [:]
                     let inQueue = listed["review"] as? Bool == true
                     let readOnly = model.isReadOnly(model.noteSource)
@@ -1892,7 +1897,7 @@ struct NoteView: View {
                         EmptyView()
                     } else if inQueue && listed["digest"] as? Bool == true {
                         DigestItemsView(model: model, path: str(note, "path"), meeting: str(front, "provenance", "") == "meeting").id(str(note, "path"))
-                    } else if front["draft"] as? Bool == true && front["lock"] as? Bool != true {
+                    } else if isDraft && front["lock"] as? Bool != true {
                         VStack(alignment: .leading, spacing: 10) {
                             Label(inQueue ? T("Draft: read it, and approve it if it is right.", "Taslak: okuyun, doğruysa onaylayın.")
                                           : T("Written by an assistant, not checked by you. It is already searchable; approve it once you have checked it.", "Bir asistan yazdı, siz kontrol etmediniz. Zaten aranabilir; kontrol ettiğinizde onaylayın."),

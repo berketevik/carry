@@ -15,6 +15,7 @@ import random
 import re
 import unicodedata
 
+from . import okf
 from .errors import CarryError
 from .index import open_readonly, unpack
 from .markdown import parse_frontmatter
@@ -73,10 +74,12 @@ def _read(root, src, managed):
             continue
         front, body = parse_frontmatter(raw)
         front = front if isinstance(front, dict) else {}
+        if okf.is_reserved_listing(rel, front):
+            continue    # an OKF index.md / log.md links everything and is no topic of its own
         heading = next((l[2:].strip() for l in body.splitlines() if l.startswith('# ')), '')
         # The whole file: `up:` and `related:` links in frontmatter are edges too.
         links = [m.group(1) for m in WIKILINK_RE.finditer(raw)]
-        summary = _text(front.get('summary'))
+        summary = okf.description(front)
         if not summary:     # a vault without summaries still names its topics from the opening lines
             summary = ' '.join(l for l in body.splitlines() if l.strip() and not l.startswith('#'))[:300]
         notes.append(dict(path=rel, title=_text(front.get('title')) or heading or Path(rel).stem,

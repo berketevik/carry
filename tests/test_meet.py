@@ -554,7 +554,8 @@ class MeetTest(unittest.TestCase):
         meet.mark_raw(self.root, rel, 'Turkish')
         front, _ = parse_frontmatter(path.read_text(encoding='utf-8'))
         self.assertEqual((front['meet_status'], front['duration_minutes'], str(front['created'])), ('raw', 2, '2026-10-13'))
-        self.assertIn('Carry Meet', front['summary'])
+        self.assertIn('Carry Meet', front['description'])
+        self.assertTrue(front['generated']['by'].startswith('carry/'))
 
     def test_a_locked_note_is_never_rewritten(self):
         rel = self.saved()['path']

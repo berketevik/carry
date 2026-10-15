@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from carry import harvest, vaultview
+from carry import harvest, okf, vaultview
 from carry.config import EmbeddingConfig, SourceConfig, Workspace
 from carry.desktop import Bridge
 from carry.errors import CarryError
@@ -325,10 +325,13 @@ class LinksAndWorkspaceTest(unittest.TestCase):
         self.assertEqual(vaultview.create_note(self.ws, 'notes', 'Plan: Q4/launch')['path'], 'notes/Plan Q4 launch (2).md')
 
     def test_approve_drops_only_the_draft_flag_and_respects_locks(self):
+        # A legacy `draft: true` becomes OKF `status: stable` with the owner's check; the body stays.
         (self.vault / 'notes/D.md').write_text('---\ntype: thing\ndraft: true\nsummary: s\n---\nbody\ndraft: true stays in body\n', encoding='utf-8')
-        self.assertTrue(vaultview.approve_note(self.ws, 'notes', 'notes/D.md')['changed'])
+        with mock.patch.object(okf, 'now_iso', return_value='2026-10-16T10:00:00+03:00'):
+            self.assertTrue(vaultview.approve_note(self.ws, 'notes', 'notes/D.md')['changed'])
         text = (self.vault / 'notes/D.md').read_text(encoding='utf-8')
-        self.assertEqual(text, '---\ntype: thing\nsummary: s\n---\nbody\ndraft: true stays in body\n')
+        self.assertEqual(text, '---\ntype: thing\nstatus: stable\nsummary: s\n'
+                               'verified: {"by": "human:owner", "at": "2026-10-16T10:00:00+03:00"}\n---\nbody\ndraft: true stays in body\n')
         (self.vault / 'notes/L.md').write_text('---\nlock: true\ndraft: true\n---\nx\n', encoding='utf-8')
         with self.assertRaisesRegex(CarryError, 'note_locked'):
             vaultview.approve_note(self.ws, 'notes', 'notes/L.md')

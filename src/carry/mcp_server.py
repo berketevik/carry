@@ -40,7 +40,10 @@ GROUNDING = (
     "If GitHub sync failed or the index is stale, disclose that the current remote state "
     "is not verified. Use the commit-pinned GitHub URL when provided. "
     "A passage marked TEAM KNOWLEDGE BASE comes from a shared team source, not the "
-    "user's own notes: when the answer uses one, say so in the answer itself."
+    "user's own notes: when the answer uses one, say so in the answer itself. "
+    "Passage metadata follows the Open Knowledge Format: status draft means the owner has not "
+    "checked the text, trust says whether anyone verified it (unverified, machine-confirmed, "
+    "human-reviewed), and stale true means it is past its stale_after date: say so when it matters."
 )
 
 TOOLS = [
@@ -83,9 +86,9 @@ TOOLS = [
     {
         "name": "carry_catalog",
         "description": (
-            "List every searchable file with its one-line summary (or title), like a "
+            "List every searchable file with its one-line description (or title), like a "
             "folder index. Use it when carry_recall found nothing that answers: pick the "
-            "files whose summary fits, then call carry_recall with their terms. Returns "
+            "files whose description fits, then call carry_recall with their terms. Returns "
             "no note bodies."),
         "inputSchema": {"type": "object", "properties": {
             "source_ids": {"type": "array", "items": {"type": "string"},
@@ -144,7 +147,10 @@ STATE_KEYS = ("warnings", "pending_proposals", "unmatched_terms", "semantic", "a
               "relevance_gate", "reranker", "mode", "timeframe", "best_confidence", "candidates", "budget")
 # Front matter worth reading next to a passage. `sources` is left out: a long provenance
 # list the assistant can open in the note itself.
-PASSAGE_METADATA = ("type", "summary", "created", "date", "updated", "provenance", "confidence",
+# OKF v0.2 (description, lifecycle `status`, trust tier, staleness, generated, verified) first;
+# `summary`, `draft` and `valid_until` remain for notes written before it.
+PASSAGE_METADATA = ("type", "description", "summary", "status", "status_unknown", "trust", "stale", "stale_after",
+                    "generated", "verified", "intensity", "created", "date", "updated", "provenance", "confidence",
                     "sensitivity", "draft", "valid_until", "review_by")
 
 
@@ -183,6 +189,8 @@ def _format_recall(result):
         # A document's front matter once, with its first passage.
         key = (item["source_id"], item["path"])
         metadata = {k: v for k, v in (item.get("metadata") or {}).items() if k in PASSAGE_METADATA}
+        if metadata.get("description") and metadata.get("summary") == metadata["description"]:
+            metadata.pop("summary")     # a legacy summary is already the description
         if metadata and key not in described:
             body += "\n" + json.dumps(metadata, ensure_ascii=False, default=str)
         described.add(key)

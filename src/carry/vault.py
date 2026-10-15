@@ -24,8 +24,8 @@ from .errors import CarryError
 from .paths import is_contained, resolve_root
 from .persistence import atomic_text, writer_lock
 
-TEMPLATE_VERSION = '3'
-GUIDE_BASE = '3.7'
+TEMPLATE_VERSION = '4'     # 4: notes follow Open Knowledge Format v0.2
+GUIDE_BASE = '3.12'
 RECALL_TOOL = 'carry_recall'
 STAMP = '.carry/vault.json'
 SOURCE_ID = 'vault'
@@ -38,7 +38,7 @@ EXCLUDE = ('+', 'workbench', 'x', 'tools', '*_index.md',
            'Home.md', 'LLM-GUIDE.md', 'VAULT-RULES.md', 'SETUP-GUIDE.md', 'CLAUDE.md', 'AGENTS.md')
 # Seeds are the owner's to edit: written when absent, never compared or upgraded.
 # VAULT-RULES.md is the owner's local layer on top of the managed guide.
-SEEDS = ('Home.md', 'VAULT-RULES.md', '.gitignore', 'x/Templates/')
+SEEDS = ('Home.md', 'VAULT-RULES.md', '.gitignore', 'x/Templates/', 'index.md')
 STATE_HEADING = {'turkish': 'Son durum'}
 
 
