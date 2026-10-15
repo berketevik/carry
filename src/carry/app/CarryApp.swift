@@ -294,6 +294,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func sourceLabel(_ source: [String: Any]) -> String {
         (source["github"] as? [String: Any])?.isEmpty == false ? str(source, "source_id") + " (GitHub)" : URL(fileURLWithPath: str(source, "root")).lastPathComponent
     }
+    func sourceLabel(id sid: String) -> String { sources.first { str($0, "source_id") == sid }.map { sourceLabel($0) } ?? sid }
     /// The vault drafts are reviewed in: a GitHub source picked on the Notes page is left for the default one.
     func leaveReadOnlyVault() {
         guard isReadOnly(vaultSource) else { return }
@@ -2844,6 +2845,12 @@ struct SearchHitCard: View {
                     }
                 }
                 HStack(spacing: 6) {
+                    let sid = str(hit, "source_id")
+                    if !sid.isEmpty {
+                        Label(model.sourceLabel(id: sid), systemImage: model.isReadOnly(sid) ? "cloud" : "books.vertical").lineLimit(1)
+                            .help(T("The notes folder this passage comes from", "Bu bölümün geldiği not klasörü"))
+                        Text("›")
+                    }
                     Text(folderLabel(str(hit, "path").contains("/") ? String(str(hit, "path").split(separator: "/").dropLast().joined(separator: "/")) : "(root)"))
                     if let heading = hit["heading"] as? String, !heading.isEmpty, heading != "summary", heading != str(hit, "title") { Text("› " + heading).lineLimit(1) }
                 }.font(.caption).foregroundStyle(.secondary)
