@@ -127,11 +127,11 @@ func metaValue(_ value: String) -> String { Lang.code == "tr" ? (TR["meta." + va
 func languageName(_ vaultLanguage: String) -> String { vaultLanguage == "Turkish" ? "Türkçe" : vaultLanguage == "English" ? "English" : vaultLanguage }
 func modeTitle(_ tag: String) -> String? {
     switch tag {
-    case "semantic_jev": return T("By meaning + TypeSafe Jev check · Ollama + Jev", "Anlamına göre + TypeSafe Jev kontrolü · Ollama + Jev")
-    case "semantic_assistant": return T("By meaning + my own assistant checks · Ollama + Claude/GPT", "Anlamına göre + kendi asistanım kontrol eder · Ollama + Claude/GPT")
-    case "keyword_jev": return T("By words + TypeSafe Jev check · Jev", "Kelimelerine göre + TypeSafe Jev kontrolü · Jev")
-    case "keyword_assistant": return T("By words + my own assistant checks · Claude/GPT", "Kelimelerine göre + kendi asistanım kontrol eder · Claude/GPT")
-    case "accurate_multilingual": return T("By meaning + large model on this Mac · Ollama + local model", "Anlamına göre + bu Mac'te büyük model · Ollama + yerel model")
+    case "semantic_jev": return T("By meaning, TypeSafe Jev checks the results", "Anlamına göre, sonuçları TypeSafe Jev kontrol eder")
+    case "semantic_assistant": return T("By meaning, my own assistant checks the results", "Anlamına göre, sonuçları kendi asistanım kontrol eder")
+    case "keyword_jev": return T("By words, TypeSafe Jev checks the results", "Kelimelerine göre, sonuçları TypeSafe Jev kontrol eder")
+    case "keyword_assistant": return T("By words, my own assistant checks the results", "Kelimelerine göre, sonuçları kendi asistanım kontrol eder")
+    case "accurate_multilingual": return T("By meaning, a large model on this Mac checks the results", "Anlamına göre, sonuçları bu Mac'teki büyük model kontrol eder")
     default: return nil
     }
 }
@@ -1228,8 +1228,8 @@ struct ReviewView: View {
         HSplitView {
             VStack(alignment: .leading, spacing: 12) {
                 Text(pageName("Review")).font(.title.bold())
-                Text(T("What waits in your Inbox. Open a chat draft and accept, fix or skip each item; accepted items go to that day's log. Other captures you approve as a whole. Notes your assistants write elsewhere are searchable as they are and do not wait here; find them with the Drafts filter on the Notes page.",
-                       "Gelen kutunuzda bekleyenler. Bir sohbet taslağını açıp her maddeyi kabul edin, düzeltin ya da atlayın; kabul edilenler o günün log'una gider. Diğer kayıtları bütün olarak onaylarsınız. Asistanlarınızın başka klasörlere yazdığı notlar olduğu gibi aranabilir ve burada beklemez; Notlar sayfasındaki Taslaklar filtresiyle bulursunuz."))
+                Text(T("What waits in your Inbox. Open a chat draft and accept, fix or skip each item; accepted items go to that day's daily note. Other captures you approve as a whole. Notes your assistants write elsewhere are searchable as they are and do not wait here; find them with the Drafts filter on the Notes page.",
+                       "Gelen kutunuzda bekleyenler. Bir sohbet taslağını açıp her maddeyi kabul edin, düzeltin ya da atlayın; kabul edilenler o günün günlük notuna gider. Diğer kayıtları bütün olarak onaylarsınız. Asistanlarınızın başka klasörlere yazdığı notlar olduğu gibi aranabilir ve burada beklemez; Notlar sayfasındaki Taslaklar filtresiyle bulursunuz."))
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 if model.pendingReview > 0 {
                     Button { model.page = "Proposals" } label: {
@@ -1271,7 +1271,7 @@ struct ReviewView: View {
                                 }
                                 Button { model.openNote(path) } label: {
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text(str(f, "title", str(f, "name"))).fontWeight(.medium).lineLimit(2)
+                                        Text(displayTitle(f)).fontWeight(.medium).lineLimit(2)
                                         HStack { Text(folderLabel(str(f, "folder", "(root)"))); Spacer(); Text(ago(num(f, "modified"))) }.font(.caption).foregroundStyle(.secondary)
                                     }.contentShape(Rectangle())
                                 }.buttonStyle(.plain)
@@ -1310,6 +1310,7 @@ struct ReviewView: View {
 struct DigestItemsView: View {
     @ObservedObject var model: Model
     let path: String
+    var meeting = false
     @State private var items: [[String: Any]] = []
     @State private var editing = ""
     @State private var fixed = ""
@@ -1330,8 +1331,8 @@ struct DigestItemsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label(open.isEmpty ? T("Every item is decided.", "Tüm maddeler karara bağlandı.")
-                               : T("\(open.count) item(s) from this chat wait for you. Accept what is right: it is saved to that day's log.",
-                                   "Bu sohbetten \(open.count) madde sizi bekliyor. Doğru olanı kabul edin: o günün log'una kaydedilir."),
+                               : (meeting ? T("\(open.count) item(s) from this meeting wait for you. Accept what is right: it is saved to that day's daily note.", "Bu toplantıdan \(open.count) madde sizi bekliyor. Doğru olanı kabul edin: o günün günlük notuna kaydedilir.")
+                                       : T("\(open.count) item(s) from this chat wait for you. Accept what is right: it is saved to that day's daily note.", "Bu sohbetten \(open.count) madde sizi bekliyor. Doğru olanı kabul edin: o günün günlük notuna kaydedilir.")),
                   systemImage: "checklist").foregroundStyle(.orange).fontWeight(.medium)
             ForEach(open.map { str($0, "id") }, id: \.self) { id in
                 card(open.first { str($0, "id") == id } ?? [:])
@@ -1404,8 +1405,8 @@ struct DigestItemsView: View {
                     .font(.caption).fixedSize(horizontal: false, vertical: true)
             }
             if conflict {
-                Text(T("Accepting saves the chat's version to the log and leaves the note as it is; you decide which one is right.",
-                       "Kabul ederseniz sohbetteki hâli log'a yazılır, not olduğu gibi kalır; hangisinin doğru olduğuna siz karar verin."))
+                Text(T("Accepting saves this version to the daily note and leaves the note as it is; you decide which one is right.",
+                       "Kabul ederseniz bu hâli günlük nota yazılır, not olduğu gibi kalır; hangisinin doğru olduğuna siz karar verin."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }.padding(8).background((conflict ? Color.red : Color.secondary).opacity(0.05)).clipShape(RoundedRectangle(cornerRadius: 6))
@@ -1414,7 +1415,7 @@ struct DigestItemsView: View {
         VStack(alignment: .leading, spacing: 6) {
             header(it)
             if str(it, "section") == "conflict" && editing != str(it, "id") {
-                Text(T("This chat says", "Bu sohbette geçen")).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Text(meeting ? T("This meeting says", "Bu toplantıda geçen") : T("This chat says", "Bu sohbette geçen")).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             }
             if editing == str(it, "id") {
                 TextField(T("Corrected text", "Düzeltilmiş metin"), text: $fixed, axis: .vertical).textFieldStyle(.roundedBorder)
@@ -1530,7 +1531,7 @@ struct Overview: View {
                                     Button { model.openNote(str(f, "path")) } label: {
                                         HStack {
                                             VStack(alignment: .leading, spacing: 1) {
-                                                Text(str(f, "title", str(f, "name"))).lineLimit(2)
+                                                Text(displayTitle(f)).lineLimit(2)
                                                 Text(folderLabel(str(f, "folder", "(root)"))).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                                             }
                                             Spacer()
@@ -1547,6 +1548,34 @@ struct Overview: View {
             }.padding(30).frame(maxWidth: .infinity, alignment: .leading)
         }
     }
+}
+
+/// Inbox drafts are named for uniqueness ("2026-10-12 — harvest codex 01a12c05", "2026-10-15 —
+/// toplantı 1647 — Toplantı"); people see who and when instead. Other notes keep their title.
+func displayTitle(_ f: [String: Any]) -> String {
+    let title = str(f, "title", str(f, "name"))
+    let stem = URL(fileURLWithPath: str(f, "path", "")).deletingPathExtension().lastPathComponent
+    guard str(f, "path", "").hasPrefix("+/"),
+          let re = try? NSRegularExpression(pattern: #"^(\d{4}-\d{2}-\d{2}) — (?:harvest (\w+) [0-9a-f]+|(?:toplantı|meeting) (\d{2})(\d{2})(?: — (.*?))?)( \(\d+\))?$"#),
+          let m = re.firstMatch(in: stem, range: NSRange(stem.startIndex..., in: stem)) else { return title }
+    func group(_ i: Int) -> String { Range(m.range(at: i), in: stem).map { String(stem[$0]) } ?? "" }
+    let parse = DateFormatter(); parse.dateFormat = "yyyy-MM-dd"; parse.locale = Locale(identifier: "en_US_POSIX")
+    guard let date = parse.date(from: group(1)) else { return title }
+    let out = DateFormatter(); out.locale = Lang.locale; out.setLocalizedDateFormatFromTemplate("d MMMM")
+    let day = out.string(from: date) + group(6)
+    let client = group(2)
+    if !client.isEmpty {
+        let name = client == "claude" ? "Claude" : client == "codex" ? "Codex" : client.capitalized
+        return T("\(name) chat · \(day)", "\(name) sohbeti · \(day)")
+    }
+    let topic = group(5)
+    if topic.isEmpty || ["Toplantı", "Meeting"].contains(topic) { return T("Meeting · \(day) \(group(3)):\(group(4))", "Toplantı · \(day) \(group(3)):\(group(4))") }
+    return T("Meeting: \(topic) · \(day)", "Toplantı: \(topic) · \(day)")
+}
+
+/// The digest's own count line ("x: 1 new, 0 conflict, 0 already recorded") repeats the item list.
+func isDigestCount(_ summary: String) -> Bool {
+    summary.range(of: #": \d+ new, \d+ conflict, \d+ already recorded$"#, options: .regularExpression) != nil
 }
 
 /// Folder names people did not choose themselves get a word of explanation.
@@ -1586,7 +1615,7 @@ struct RecentChats: View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: icon).foregroundStyle(color).font(.caption)
             VStack(alignment: .leading, spacing: 3) {
-                Text(str(entry, "text")).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                Text(inline(str(entry, "text"))).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 8) {
                     Text(str(entry, "day")).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                     if let digest = entry["digest"] as? String { Button(T("Where it came from", "Nereden geldi?")) { model.openNote(digest) }.buttonStyle(.link).font(.caption) }
@@ -1717,7 +1746,7 @@ struct VaultView: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 5) {
                     if f["draft"] as? Bool == true { Circle().fill(Color.orange).frame(width: 6, height: 6).help(L("Draft")) }
-                    Text(str(f, "title", str(f, "name"))).fontWeight(.medium).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                    Text(displayTitle(f)).fontWeight(.medium).lineLimit(2).fixedSize(horizontal: false, vertical: true)
                     if str(f, "index_state") == "excluded" { Image(systemName: "eye.slash").font(.caption2).foregroundStyle(.secondary).help(L("Not indexed: excluded from search")) }
                     if str(f, "index_state") == "pending" { Image(systemName: "clock.arrow.circlepath").font(.caption2).foregroundStyle(.orange).help(L("Waiting to be indexed")) }
                     if f["locked"] as? Bool == true { Image(systemName: "lock").font(.caption2).foregroundStyle(.secondary) }
@@ -1815,7 +1844,7 @@ struct NoteView: View {
                         Spacer()
                         Button { model.closeNote() } label: { Image(systemName: "xmark") }.help(L("Close note")).keyboardShortcut(.cancelAction)
                     }.buttonStyle(.borderless)
-                    Text(str(note, "title")).font(.title.bold()).textSelection(.enabled)
+                    Text(displayTitle(note)).font(.title.bold()).textSelection(.enabled)
                     Text(str(note, "path")).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
                     FlowLayout(spacing: 6) {
                         if let t = front["type"] as? String { Badge(text: metaValue(t), color: .accentColor) }
@@ -1830,11 +1859,11 @@ struct NoteView: View {
                         }
                         Text(L("modified ") + ago(num(note, "modified"))).font(.caption).foregroundStyle(.secondary)
                     }
-                    if let summary = front["summary"] as? String { Text(summary).italic().foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).textSelection(.enabled) }
+                    if let summary = front["summary"] as? String, !isDigestCount(summary) { Text(summary).italic().foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).textSelection(.enabled) }
                     let listed = model.files.first { str($0, "path") == str(note, "path") } ?? [:]
                     let inQueue = listed["review"] as? Bool == true
                     if inQueue && listed["digest"] as? Bool == true {
-                        DigestItemsView(model: model, path: str(note, "path")).id(str(note, "path"))
+                        DigestItemsView(model: model, path: str(note, "path"), meeting: str(front, "provenance", "") == "meeting").id(str(note, "path"))
                     } else if front["draft"] as? Bool == true && front["lock"] as? Bool != true {
                         VStack(alignment: .leading, spacing: 10) {
                             Label(inQueue ? T("Draft: read it, and approve it if it is right.", "Taslak: okuyun, doğruysa onaylayın.")
@@ -1878,7 +1907,12 @@ struct NoteView: View {
                         }
                     }
                     Divider()
-                    MarkdownText(bodyWithoutTitle(note))
+                    // The items above are the digest; its text repeats them, so it stays folded.
+                    if inQueue && listed["digest"] as? Bool == true {
+                        DisclosureGroup(T("Full text of the draft", "Taslağın tam metni")) { MarkdownText(bodyWithoutTitle(note)).padding(.top, 6) }
+                    } else {
+                        MarkdownText(bodyWithoutTitle(note))
+                    }
                     let backlinks = model.backlinks
                     let links = note["links"] as? [String] ?? []
                     if !backlinks.isEmpty || !links.isEmpty { Divider().padding(.top, 10) }
@@ -2022,11 +2056,10 @@ struct SearchSettings: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 PageIntro(icon: "magnifyingglass", title: T("Search", "Arama"),
-                          text: T("How Carry finds the right notes when your assistant asks. Now: \(presetLabel(str(model.settings, "preset", ""))).",
-                                  "Asistanınız sorduğunda Carry'nin doğru notları nasıl bulduğu. Şu an: \(presetLabel(str(model.settings, "preset", "")))."))
+                          text: T("How Carry finds the right notes when your assistant asks.", "Asistanınız sorduğunda Carry'nin doğru notları nasıl bulduğu."))
                 GroupBox(T("How should Carry search?", "Carry nasıl arasın?")) {
                     VStack(alignment: .leading, spacing: 16) {
-                        Text(T("1. How should it find notes?", "1. Notları nasıl bulsun?")).font(.headline)
+                        Text(legacyChecker ? T("1. How should it find notes?", "1. Notları nasıl bulsun?") : T("How should it find notes?", "Notları nasıl bulsun?")).font(.headline)
                         option(isOn: finder == "semantic", title: T("By meaning", "Anlamına göre"), uses: [T("built-in model", "yerleşik model")],
                                short: T("Also finds notes written with other words (“meeting” finds “call”).", "Başka kelimelerle yazılmış notları da bulur (“toplantı” diye sorunca “görüşme”yi de)."),
                                long: T("A small language model (embeddinggemma) runs inside Carry, on the Mac's GPU: a one-time 330 MB download, about 1 GB of memory while searching, released when idle. If the Ollama app is installed, Carry uses it instead. Your notes never leave the Mac for this step.",
@@ -2179,7 +2212,7 @@ struct IndexSettings: View {
     }
     func count(_ value: [String: Any], _ key: String) -> String { String(Int(num(value, key))) }
     @ViewBuilder var status: some View {
-        GroupBox(T("Status", "Durum")) {
+        GroupBox {
             VStack(alignment: .leading, spacing: 8) {
                 LabeledContent(T("State", "Durum"), value: stateText(str(index, "state", "")))
                 LabeledContent(T("Notes indexed", "İndekslenen not"), value: count(index, "indexed_files") + " / " + count(index, "corpus_files"))
@@ -2219,12 +2252,12 @@ struct IndexSettings: View {
         }
         GroupBox(T("Checks", "Kontroller")) {
             VStack(alignment: .leading, spacing: 10) {
-                LabeledContent(L("Local MCP test"), value: L(model.localTest))
+                LabeledContent(T("Search service test", "Arama hizmeti testi"), value: L(model.localTest))
                 FlowLayout {
                     Button(T("Check Carry's search service", "Carry arama hizmetini kontrol et")) { model.run("connection_test") { model.localTest = str($0,"mcp_local_test"); model.refresh() } }
-                    Button(L("Probe provider")) { model.run("snapshot", ["probe": true]) { model.snapshot = $0 } }
+                    Button(T("Check the search-by-meaning model", "Anlamına göre arama modelini kontrol et")) { model.run("snapshot", ["probe": true]) { model.snapshot = $0 } }
                 }
-                Text(L("The local test checks Carry’s MCP server only. Client trust and capture are verified by the clients themselves.")).font(.caption).foregroundStyle(.secondary)
+                Text(T("This checks only Carry's own search service. Whether an assistant may use it is checked by that assistant.", "Bu yalnızca Carry'nin kendi arama hizmetini kontrol eder. Bir asistanın onu kullanıp kullanamadığını o asistan kendisi denetler.")).font(.caption).foregroundStyle(.secondary)
             }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
         }
     }
@@ -2274,7 +2307,7 @@ struct HarvestSettings: View {
                 Text(T("Chat drafts", "Sohbet taslakları")).font(.title3.bold())
                 GroupBox(L("Drafts")) {
                     VStack(alignment: .leading, spacing: 10) {
-                        Picker(L("Language of drafts"), selection: language) { Text("Türkçe").tag("Turkish"); Text("English").tag("English") }.pickerStyle(.segmented).frame(maxWidth: 320)
+                        HStack { Text(L("Language of drafts")); Picker(L("Language of drafts"), selection: language) { Text("Türkçe").tag("Turkish"); Text("English").tag("English") }.pickerStyle(.segmented).labelsHidden().fixedSize() }
                         Text(L("Used by every harvest: nightly, manual and at chat end.") + T(" Saved automatically.", " Otomatik kaydedilir.")).font(.caption).foregroundStyle(.secondary)
                     }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -2284,7 +2317,7 @@ struct HarvestSettings: View {
                             Text(L("The nightly harvest on this Mac belongs to another Carry workspace (%@). Saving here replaces it.", str(schedule, "workspace"))).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
                         }
                         Toggle(L("Harvest finished chats every evening"), isOn: $enabled)
-                        DatePicker(L("Time"), selection: $time, displayedComponents: .hourAndMinute).frame(maxWidth: 220).disabled(!enabled)
+                        DatePicker(L("Time"), selection: $time, displayedComponents: .hourAndMinute).fixedSize().disabled(!enabled)
                         if let vault = schedule["vault"] as? String, !foreign { Text(L("Vault: ") + vault).font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }
                         if schedule["installed"] as? Bool == true && schedule["loaded"] as? Bool == false && !foreign {
                             Text(L("launchd has not loaded this job. Save the schedule again on the Harvest tab.")).foregroundStyle(.orange).font(.callout)
@@ -2302,7 +2335,7 @@ struct HarvestSettings: View {
                             Label(T("On for this notes folder", "Bu not klasörü için açık"), systemImage: "checkmark.circle.fill").foregroundStyle(.green)
                             Text(L("Claude Code and Codex call Carry when a chat in the vault ends, and the next chat starts with a short state pack of open items and decisions. These hooks are set up by `carry setup` or on the Clients tab; Codex asks you to approve each hook once.")).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         } else {
-                            Label(T("Not set up for this notes folder", "Bu not klasörü için kurulu değil"), systemImage: "circle").foregroundStyle(.secondary)
+                            Label(T("Not set up for this notes folder", "Bu not klasörü için kurulu değil"), systemImage: "info.circle").foregroundStyle(.secondary)
                             Text(T("Notes folders created by Carry have this on from the start. For a folder you already had, turn on the evening run above: it collects the day's chats in one go.",
                                    "Carry'nin oluşturduğu not klasörlerinde bu baştan açıktır. Önceden sahip olduğunuz bir klasör için yukarıdan akşam çalışmasını açın: günün sohbetlerini tek seferde toplar.")).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         }
@@ -2323,7 +2356,7 @@ struct HarvestSettings: View {
                             Button(L("Open full log")) { NSWorkspace.shared.open(URL(fileURLWithPath: str(model.settings, "state_dir", model.workspace)).appendingPathComponent("harvest.log")) }
                             Button(T("Open Review", "İncele'yi aç")) { model.page = "Review" }
                         }
-                    }.padding(12)
+                    }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
                 }
                 PromptCapture(model: model)
             }.padding(30).frame(maxWidth: .infinity, alignment: .leading)
@@ -2339,7 +2372,7 @@ struct AdvancedSettings: View {
                 PageIntro(icon: "gearshape", title: T("General", "Genel"), text: T("Language, help and troubleshooting.", "Dil, yardım ve sorun giderme."))
                 GroupBox(L("Language")) {
                     VStack(alignment: .leading, spacing: 10) {
-                        Picker(L("App language"), selection: $model.language) { Text("Türkçe").tag("tr"); Text("English").tag("en") }.pickerStyle(.segmented).frame(maxWidth: 320)
+                        HStack { Text(L("App language")); Picker(L("App language"), selection: $model.language) { Text("Türkçe").tag("tr"); Text("English").tag("en") }.pickerStyle(.segmented).labelsHidden().fixedSize() }
                         Text(T("Changes Carry's own screens. The language of chat drafts is set on the Capture tab.", "Carry'nin ekranlarını değiştirir. Sohbet taslaklarının dili Yakalama sekmesinden ayarlanır.")).font(.caption).foregroundStyle(.secondary)
                     }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
                 }
