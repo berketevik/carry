@@ -160,14 +160,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func applicationDidFinishLaunching(_ notification: Notification) {
         if let icon = Bundle.main.image(forResource: "Carry") { NSApp.applicationIconImage = icon }
         MeetingNotice.setUp(self)
-        MainActor.assumeIsolated { MeetingWatcher.shared.start() }
+        MainActor.assumeIsolated { MeetingWatcher.shared.start(); MeetingRecorder.shared.recover() }
     }
-    /// A meeting being recorded is saved before Carry quits.
+    /// A meeting being recorded or saved is saved before Carry quits. A save that fails or takes
+    /// over 30 s leaves its journal, and the next launch offers it again.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         MainActor.assumeIsolated {
             let recorder = MeetingRecorder.shared
-            guard recorder.recording else { return .terminateNow }
-            recorder.stop { NSApp.reply(toApplicationShouldTerminate: true) }
+            guard recorder.recording || recorder.saving else { return .terminateNow }
+            var replied = false
+            let reply = { if !replied { replied = true; NSApp.reply(toApplicationShouldTerminate: true) } }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 30) { reply() }
+            if recorder.recording { recorder.stop { reply() } } else { recorder.whenSaved { reply() } }
             return .terminateLater
         }
     }
@@ -3312,7 +3316,7 @@ final class AudioTrack {
 /// On-device speech recognition for one audio source. One recognition task is unreliable past
 /// about a minute, so a new request starts at the first sentence end after 45 s (at the latest
 /// at 58 s, mid-sentence). Words are split into utterances at pauses.
-final class SpeechStream {
+final class SpeechStream: @unchecked Sendable {  // requests and results are behind `lock`
     let speaker: String
     private let recognizer: SFSpeechRecognizer
     private let lock = NSLock()
@@ -3350,7 +3354,7 @@ final class SpeechStream {
             self.rotate(from: old)
         }
         RunLoop.main.add(t, forMode: .common)
-        timer = t
+        locked { timer = t }
     }
     /// Called from the capture thread: convert and hand over, nothing heavier.
     func append(_ buffer: AVAudioPCMBuffer) {
@@ -3415,6 +3419,9 @@ final class SpeechStream {
                 }
                 if ending && !kept.partial.isEmpty { self.keep(kept.partial, at: kept.heard ?? now); kept.partial = "" }
                 if self.current === kept { self.partialText = timed || ending ? "" : kept.partial }
+                // A request the recognizer ended itself (an error after a silence, say) hears
+                // nothing more: a new one takes over at once instead of at the 58 s turn.
+                if ending && self.current === kept && !self.refused && Date().timeIntervalSince(kept.started) > 1 { return true }
                 return timed && self.current === kept && Date().timeIntervalSince(kept.started) > Self.turnSeconds
             }
             if turn { DispatchQueue.main.async { self.rotate(from: kept) } }
@@ -3444,9 +3451,10 @@ final class SpeechStream {
         if !words.isEmpty { out.append(Utterance(start: offset + start, speaker: speaker, text: words.joined(separator: " "))) }
         return out
     }
+    private func stopTimer() { locked { defer { timer = nil }; return timer }?.invalidate() }
     /// Ends the last request and waits up to eight seconds for every final result.
     func finish() async {
-        timer?.invalidate(); timer = nil
+        DispatchQueue.main.async { self.stopTimer() }  // a Timer is invalidated on the thread it runs on
         let r: SFSpeechAudioBufferRecognitionRequest? = locked { defer { request = nil; current = nil; partialText = "" }; return request }
         r?.endAudio()
         for _ in 0..<80 {
@@ -3739,6 +3747,9 @@ var meetingMenuBar: Bool { UserDefaults.standard.object(forKey: "meetingMenuBar"
     private var timer: Timer?
     private var summaries: [String: String] = [:]  // path: title, while the summary runs
     private var poll: Timer?
+    private var journaled = -1  // lines in the journal, written every 10 s while they change
+    private var savedWaiters: [() -> Void] = []
+    static let journalName = "transcript.json"
     var workspace: String { ProcessInfo.processInfo.environment["CARRY_DESKTOP_WORKSPACE"] ?? UserDefaults.standard.string(forKey: "workspace") ?? "" }
     static var locale: String { UserDefaults.standard.string(forKey: "meetingLocale") ?? (Lang.code == "tr" ? "tr-TR" : "en-US") }
 
@@ -3807,7 +3818,7 @@ var meetingMenuBar: Bool { UserDefaults.standard.object(forKey: "meetingMenuBar"
             }
         }
         self.mic = mic; system = hearsSystem ? tap : nil; streams = all
-        elapsed = 0; lines = []; partials = []; recording = true
+        elapsed = 0; lines = []; partials = []; journaled = -1; recording = true
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in MainActor.assumeIsolated { MeetingRecorder.shared.tick() } }
     }
     /// A folder for this meeting's audio in the workspace, one WAV a side; nil when there is no
@@ -3842,6 +3853,47 @@ var meetingMenuBar: Bool { UserDefaults.standard.object(forKey: "meetingMenuBar"
         elapsed = Date().timeIntervalSince(started)
         lines = streams.flatMap { $0.utterances }.sorted { $0.start < $1.start }
         partials = streams.compactMap { s in s.partial.isEmpty ? nil : Utterance(start: elapsed, speaker: s.speaker, text: s.partial) }
+        if Int(elapsed) % 10 == 0, lines.count != journaled, let audio {
+            journal(saveRequest(lines, duration: elapsed, started: started, title: title, micOnly: !hearsSystem, audio: audio), in: audio)
+            journaled = lines.count
+        }
+    }
+    private func saveRequest(_ all: [Utterance], duration: Double, started: Date, title: String, micOnly: Bool, audio: URL?) -> [String: Any] {
+        let iso = ISO8601DateFormatter(); iso.timeZone = .current
+        // The note is in the language the meeting was transcribed in.
+        var request: [String: Any] = ["action": "meeting_save", "title": title, "started": iso.string(from: started), "duration": duration,
+                                      "language": MeetingRecorder.locale.hasPrefix("tr") ? "Turkish" : "English", "mic_only": micOnly,
+                                      "segments": all.map { ["start": $0.start, "speaker": $0.speaker, "text": $0.text] }]
+        if let audio { request["audio"] = audio.path }
+        return request
+    }
+    /// The transcript so far, next to the meeting's audio: a crash or a failed save loses nothing,
+    /// and the next launch offers it again.
+    private func journal(_ request: [String: Any], in folder: URL) {
+        guard let data = try? JSONSerialization.data(withJSONObject: request) else { return }
+        try? data.write(to: folder.appendingPathComponent(Self.journalName), options: .atomic)
+    }
+    private func dropJournal(_ request: [String: Any]) {
+        guard let path = request["audio"] as? String else { return }
+        try? FileManager.default.removeItem(atPath: URL(fileURLWithPath: path).appendingPathComponent(Self.journalName).path)
+    }
+    /// At launch: a meeting whose save never finished (Carry quit or crashed) waits to be saved again.
+    func recover() {
+        guard !workspace.isEmpty, unsaved == nil else { return }
+        let root = URL(fileURLWithPath: workspace).appendingPathComponent("meet-audio")
+        let folders = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
+        func modified(_ url: URL) -> Date { (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast }
+        let journals = folders.map { $0.appendingPathComponent(Self.journalName) }.filter { FileManager.default.fileExists(atPath: $0.path) }
+        guard let newest = journals.max(by: { modified($0) < modified($1) }), let data = try? Data(contentsOf: newest),
+              let request = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              !((request["segments"] as? [Any]) ?? []).isEmpty else { return }
+        unsaved = request
+        problem = T("A meeting was not saved when Carry last closed. Its transcript is kept; save it again.",
+                    "Carry son kapandığında bir toplantı kaydedilmemişti. Transkripti duruyor; yeniden kaydedin.")
+    }
+    /// Runs `done` once no save is under way.
+    func whenSaved(_ done: @escaping () -> Void) {
+        if saving { savedWaiters.append(done) } else { done() }
     }
     private func halt() {
         timer?.invalidate(); timer = nil
@@ -3875,12 +3927,8 @@ var meetingMenuBar: Bool { UserDefaults.standard.object(forKey: "meetingMenuBar"
                     self.notice = T("Nothing was heard, so nothing was saved.", "Hiçbir şey duyulmadı, bu yüzden bir şey kaydedilmedi.")
                     done?(); return
                 }
-                let iso = ISO8601DateFormatter(); iso.timeZone = .current
-                // The note is in the language the meeting was transcribed in.
-                var request: [String: Any] = ["action": "meeting_save", "title": title, "started": iso.string(from: started), "duration": duration,
-                                              "language": MeetingRecorder.locale.hasPrefix("tr") ? "Turkish" : "English", "mic_only": micOnly,
-                                              "segments": all.map { ["start": $0.start, "speaker": $0.speaker, "text": $0.text] }]
-                if let audio { request["audio"] = audio.path }
+                let request = self.saveRequest(all, duration: duration, started: started, title: title, micOnly: micOnly, audio: audio)
+                if let audio { self.journal(request, in: audio) }
                 self.save(request, then: done)
             }
         }
@@ -3896,6 +3944,7 @@ var meetingMenuBar: Bool { UserDefaults.standard.object(forKey: "meetingMenuBar"
                 self.saving = false
                 switch result {
                 case .success(let value):
+                    self.dropJournal(request)
                     let path = str(value, "path", "")
                     self.title = ""; self.changed += 1
                     self.notice = value["whisper"] as? Bool == true
@@ -3910,6 +3959,8 @@ var meetingMenuBar: Bool { UserDefaults.standard.object(forKey: "meetingMenuBar"
                                      "Transkript kaydedilemedi: \(e.localizedDescription). Yeniden kaydedene kadar burada tutuluyor.")
                 }
                 done?()
+                let waiters = self.savedWaiters; self.savedWaiters = []
+                waiters.forEach { $0() }
             } }
         }
     }
@@ -3994,6 +4045,7 @@ struct MeetingsView: View {
     @AppStorage("meetingLocale") private var locale = Lang.code == "tr" ? "tr-TR" : "en-US"
     @AppStorage("whisperAsked") private var whisperAsked = false  // the download is offered once
     @State private var whisper: [String: Any] = [:]
+    private let poll = Timer.publish(every: 4, on: .main, in: .common).autoconnect()
     var running: Bool { meetings.contains { ["pending", "transcribing", "running"].contains(str($0, "status")) } || downloading }
     var downloading: Bool { str(whisper["download"] as? [String: Any] ?? [:], "state") == "running" }
     var body: some View {
@@ -4040,7 +4092,7 @@ struct MeetingsView: View {
         }
         .onAppear(perform: load)
         .onChange(of: recorder.changed) { load() }
-        .onReceive(Timer.publish(every: 4, on: .main, in: .common).autoconnect()) { _ in if running { load() } }
+        .onReceive(poll) { _ in if running { load() } }
     }
     @ViewBuilder var recorderBox: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -4246,7 +4298,7 @@ struct MeetingMenuLabel: View {
 
 struct ContentView: View {
     @StateObject private var model = Model()
-    @ObservedObject private var recorder = MeetingRecorder.shared
+    private let ticks = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
     @Environment(\.openWindow) private var openWindow
     let pages = [("Overview", "house"), ("Review", "checkmark.circle"), ("Meetings", "waveform"), ("Vault", "books.vertical"), ("Graph", "circle.hexagongrid"), ("Search", "magnifyingglass"), ("Settings", "gearshape")]
     var body: some View {
@@ -4309,12 +4361,12 @@ struct ContentView: View {
             }
         } } }.environment(\.locale, Lang.locale).frame(minWidth: 1020, minHeight: 680)
         .sheet(isPresented: $model.showGuide) { GuideSheet(model: model) }
-        .sheet(isPresented: $model.showNewNote) { NewNoteSheet(model: model) }.onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in model.tick() }.onAppear {
+        .sheet(isPresented: $model.showNewNote) { NewNoteSheet(model: model) }.onReceive(ticks) { _ in model.tick() }.onAppear {
             if ProcessInfo.processInfo.environment["CARRY_MEASURE_STARTUP"] == "1" { print("carry_ui_ready"); fflush(stdout) }
             MainWindow.open = openWindow
             model.refresh()
         }
-        .onReceive(recorder.$openMeetings.dropFirst()) { _ in model.page = "Meetings" }
+        .onReceive(MeetingRecorder.shared.$openMeetings.dropFirst()) { _ in model.page = "Meetings" }
     }
     func banner(_ text: String, color: Color) -> some View {
         HStack(alignment: .top) {
