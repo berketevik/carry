@@ -99,6 +99,22 @@ class GitHubSourceReadOnlyTest(unittest.TestCase):
         self.assertEqual([f['path'] for f in vaultview.browse(self.ws, 'team')['files']], ['+/Draft.md'])
         self.assertEqual(vaultview.note(self.ws, 'team', '+/Draft.md')['body'].strip(), 'Team draft.')
 
+    def test_markdown_links_are_links_and_backlinks(self):
+        """GitHub knowledge bases link with [text](path.md), URL-encoded and relative to the note."""
+        (self.team / '00_Index').mkdir()
+        (self.team / '99_Admin').mkdir()
+        (self.team / '99_Admin' / 'Kişisel Vault Ayrımı.md').write_text('# Ayrım\n', encoding='utf-8')
+        (self.team / 'README.md').write_text(
+            '[Ayrım](99_Admin/Kişisel%20Vault%20Ayrımı.md) [Home](00_Index/Home.md#top) '
+            '[site](https://example.com/x.md) ![chart](chart.png)\n', encoding='utf-8')
+        (self.team / '00_Index' / 'Home.md').write_text('[up](../README.md) [x](<../99_Admin/Kişisel Vault Ayrımı.md>)\n', encoding='utf-8')
+        self.assertEqual(vaultview.note(self.ws, 'team', 'README.md')['links'], ['00_Index/Home', '99_Admin/Kişisel Vault Ayrımı'])
+        self.assertEqual(vaultview.note(self.ws, 'team', '00_Index/Home.md')['links'], ['99_Admin/Kişisel Vault Ayrımı', 'README'])
+        self.assertEqual(vaultview.backlinks(self.ws, 'team', '99_Admin/Kişisel Vault Ayrımı.md')['backlinks'], ['00_Index/Home.md', 'README.md'])
+        self.assertEqual(vaultview.backlinks(self.ws, 'team', 'README.md')['backlinks'], ['00_Index/Home.md'])
+        # The app sends a link as written in the note, relative to it.
+        self.assertEqual(vaultview.resolve_link(self.ws, 'team', '../README.md', '00_Index/Home.md')['path'], 'README.md')
+
     def test_writes_are_refused_and_files_stay_unchanged(self):
         from carry import digest
         before = self.draft.read_text(encoding='utf-8')

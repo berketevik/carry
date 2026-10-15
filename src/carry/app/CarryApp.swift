@@ -13,6 +13,7 @@ final class Worker {
     private var process: Process?
     private var input: FileHandle?
     private var output: FileHandle?
+    private var pending = Data()   // bytes read past the last reply's newline
     func stop() { process?.terminate() }
     func call(_ request: [String: Any], completion: @escaping (Result<[String: Any], Error>) -> Void) {
         queue.async {
@@ -35,6 +36,7 @@ final class Worker {
                     p.currentDirectoryURL = Bundle.main.resourceURL
                     try p.run()
                     self.process = p; self.input = stdin.fileHandleForWriting; self.output = stdout.fileHandleForReading
+                    self.pending = Data()
                 }
                 let current = self.process!
                 let timer = DispatchSource.makeTimerSource(queue: .global())
@@ -45,18 +47,28 @@ final class Worker {
                 var data = try JSONSerialization.data(withJSONObject: request)
                 data.append(10)
                 try self.input!.write(contentsOf: data)
+                // Whatever the pipe holds, 64 KB at a time: a byte per read took a system call per
+                // byte, which made a large reply (the notes list) arrive noticeably late.
+                let fd = self.output!.fileDescriptor
+                var chunk = [UInt8](repeating: 0, count: 65_536)
                 var response = Data()
                 while true {
-                    guard let byte = try self.output!.read(upToCount: 1), !byte.isEmpty else { throw UIError(L("Core stopped. Refresh to reconnect; check the result before repeating a write.")) }
-                    if byte.first == 10 { break }
-                    response.append(byte)
-                    if response.count > 16_000_000 { throw UIError(L("Core response exceeded the app limit.")) }
+                    if let newline = self.pending.firstIndex(of: 10) {
+                        response = self.pending.subdata(in: self.pending.startIndex..<newline)
+                        self.pending = self.pending.subdata(in: (newline + 1)..<self.pending.endIndex)
+                        break
+                    }
+                    if self.pending.count > 16_000_000 { throw UIError(L("Core response exceeded the app limit.")) }
+                    let count = chunk.withUnsafeMutableBytes { Darwin.read(fd, $0.baseAddress, $0.count) }
+                    if count < 0 && errno == EINTR { continue }
+                    guard count > 0 else { throw UIError(L("Core stopped. Refresh to reconnect; check the result before repeating a write.")) }
+                    self.pending.append(contentsOf: chunk[0..<count])
                 }
                 guard let object = try JSONSerialization.jsonObject(with: response) as? [String: Any] else { throw UIError(L("Invalid core response.")) }
                 if object["ok"] as? Bool != true { throw UIError(object["error"] as? String ?? "Core request failed.") }
                 completion(.success(object["result"] as? [String: Any] ?? [:]))
             } catch {
-                self.process?.terminate(); self.process = nil
+                self.process?.terminate(); self.process = nil; self.pending = Data()
                 completion(.failure(error))
             }
         }
@@ -215,17 +227,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     // Navigation, settings and the vault browser.
     @Published var page = ProcessInfo.processInfo.environment["CARRY_START_PAGE"] ?? "Overview"
     @Published var language = Lang.code {
-        didSet { Lang.code = language; UserDefaults.standard.set(language, forKey: "language") }
+        didSet { Lang.code = language; UserDefaults.standard.set(language, forKey: "language"); parseFiles() }
     }
     @Published var settingsTab = "Search"
     @Published var connectionFormOpen = false
     @Published var settings: [String: Any] = [:]
     @Published var vault: [String: Any] = [:]
-    @Published var files: [[String: Any]] = []
+    @Published var files: [[String: Any]] = [] { didSet { parseFiles() } }
+    /// `files` parsed once per load: the Notes list filters, sorts and draws these, never the dictionaries.
+    private(set) var items: [NoteItem] = []
+    private(set) var itemAt: [String: Int] = [:]
+    private(set) var reviewFiles: [[String: Any]] = []
+    func item(_ path: String) -> NoteItem? { itemAt[path].map { items[$0] } }
+    private func parseFiles() {
+        items = files.map(NoteItem.init)
+        itemAt = Dictionary(items.indices.map { (items[$0].path, $0) }, uniquingKeysWith: { first, _ in first })
+        reviewFiles = reviewable(files)
+    }
     @Published var vaultSource = ""
     @Published var vaultFilter = "mine"
-    @Published var note: [String: Any] = [:]
+    /// The open note; its text is parsed once here, not on every redraw of the page.
+    @Published var note: [String: Any] = [:] { didSet { noteDoc = MarkdownDoc(bodyWithoutTitle(note)) } }
+    private(set) var noteDoc = MarkdownDoc("")
     @Published var backlinks: [String] = []
+    /// Maps already drawn this session, by source and folders, so coming back to the map is instant.
+    var maps: [String: (data: MapData, raw: NSDictionary, at: Date)] = [:]
+    @Published var graphSource = ""
     @Published var harvest: [String: Any] = [:]
     @Published var assistants: [String: Any] = [:]
     @Published var onboarding = false
@@ -246,7 +273,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             }
         } else if harvest["running"] as? Bool == true {
             run("harvest_status", clearError: false, quiet: true) { value in
-                self.harvest = value
+                if !same(value, self.harvest) { self.harvest = value }
                 if value["running"] as? Bool != true {
                     let code = value["exit_code"] as? Int
                     let drafts = (value["drafts"] as? [String] ?? []).count
@@ -258,7 +285,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             }
         } else {
             run("maintenance_status", clearError: false, quiet: true) { value in
-                self.job = value
+                // Every assignment redraws the whole window, so an unchanged status (nearly
+                // every tick) is not assigned: redrawing every two seconds made scrolling stutter.
+                let banner = Model.showsBanner(value)
+                if banner != self.bannerShown || !same(value, self.job) { self.job = value; self.bannerShown = banner }
                 let seen = str(value, "state") + str(value, "started_at", "")
                 if self.lastJob != seen && Model.reloads(after: value) { self.refresh() }
                 self.lastJob = seen
@@ -273,7 +303,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
     /// The banner of a running job. The automatic check usually ends within a second, so its
     /// banner waits three: shown at once it pushed the page down and back every minute.
-    var jobBanner: Bool {
+    var jobBanner: Bool { Model.showsBanner(job) }
+    private var bannerShown = false
+    static func showsBanner(_ job: [String: Any]) -> Bool {
         str(job, "state") == "running"
             && (str(job, "action", "") != "maintain" || Date().timeIntervalSince1970 - num(job, "started_at") >= 3)
     }
@@ -375,8 +407,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // A reply for a source the user has since left is dropped; before the default vault
         // is known (empty selection) any reply is the default's.
         let current: ([String: Any]) -> Bool = { self.vaultSource.isEmpty || self.vaultSource == str($0, "source_id", "") }
-        run("vault_overview", vaultFields, clearError: false, quiet: true) { value in if current(value) { self.vault = value } }
-        run("vault_browse", vaultFields, clearError: false, quiet: true) { value in if current(value) { self.files = value["files"] as? [[String: Any]] ?? [] } }
+        run("vault_overview", vaultFields, clearError: false, quiet: true) { value in if current(value) && !same(value, self.vault) { self.vault = value } }
+        run("vault_browse", vaultFields, clearError: false, quiet: true) { value in
+            let files = value["files"] as? [[String: Any]] ?? []
+            if current(value) && !NSArray(array: files).isEqual(to: self.files) { self.files = files }
+        }
     }
     /// Shows another source in Vault: the open note and its list belong to the old one.
     func switchVault(_ sid: String) {
@@ -433,7 +468,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             if (e as? UIError)?.message == "source_file_missing" { self.closeNote(); self.notice = L("The open note was moved or deleted outside Carry, so it was closed.") }
             else { self.error = e.localizedDescription }
         }, then: { value in
-            guard token == self.noteToken else { return }
+            guard token == self.noteToken, !same(value, self.note) else { return }
             self.note = value
         })
     }
@@ -509,12 +544,17 @@ func num(_ value: [String: Any], _ key: String, _ fallback: Double = 0) -> Doubl
     if let n = value[key] as? NSNumber { return n.doubleValue }
     return Double(str(value, key, "")) ?? fallback
 }
+/// Core replies are JSON, so Foundation's equality compares them in full.
+func same(_ a: [String: Any], _ b: [String: Any]) -> Bool { NSDictionary(dictionary: a).isEqual(to: b) }
 func pretty(_ value: Any) -> String {
     guard JSONSerialization.isValidJSONObject(value), let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys]), let text = String(data: data, encoding: .utf8) else { return "—" }
     return text
 }
+private var agoFormatters: [String: RelativeDateTimeFormatter] = [:]
 func ago(_ timestamp: Double) -> String {
-    let f = RelativeDateTimeFormatter(); f.unitsStyle = .abbreviated; f.locale = Lang.locale
+    // One formatter per language: making one for every row of a long list was slow.
+    let key = Lang.locale.identifier
+    let f = agoFormatters[key] ?? { let f = RelativeDateTimeFormatter(); f.unitsStyle = .abbreviated; f.locale = Lang.locale; agoFormatters[key] = f; return f }()
     return f.localizedString(for: Date(timeIntervalSince1970: timestamp), relativeTo: Date())
 }
 @MainActor func folder(_ title: String) -> String? {
@@ -533,9 +573,10 @@ var obsidianInstalled: Bool { NSWorkspace.shared.urlForApplication(toOpen: URL(s
 // MARK: - Markdown
 
 /// Inline Markdown with Obsidian [[links]] turned into in-app links (carry-note:target).
+let wikiLinkPattern = try? NSRegularExpression(pattern: #"!?\[\[([^\]|#]+)(#[^\]|]*)?(?:\|([^\]]*))?\]\]"#)
 func inline(_ text: String) -> AttributedString {
     var s = text
-    if let re = try? NSRegularExpression(pattern: #"!?\[\[([^\]|#]+)(#[^\]|]*)?(?:\|([^\]]*))?\]\]"#) {
+    if text.contains("[["), let re = wikiLinkPattern {
         let ns = s as NSString
         var out = "", last = 0
         for m in re.matches(in: s, range: NSRange(location: 0, length: ns.length)) {
@@ -599,27 +640,52 @@ func markdownBlocks(_ text: String) -> [MDBlock] {
     return blocks
 }
 
-struct MarkdownText: View {
+/// A note's text split into blocks once, with each block's styled text made the first time it
+/// scrolls into view and kept: redrawing the page no longer parses the note again.
+final class MarkdownDoc {
     let blocks: [MDBlock]
+    private var styled: [Int: AttributedString] = [:]
     init(_ text: String) { blocks = markdownBlocks(text) }
+    func text(_ i: Int) -> AttributedString {
+        if let done = styled[i] { return done }
+        let made = inline(blocks[i].text)
+        styled[i] = made
+        return made
+    }
+}
+
+/// Most notes repeat their title as the first heading; the header already shows it.
+func bodyWithoutTitle(_ note: [String: Any]) -> String {
+    let body = str(note, "body", "")
+    let lines = body.components(separatedBy: "\n")
+    guard let first = lines.firstIndex(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }),
+          lines[first].trimmingCharacters(in: .whitespaces) == "# " + str(note, "title") else { return body }
+    return lines[(first + 1)...].joined(separator: "\n")
+}
+
+struct MarkdownText: View {
+    let doc: MarkdownDoc
+    init(_ text: String) { doc = MarkdownDoc(text) }
+    init(doc: MarkdownDoc) { self.doc = doc }
     var body: some View {
         LazyVStack(alignment: .leading, spacing: 8) {
-            ForEach(blocks.indices, id: \.self) { i in block(blocks[i]) }
+            ForEach(doc.blocks.indices, id: \.self) { i in block(i) }
         }.textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
     }
-    @ViewBuilder func block(_ b: MDBlock) -> some View {
+    @ViewBuilder func block(_ i: Int) -> some View {
+        let b = doc.blocks[i]
         switch b.kind {
         case .heading(let level):
-            Text(inline(b.text)).font(level == 1 ? .title2.bold() : level == 2 ? .title3.bold() : .headline).padding(.top, level <= 2 ? 10 : 4)
+            Text(doc.text(i)).font(level == 1 ? .title2.bold() : level == 2 ? .title3.bold() : .headline).padding(.top, level <= 2 ? 10 : 4)
         case .paragraph:
-            Text(inline(b.text)).fixedSize(horizontal: false, vertical: true)
+            Text(doc.text(i)).fixedSize(horizontal: false, vertical: true)
         case .bullet(let indent, let marker):
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(marker).foregroundStyle(.secondary)
-                Text(inline(b.text)).fixedSize(horizontal: false, vertical: true)
+                Text(doc.text(i)).fixedSize(horizontal: false, vertical: true)
             }.padding(.leading, CGFloat(indent) * 16)
         case .quote:
-            Text(inline(b.text)).italic().foregroundStyle(.secondary).padding(.leading, 12)
+            Text(doc.text(i)).italic().foregroundStyle(.secondary).padding(.leading, 12)
                 .overlay(alignment: .leading) { Rectangle().fill(Color.secondary.opacity(0.4)).frame(width: 3) }
         case .code:
             ScrollView(.horizontal, showsIndicators: false) {
@@ -1230,7 +1296,7 @@ struct ReviewView: View {
     @State private var picked: Set<String> = []
     @State private var confirmAll = false
     func top(_ f: [String: Any]) -> String { str(f, "path").contains("/") ? String(str(f, "path").split(separator: "/")[0]) : "" }
-    var all: [[String: Any]] { reviewable(model.files) }
+    var all: [[String: Any]] { model.reviewFiles }
     var drafts: [[String: Any]] { folder.isEmpty ? all : all.filter { top($0) == folder } }
     /// What bulk approval may touch: chat digests are decided item by item, never approved wholesale.
     var bulk: [[String: Any]] { drafts.filter { $0["approvable"] as? Bool == true } }
@@ -1526,7 +1592,7 @@ struct Overview: View {
                 } else {
                     Text(pageName("Overview")).font(.largeTitle.bold())
                     StatusSummary(model: model)
-                    let toReview = reviewable(model.files).count
+                    let toReview = model.reviewFiles.count
                     HStack(spacing: 16) {
                         ActionCard(icon: "checkmark.circle", title: T("Review", "İncele"),
                                    detail: toReview > 0 ? T("\(toReview) draft(s) wait for you", "\(toReview) taslak sizi bekliyor") : T("Nothing waits for you", "Bekleyen bir şey yok"),
@@ -1567,12 +1633,13 @@ struct Overview: View {
 
 /// Inbox drafts are named for uniqueness ("2026-10-12 — harvest codex 01a12c05", "2026-10-15 —
 /// toplantı 1647 — Toplantı"); people see who and when instead. Other notes keep their title.
+let inboxNamePattern = try? NSRegularExpression(pattern: #"^(\d{4}-\d{2}-\d{2}) — (?:harvest (\w+) [0-9a-f]+|(?:toplantı|meeting) (\d{2})(\d{2})(?: — (.*?))?)( \(\d+\))?$"#)
 func displayTitle(_ f: [String: Any]) -> String {
     let title = str(f, "title", str(f, "name"))
-    let stem = URL(fileURLWithPath: str(f, "path", "")).deletingPathExtension().lastPathComponent
-    guard str(f, "path", "").hasPrefix("+/"),
-          let re = try? NSRegularExpression(pattern: #"^(\d{4}-\d{2}-\d{2}) — (?:harvest (\w+) [0-9a-f]+|(?:toplantı|meeting) (\d{2})(\d{2})(?: — (.*?))?)( \(\d+\))?$"#),
-          let m = re.firstMatch(in: stem, range: NSRange(stem.startIndex..., in: stem)) else { return title }
+    let path = str(f, "path", "")
+    guard path.hasPrefix("+/"), let re = inboxNamePattern else { return title }
+    let stem = URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+    guard let m = re.firstMatch(in: stem, range: NSRange(stem.startIndex..., in: stem)) else { return title }
     func group(_ i: Int) -> String { Range(m.range(at: i), in: stem).map { String(stem[$0]) } ?? "" }
     let parse = DateFormatter(); parse.dateFormat = "yyyy-MM-dd"; parse.locale = Locale(identifier: "en_US_POSIX")
     guard let date = parse.date(from: group(1)) else { return title }
@@ -1586,6 +1653,25 @@ func displayTitle(_ f: [String: Any]) -> String {
     let topic = group(5)
     if topic.isEmpty || ["Toplantı", "Meeting"].contains(topic) { return T("Meeting · \(day) \(group(3)):\(group(4))", "Toplantı · \(day) \(group(3)):\(group(4))") }
     return T("Meeting: \(topic) · \(day)", "Toplantı: \(topic) · \(day)")
+}
+
+/// One file of the Notes list with everything the list filters, sorts and shows read out of
+/// its dictionary once.
+struct NoteItem: Identifiable, Equatable {
+    let path: String, title: String, folder: String, top: String, modified: Double
+    let draft: Bool, system: Bool, indexed: Bool, indexState: String, locked: Bool, approvable: Bool, review: Bool, digest: Bool
+    /// Lowercased path, title, summary and type, for the name filter.
+    let haystack: String
+    var id: String { path }
+    init(_ f: [String: Any]) {
+        path = str(f, "path"); title = displayTitle(f); folder = str(f, "folder", "")
+        top = path.contains("/") ? String(path[..<path.firstIndex(of: "/")!]) : ""
+        modified = num(f, "modified")
+        draft = f["draft"] as? Bool == true; system = f["system"] as? Bool == true; indexed = f["indexed"] as? Bool != false
+        indexState = str(f, "index_state", ""); locked = f["locked"] as? Bool == true
+        approvable = f["approvable"] as? Bool == true; review = f["review"] as? Bool == true; digest = f["digest"] as? Bool == true
+        haystack = [path, title, str(f, "title", ""), str(f, "summary", ""), str(f, "type", "")].joined(separator: " ").lowercased()
+    }
 }
 
 /// The digest's own count line ("x: 1 new, 0 conflict, 0 already recorded") repeats the item list.
@@ -1688,31 +1774,32 @@ struct VaultView: View {
     @State private var draftFolder = ""
     @State private var confirmAll = false
     var folders: [String] { (model.vault["folders"] as? [[String: Any]] ?? []).map { str($0, "name") }.filter { $0 != "(root)" } }
-    var filtered: [[String: Any]] {
+    var filtered: [NoteItem] {
         let week = Date().timeIntervalSince1970 - 7 * 86400
         let q = query.lowercased().trimmingCharacters(in: .whitespaces)
-        var list = model.files.filter { f in
-            switch model.vaultFilter {
-            case "mine": return f["system"] as? Bool != true
-            case "system": return f["system"] as? Bool == true
-            case "root": return str(f, "folder", "").isEmpty && f["system"] as? Bool != true
-            case "recent": return num(f, "modified") >= week && f["system"] as? Bool != true
-            case "inbox": return str(f, "path").hasPrefix("+/")
-            case "drafts": return f["draft"] as? Bool == true && f["system"] as? Bool != true && (draftFolder.isEmpty || topFolder(f) == draftFolder)
-            case "excluded": return f["indexed"] as? Bool == false
-            case let x where x.hasPrefix("folder:"): return str(f, "path").hasPrefix(String(x.dropFirst(7)) + "/")
+        let filter = model.vaultFilter
+        let prefix = filter.hasPrefix("folder:") ? String(filter.dropFirst(7)) + "/" : ""
+        var list = model.items.filter { f in
+            switch filter {
+            case "mine": return !f.system
+            case "system": return f.system
+            case "root": return f.folder.isEmpty && !f.system
+            case "recent": return f.modified >= week && !f.system
+            case "inbox": return f.path.hasPrefix("+/")
+            case "drafts": return f.draft && !f.system && (draftFolder.isEmpty || f.top == draftFolder)
+            case "excluded": return !f.indexed
+            case _ where !prefix.isEmpty: return f.path.hasPrefix(prefix)
             default: return true
             }
         }
-        if !q.isEmpty { list = list.filter { (str($0, "path") + " " + displayTitle($0) + " " + str($0, "title", "") + " " + str($0, "summary", "") + " " + str($0, "type", "")).lowercased().contains(q) } }
-        return sort == "name" ? list.sorted { displayTitle($0).localizedStandardCompare(displayTitle($1)) == .orderedAscending } : list.sorted { num($0, "modified") > num($1, "modified") }
+        if !q.isEmpty { list = list.filter { $0.haystack.contains(q) } }
+        return sort == "name" ? list.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending } : list.sorted { $0.modified > $1.modified }
     }
-    func topFolder(_ f: [String: Any]) -> String { str(f, "path").contains("/") ? String(str(f, "path").split(separator: "/")[0]) : "" }
-    var approvable: [String] { filtered.filter { $0["approvable"] as? Bool == true }.map { str($0, "path") } }
+    var approvable: [String] { filtered.filter(\.approvable).map(\.path) }
     /// Drafts folder by folder, so a whole group can be approved at once.
     var draftFolders: [(String, Int)] {
         var counts: [String: Int] = [:]
-        for f in model.files where f["draft"] as? Bool == true && f["system"] as? Bool != true { counts[topFolder(f), default: 0] += 1 }
+        for f in model.items where f.draft && !f.system { counts[f.top, default: 0] += 1 }
         return counts.sorted { $0.value > $1.value }.map { ($0.key, $0.value) }
     }
     @ViewBuilder var bulkBar: some View {
@@ -1755,29 +1842,11 @@ struct VaultView: View {
         Button("\(title) \(count)") { draftFolder = folder; selected = [] }
             .buttonStyle(.bordered).controlSize(.small).tint(draftFolder == folder ? .accentColor : .secondary)
     }
-    func row(_ f: [String: Any], selected isOpen: Bool) -> some View {
-        let path = str(f, "path")
-        let canPick = selecting && approvable.contains(path)
+    func row(_ f: NoteItem, selected isOpen: Bool) -> some View {
+        let path = f.path
+        let canPick = selecting && f.approvable
         return Button { if selecting { if canPick { if selected.contains(path) { selected.remove(path) } else { selected.insert(path) } } } else { model.openNote(path) } } label: {
-            HStack(alignment: .top, spacing: 8) {
-            if selecting {
-                Image(systemName: selected.contains(path) ? "checkmark.square.fill" : "square").foregroundStyle(canPick ? Color.accentColor : .secondary.opacity(0.4))
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 5) {
-                    if f["draft"] as? Bool == true { Circle().fill(Color.orange).frame(width: 6, height: 6).help(L("Draft")) }
-                    Text(displayTitle(f)).fontWeight(.medium).lineLimit(2).fixedSize(horizontal: false, vertical: true)
-                    if str(f, "index_state") == "excluded" { Image(systemName: "eye.slash").font(.caption2).foregroundStyle(.secondary).help(L("Not indexed: excluded from search")) }
-                    if str(f, "index_state") == "pending" { Image(systemName: "clock.arrow.circlepath").font(.caption2).foregroundStyle(.orange).help(L("Waiting to be indexed")) }
-                    if f["locked"] as? Bool == true { Image(systemName: "lock").font(.caption2).foregroundStyle(.secondary) }
-                }
-                HStack {
-                    Text(folderLabel(str(f, "folder", "(root)"))).lineLimit(1)
-                    Spacer()
-                    Text(ago(num(f, "modified")))
-                }.font(.caption).foregroundStyle(.secondary)
-            }
-            }.padding(.vertical, 3).contentShape(Rectangle())
+            NoteRow(item: f, selecting: selecting, picked: selected.contains(path), canPick: canPick).equatable()
         }.buttonStyle(.plain).listRowBackground(isOpen && !selecting ? Color.accentColor.opacity(0.18) : Color.clear)
     }
     var body: some View {
@@ -1832,17 +1901,41 @@ struct VaultView: View {
                     Spacer()
                 }
                 ScrollViewReader { proxy in
+                    let open = str(model.note, "path", "")
                     List {
-                        ForEach(shown.map { str($0, "path") }, id: \.self) { path in
-                            let f = shown.first { str($0, "path") == path } ?? [:]
-                            row(f, selected: str(model.note, "path", "") == path).id(path)
-                        }
+                        ForEach(shown) { f in row(f, selected: open == f.path).id(f.path) }
                     }.listStyle(.inset)
                     .onChange(of: str(model.note, "path", "")) { if !str(model.note, "path", "").isEmpty { withAnimation { proxy.scrollTo(str(model.note, "path", "")) } } }
                 }
             }.padding(16).frame(minWidth: 270, idealWidth: 320, maxWidth: 440)
             NoteView(model: model).frame(minWidth: 380, idealWidth: 480, maxWidth: .infinity)
         }
+    }
+}
+
+/// One row of the Notes list. Equatable, so a redraw of the page skips rows whose note did not change.
+struct NoteRow: View, Equatable {
+    let item: NoteItem, selecting: Bool, picked: Bool, canPick: Bool
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            if selecting {
+                Image(systemName: picked ? "checkmark.square.fill" : "square").foregroundStyle(canPick ? Color.accentColor : .secondary.opacity(0.4))
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 5) {
+                    if item.draft { Circle().fill(Color.orange).frame(width: 6, height: 6).help(L("Draft")) }
+                    Text(item.title).fontWeight(.medium).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                    if item.indexState == "excluded" { Image(systemName: "eye.slash").font(.caption2).foregroundStyle(.secondary).help(L("Not indexed: excluded from search")) }
+                    if item.indexState == "pending" { Image(systemName: "clock.arrow.circlepath").font(.caption2).foregroundStyle(.orange).help(L("Waiting to be indexed")) }
+                    if item.locked { Image(systemName: "lock").font(.caption2).foregroundStyle(.secondary) }
+                }
+                HStack {
+                    Text(folderLabel(item.folder.isEmpty ? "(root)" : item.folder)).lineLimit(1)
+                    Spacer()
+                    Text(ago(item.modified))
+                }.font(.caption).foregroundStyle(.secondary)
+            }
+        }.padding(.vertical, 3).contentShape(Rectangle())
     }
 }
 
@@ -1890,12 +1983,12 @@ struct NoteView: View {
                         Text(L("modified ") + ago(num(note, "modified"))).font(.caption).foregroundStyle(.secondary)
                     }
                     if let summary = (front["description"] as? String) ?? (front["summary"] as? String), !isDigestCount(summary) { Text(summary).italic().foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).textSelection(.enabled) }
-                    let listed = model.files.first { str($0, "path") == str(note, "path") } ?? [:]
-                    let inQueue = listed["review"] as? Bool == true
+                    let listed = model.item(str(note, "path"))
+                    let inQueue = listed?.review == true
                     let readOnly = model.isReadOnly(model.noteSource)
                     if readOnly {
                         EmptyView()
-                    } else if inQueue && listed["digest"] as? Bool == true {
+                    } else if inQueue && listed?.digest == true {
                         DigestItemsView(model: model, path: str(note, "path"), meeting: str(front, "provenance", "") == "meeting").id(str(note, "path"))
                     } else if isDraft && front["lock"] as? Bool != true {
                         VStack(alignment: .leading, spacing: 10) {
@@ -1943,10 +2036,10 @@ struct NoteView: View {
                     }
                     Divider()
                     // The items above are the digest; its text repeats them, so it stays folded.
-                    if inQueue && listed["digest"] as? Bool == true {
-                        DisclosureGroup(T("Full text of the draft", "Taslağın tam metni")) { MarkdownText(bodyWithoutTitle(note)).padding(.top, 6) }
+                    if inQueue && listed?.digest == true {
+                        DisclosureGroup(T("Full text of the draft", "Taslağın tam metni")) { MarkdownText(doc: model.noteDoc).padding(.top, 6) }
                     } else {
-                        MarkdownText(bodyWithoutTitle(note))
+                        MarkdownText(doc: model.noteDoc)
                     }
                     let backlinks = model.backlinks
                     let links = note["links"] as? [String] ?? []
@@ -1977,17 +2070,15 @@ struct NoteView: View {
                     model.followLink(url.absoluteString.dropFirst("carry-note:".count).removingPercentEncoding ?? "")
                     return .handled
                 }
+                // A plain Markdown link to another note, relative to this one (GitHub knowledge bases).
+                if url.scheme == nil, let target = url.relativeString.removingPercentEncoding?.components(separatedBy: "#").first,
+                   target.lowercased().hasSuffix(".md") {
+                    model.followLink(target)
+                    return .handled
+                }
                 return .systemAction
             })
         }
-    }
-    /// Most notes repeat their title as the first heading; the header already shows it.
-    func bodyWithoutTitle(_ note: [String: Any]) -> String {
-        let body = str(note, "body", "")
-        let lines = body.components(separatedBy: "\n")
-        guard let first = lines.firstIndex(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }),
-              lines[first].trimmingCharacters(in: .whitespaces) == "# " + str(note, "title") else { return body }
-        return lines[(first + 1)...].joined(separator: "\n")
     }
     func value(_ v: Any?) -> String {
         if let list = v as? [Any] { return list.map { String(describing: $0) }.joined(separator: ", ") }
@@ -3037,10 +3128,12 @@ func topicColor(_ slot: Int?) -> Color {
     })
 }
 
-/// The map's data parsed once per load, so drawing never touches dictionaries.
-struct MapData {
-    struct Node { let path: String; let title: String; let point: CGPoint; let cluster: Int; let radius: CGFloat; let degree: Double }
-    struct Topic { let id: Int; let label: String; let size: Int; let centre: CGPoint; let r: CGFloat; let slot: Int?; let unlinked: Bool }
+/// The map's data parsed once per load, so drawing never touches dictionaries. The links are
+/// turned into paths here, in the map's own coordinates: a frame only scales and moves them.
+struct MapData: Equatable {
+    struct Node { let path: String; let title: String; let folder: String; let type: String; let point: CGPoint; let cluster: Int; let radius: CGFloat; let degree: Double }
+    struct Topic: Equatable { let id: Int; let label: String; let size: Int; let centre: CGPoint; let r: CGFloat; let slot: Int?; let unlinked: Bool }
+    var id = UUID()
     var nodes: [Node] = []
     var topics: [Topic] = []
     var edges: [(Int, Int)] = []
@@ -3051,6 +3144,17 @@ struct MapData {
     var available: [String] = []
     var truncated = false
     var semantic = true
+    var colors: [Int: Color] = [:]
+    /// Links inside each topic, links between topics, and the latter again per topic for a focused one.
+    var inner: [(cluster: Int, path: Path)] = []
+    var across = Path()
+    var acrossOf: [Int: Path] = [:]
+    /// Most-linked first: the order in which notes get their titles drawn.
+    var byDegree: [Int] = []
+    /// The most-linked notes, drawn with a soft halo.
+    var hubs: Set<Int> = []
+    var indexOf: [String: Int] = [:]
+    var search: [String] = []
     init() {}
     init(_ v: [String: Any]) {
         sourceId = str(v, "source_id", ""); folders = v["folders"] as? [String] ?? []; available = v["available_folders"] as? [String] ?? []
@@ -3060,14 +3164,36 @@ struct MapData {
             Topic(id: Int(num(c, "id")), label: str(c, "label", ""), size: Int(num(c, "size")), centre: CGPoint(x: num(c, "x"), y: num(c, "y")),
                   r: num(c, "r"), slot: (c["color"] as? NSNumber)?.intValue, unlinked: c["unlinked"] as? Bool == true)
         }
+        colors = Dictionary(uniqueKeysWithValues: topics.map { ($0.id, topicColor($0.slot)) })
+        var full: [String] = []
         nodes = (v["nodes"] as? [[String: Any]] ?? []).map { n in
-            Node(path: str(n, "path", ""), title: { let t = str(n, "title", ""); return t.count > 40 ? String(t.prefix(38)) + "…" : t }(),
-                 point: CGPoint(x: num(n, "x"), y: num(n, "y")), cluster: Int(num(n, "cluster")),
-                 radius: 3 + min(7, sqrt(num(n, "degree")) * 1.1), degree: num(n, "degree"))
+            let path = str(n, "path", ""), title = str(n, "title", "")
+            full.append(title.lowercased())
+            return Node(path: path, title: title.count > 40 ? String(title.prefix(38)) + "…" : title,
+                        folder: path.contains("/") ? String(path[..<path.lastIndex(of: "/")!]) : "", type: str(n, "type", ""),
+                        point: CGPoint(x: num(n, "x"), y: num(n, "y")), cluster: Int(num(n, "cluster")),
+                        radius: 3 + min(7, sqrt(num(n, "degree")) * 1.1), degree: num(n, "degree"))
         }
+        search = full
+        indexOf = Dictionary(nodes.indices.map { (nodes[$0].path, $0) }, uniquingKeysWith: { first, _ in first })
         neighbours = Array(repeating: [], count: nodes.count)
+        var innerPaths: [Int: Path] = [:]
         for e in v["edges"] as? [[Int]] ?? [] where e.count == 2 && e[0] < nodes.count && e[1] < nodes.count {
-            edges.append((e[0], e[1])); neighbours[e[0]].append(e[1]); neighbours[e[1]].append(e[0])
+            let (a, b) = (e[0], e[1])
+            edges.append((a, b)); neighbours[a].append(b); neighbours[b].append(a)
+            let ca = nodes[a].cluster, cb = nodes[b].cluster
+            if ca == cb {
+                MapData.curve(&innerPaths[ca, default: Path()], nodes[a].point, nodes[b].point)
+            } else {
+                MapData.curve(&across, nodes[a].point, nodes[b].point)
+                MapData.curve(&acrossOf[ca, default: Path()], nodes[a].point, nodes[b].point)
+                MapData.curve(&acrossOf[cb, default: Path()], nodes[a].point, nodes[b].point)
+            }
+        }
+        inner = innerPaths.sorted { $0.key < $1.key }.map { (cluster: $0.key, path: $0.value) }
+        byDegree = nodes.indices.sorted { nodes[$0].degree > nodes[$1].degree }
+        if let floor = byDegree.dropFirst(max(0, nodes.count / 12)).first.map({ max(3, nodes[$0].degree) }) {
+            hubs = Set(byDegree.prefix { nodes[$0].degree >= floor && nodes[$0].degree >= 3 })
         }
         if !topics.isEmpty {
             var r = CGRect.null
@@ -3075,101 +3201,336 @@ struct MapData {
             bounds = r
         }
     }
+    static func == (a: MapData, b: MapData) -> Bool { a.id == b.id }
+    /// A gentle bend, always to the same side: the links read as a web rather than a mesh of strokes.
+    static func curve(_ path: inout Path, _ a: CGPoint, _ b: CGPoint) {
+        let dx = b.x - a.x, dy = b.y - a.y
+        path.move(to: a)
+        path.addQuadCurve(to: b, control: CGPoint(x: (a.x + b.x) / 2 - dy * 0.12, y: (a.y + b.y) / 2 + dx * 0.12))
+    }
     func topic(_ id: Int) -> Topic? { topics.first { $0.id == id } }
-    func slot(_ cluster: Int) -> Int? { topics.first { $0.id == cluster }?.slot }
+    func color(_ cluster: Int) -> Color { colors[cluster] ?? .secondary }
+    /// Scale of the map at zoom 1: the whole map fits the view with a margin.
+    func fit(_ size: CGSize) -> CGFloat {
+        min(size.width / max(bounds.width, 0.001), size.height / max(bounds.height, 0.001)) * 0.92
+    }
+    func transform(_ camera: MapCamera, _ size: CGSize) -> CGAffineTransform {
+        let s = fit(size) * camera.zoom
+        return CGAffineTransform(a: s, b: 0, c: 0, d: s, tx: size.width / 2 - bounds.midX * s + camera.pan.width, ty: size.height / 2 - bounds.midY * s + camera.pan.height)
+    }
+    /// The camera that puts a point of the map in the middle of the view at `zoom`.
+    func centring(_ point: CGPoint, zoom: CGFloat, _ size: CGSize) -> MapCamera {
+        let s = fit(size) * zoom
+        return MapCamera(zoom: zoom, pan: CGSize(width: -(point.x - bounds.midX) * s, height: -(point.y - bounds.midY) * s))
+    }
 }
 
-/// Every note as a dot, notes about the same thing pulled into topic clouds. Zoomed out the clouds and
-/// their names show what the vault is about; zooming in brings out the note titles.
-/// Topics come from the meaning of the notes (the search index's vectors); the lines drawn
-/// are the links. Deliberately still: no animation, and hovering
-/// only lights the note and its links.
-struct GraphView: View {
-    @ObservedObject var model: Model
-    @State private var map = MapData()
-    @State private var loaded = false
-    @State private var folders: [String]? = nil
-    @State private var loading = false
-    @State private var zoom: CGFloat = 1
-    @State private var liveZoom: CGFloat = 1
-    @State private var pan: CGSize = .zero
-    @State private var livePan: CGSize = .zero
-    @State private var hover: Int? = nil
-    @State private var focus: Int? = nil
-    @State private var source = ""
-    @State private var canvasSize = CGSize(width: 800, height: 600)
-    var scale: CGFloat { zoom * liveZoom }
-    var offset: CGSize { CGSize(width: pan.width + livePan.width, height: pan.height + livePan.height) }
-    func fit(_ size: CGSize) -> CGFloat {
-        let b = map.bounds
-        return min(size.width / max(b.width, 0.001), size.height / max(b.height, 0.001)) * 0.92
+/// Where the map is looked at from: a zoom and a shift, in points.
+struct MapCamera: Equatable {
+    static let range: ClosedRange<CGFloat> = 0.4...12
+    var zoom: CGFloat = 1
+    var pan: CGSize = .zero
+    /// Zoomed by `factor` with the point `anchor` (in the view) staying where it is.
+    func zoomed(by factor: CGFloat, at anchor: CGPoint, in size: CGSize) -> MapCamera {
+        let zoom = min(MapCamera.range.upperBound, max(MapCamera.range.lowerBound, self.zoom * factor))
+        let k = zoom / self.zoom, ax = anchor.x - size.width / 2, ay = anchor.y - size.height / 2
+        return MapCamera(zoom: zoom, pan: CGSize(width: ax - (ax - pan.width) * k, height: ay - (ay - pan.height) * k))
     }
-    func project(_ size: CGSize) -> (CGPoint) -> CGPoint {
-        let b = map.bounds, s = fit(size) * scale, o = offset
-        return { p in CGPoint(x: size.width / 2 + (p.x - b.midX) * s + o.width, y: size.height / 2 + (p.y - b.midY) * s + o.height) }
+}
+
+/// The drawing itself. Animatable, so a focus or zoom button glides there instead of jumping;
+/// a frame is batched paths (one per topic) plus one dot per note and a limited number of titles.
+struct MapLayer: View, Animatable, Equatable {
+    let map: MapData
+    var camera: MapCamera
+    let hover: Int?, focus: Int?, open: Int?
+    let matches: Set<Int>?
+    /// While the map is being dragged, scrolled or pinched, note titles wait until it stops.
+    let moving: Bool
+    var animatableData: AnimatablePair<CGFloat, AnimatablePair<CGFloat, CGFloat>> {
+        get { AnimatablePair(camera.zoom, AnimatablePair(camera.pan.width, camera.pan.height)) }
+        set { camera = MapCamera(zoom: newValue.first, pan: CGSize(width: newValue.second.first, height: newValue.second.second)) }
+    }
+    static let maxTitles = 150
+    var body: some View {
+        let layer = self
+        return Canvas(rendersAsynchronously: true) { ctx, size in layer.draw(&ctx, size) }
+    }
+    func draw(_ ctx: inout GraphicsContext, _ size: CGSize) {
+        // A refreshed map can arrive while the pointer is on a note of the old one.
+        let hover = hover.flatMap { $0 < map.nodes.count ? $0 : nil }
+        let matches = matches.map { $0.filter { $0 < map.nodes.count } }
+        let t = map.transform(camera, size), s = t.a
+        let detail = Double(min(1, max(0, (camera.zoom - 1.6) / 1.2)))
+        let surface = Color(nsColor: .textBackgroundColor)
+        let view = CGRect(origin: .zero, size: size).insetBy(dx: -60, dy: -30)
+        let lit: Set<Int> = hover.map { Set(map.neighbours[$0] + [$0]) } ?? []
+        // Something is picked out (a hovered note, notes found by name): the rest steps back.
+        let quiet = hover != nil || matches != nil
+        func picked(_ i: Int) -> Bool { lit.contains(i) || matches?.contains(i) == true }
+
+        // Clouds: one soft glow per topic, brightest at its heart.
+        for topic in map.topics where !topic.unlinked {
+            let c = topic.centre.applying(t), r = topic.r * 1.15 * s
+            guard r > 2, view.insetBy(dx: -r, dy: -r).contains(c) else { continue }
+            let dim = (focus != nil && focus != topic.id) || quiet
+            let strength = (dim ? 0.45 : 1) * (0.2 + 0.1 * (1 - detail))
+            let color = map.color(topic.id)
+            ctx.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)),
+                     with: .radialGradient(Gradient(stops: [.init(color: color.opacity(strength), location: 0),
+                                                           .init(color: color.opacity(strength * 0.4), location: 0.62),
+                                                           .init(color: color.opacity(0), location: 1)]),
+                                           center: c, startRadius: 0, endRadius: r))
+        }
+
+        // Topic names: zoomed out, a tag in the middle of each cloud; zoomed in, a quieter name
+        // above it so the note titles inside stay readable. While something is picked out they
+        // go under everything else, so they never cover a highlighted title.
+        func topicNames(_ ctx: inout GraphicsContext) {
+            for topic in map.topics where !topic.unlinked && !topic.label.isEmpty {
+                let c = topic.centre.applying(t), r = topic.r * 1.15 * s
+                guard view.insetBy(dx: -r - 120, dy: -r - 40).contains(c) else { continue }
+                let dim = (focus != nil && focus != topic.id) || quiet
+                let points = min(20, max(12, 10 + sqrt(Double(topic.size)) * 1.2))
+                if detail < 1 {
+                    let tag = ctx.resolve(Text(topic.label).font(.system(size: points, weight: .bold)).foregroundColor(.primary.opacity(dim ? 0.35 : 1)))
+                    let fits = tag.measure(in: CGSize(width: max(160, r * 2.4), height: 200))
+                    let box = CGRect(x: c.x - fits.width / 2 - 9, y: c.y - fits.height / 2 - 4, width: fits.width + 18, height: fits.height + 8)
+                    ctx.drawLayer { layer in
+                        layer.opacity = 1 - detail
+                        let pill = Path(roundedRect: box, cornerRadius: box.height / 2)
+                        layer.fill(pill, with: .color(surface.opacity(0.88)))
+                        layer.stroke(pill, with: .color(map.color(topic.id).opacity(dim ? 0.25 : 0.85)), lineWidth: 1.5)
+                        layer.draw(tag, in: box.insetBy(dx: 9, dy: 4))
+                    }
+                }
+                if detail > 0 {
+                    ctx.draw(Text(topic.label).font(.system(size: points, weight: .bold)).foregroundColor(.primary.opacity((dim ? 0.3 : 0.85) * detail)),
+                             at: CGPoint(x: c.x, y: c.y - r - 2), anchor: .bottom)
+                }
+            }
+        }
+        if quiet { topicNames(&ctx) }
+
+        // Links: the paths built at load, scaled into the view; widths stay in screen points.
+        // Long links between topics step back as you zoom in, where they only cross the view.
+        var links = ctx
+        links.concatenate(t)
+        let w = 1 / s, fade = quiet ? 0.3 : 1.0
+        if let focus {
+            if let path = map.acrossOf[focus] { links.stroke(path, with: .color(Color.secondary.opacity(0.22 * fade)), lineWidth: 0.8 * w) }
+        } else {
+            links.stroke(map.across, with: .color(Color.secondary.opacity(0.15 * fade * (1 - 0.55 * detail))), lineWidth: 0.7 * w)
+        }
+        for (cluster, path) in map.inner where focus == nil || focus == cluster {
+            links.stroke(path, with: .color(map.color(cluster).opacity(0.34 * fade)), lineWidth: 0.9 * w)
+        }
+        if let h = hover {
+            var path = Path()
+            for j in map.neighbours[h] { MapData.curve(&path, map.nodes[h].point, map.nodes[j].point) }
+            links.stroke(path, with: .color(map.color(map.nodes[h].cluster).opacity(0.65)), lineWidth: 1.3 * w)
+        }
+
+        // Notes: a dot each, with a surface ring so neighbours stay apart, and a halo on the hubs.
+        let grow = 0.8 + 0.2 * min(camera.zoom, 3)
+        var rings = Path(), halos: [Int: Path] = [:], dots: [Int: Path] = [:], faded: [Int: Path] = [:]
+        for (i, n) in map.nodes.enumerated() {
+            let p = n.point.applying(t)
+            guard view.contains(p) else { continue }
+            let r = n.radius * grow, rect = CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)
+            let back = (focus != nil && n.cluster != focus) || (quiet && !picked(i))
+            if map.hubs.contains(i) && !back { halos[n.cluster, default: Path()].addEllipse(in: rect.insetBy(dx: -r * 0.8, dy: -r * 0.8)) }
+            rings.addEllipse(in: rect.insetBy(dx: -1.5, dy: -1.5))
+            if back { faded[n.cluster, default: Path()].addEllipse(in: rect) } else { dots[n.cluster, default: Path()].addEllipse(in: rect) }
+        }
+        for (cluster, path) in halos { ctx.fill(path, with: .color(map.color(cluster).opacity(0.2))) }
+        ctx.fill(rings, with: .color(surface))
+        for (cluster, path) in faded { ctx.fill(path, with: .color(map.color(cluster).opacity(0.22))) }
+        for (cluster, path) in dots { ctx.fill(path, with: .color(map.color(cluster))) }
+        func ring(_ i: Int, _ color: Color, _ width: CGFloat, _ gap: CGFloat) {
+            let n = map.nodes[i], p = n.point.applying(t), r = n.radius * grow + gap
+            ctx.stroke(Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)), with: .color(color), lineWidth: width)
+        }
+        if let matches { for i in matches { ring(i, .primary.opacity(0.8), 1.2, 2.5) } }
+        if let open, open < map.nodes.count { ring(open, .accentColor, 2.2, 3.5) }
+        if let h = hover { ring(h, .primary, 1.5, 3) }
+
+        // Note titles once zoomed in, and always for what is picked out. The most-linked notes are
+        // named first, a title that would cover another is skipped, and only so many are drawn.
+        if detail > 0 || quiet {
+            var order: [Int] = []
+            if let h = hover { order += map.neighbours[h].sorted { map.nodes[$0].degree > map.nodes[$1].degree }.prefix(30) }
+            if let matches { order += map.byDegree.filter { matches.contains($0) } }
+            if detail > 0 && !moving { order += map.byDegree }
+            var placed: [CGRect] = [], seen: Set<Int> = [], drawn = 0
+            if let h = hover {      // the card names the hovered note; keep its spot free
+                let n = map.nodes[h], p = n.point.applying(t)
+                placed.append(CGRect(x: p.x - 20, y: p.y - 20, width: 40, height: 40))
+                seen.insert(h)
+            }
+            for i in order where seen.insert(i).inserted {
+                let n = map.nodes[i], p = n.point.applying(t)
+                guard view.contains(p), focus == nil || n.cluster == focus || picked(i) else { continue }
+                let strong = picked(i)
+                if quiet && !strong && moving { continue }
+                let points: CGFloat = strong ? 11 : 10.5
+                // An estimate is enough to keep titles apart and much cheaper than measuring each one.
+                let width = CGFloat(n.title.count) * points * 0.55, height = points * 1.3
+                let rect = CGRect(x: p.x - width / 2, y: p.y + n.radius * grow + 4, width: width, height: height)
+                if placed.contains(where: { $0.intersects(rect) }) { continue }
+                placed.append(rect.insetBy(dx: -3, dy: -1))
+                ctx.draw(Text(n.title).font(.system(size: points, weight: strong ? .medium : .regular))
+                            .foregroundColor(.primary.opacity(strong ? 1 : quiet ? 0.3 * detail : detail)),
+                         at: CGPoint(x: p.x, y: rect.minY), anchor: .top)
+                drawn += 1
+                if drawn >= MapLayer.maxTitles { break }
+            }
+        }
+
+        if !quiet { topicNames(&ctx) }
+    }
+}
+
+/// Holds the scroll-wheel monitor, the handler of the current view (it changes with every
+/// redraw) and where the pointer is. Not state: moving the pointer must not redraw anything.
+final class MapScroll {
+    var monitor: Any?
+    var handle: ((NSEvent) -> Bool)?
+    var pointer: CGPoint?
+}
+
+/// The map's canvas and everything the pointer does on it. Its own view, so hovering and dragging
+/// redraw only the map, not the page around it.
+struct MapCanvas: View {
+    let map: MapData
+    @Binding var camera: MapCamera
+    let focus: Int?, open: Int?
+    let matches: Set<Int>?
+    let topicName: (Int) -> String
+    let openNote: (Int) -> Void
+    @State private var hover: Int? = nil
+    @State private var livePan: CGSize = .zero
+    @State private var liveZoom: CGFloat = 1
+    @State private var anchor: CGPoint = .zero
+    @State private var scrolling = false
+    @State private var settle: DispatchWorkItem? = nil
+    @State private var scroll = MapScroll()
+    func shown(_ size: CGSize) -> MapCamera {
+        var c = liveZoom == 1 ? camera : camera.zoomed(by: liveZoom, at: anchor, in: size)
+        c.pan.width += livePan.width; c.pan.height += livePan.height
+        return c
     }
     func nearest(_ location: CGPoint, _ size: CGSize) -> Int? {
-        let at = project(size)
+        let t = map.transform(shown(size), size), grow = 0.8 + 0.2 * min(shown(size).zoom, 3)
         var best: (Int, CGFloat)? = nil
         for (i, n) in map.nodes.enumerated() {
-            let p = at(n.point), d = hypot(p.x - location.x, p.y - location.y)
-            if d <= n.radius + 6, d < (best?.1 ?? .infinity) { best = (i, d) }
+            let p = n.point.applying(t), d = hypot(p.x - location.x, p.y - location.y)
+            if d <= n.radius * grow + 6, d < (best?.1 ?? .infinity) { best = (i, d) }
         }
         return best?.0
     }
-    /// 0 when zoomed out (topics lead), 1 when zoomed in far enough to read note titles.
-    var detail: Double { Double(min(1, max(0, (scale - 1.6) / 1.2))) }
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(T("Map of your notes", "Notlarının haritası")).font(.title2.bold())
-                    Text(T("Each dot is a note; notes about the same thing gather into topics, lines are links. Zoom in to read titles, click a note to open it.",
-                           "Her nokta bir not; aynı şeyden bahseden notlar konulara toplanır, çizgiler linklerdir. Başlıkları okumak için yakınlaş, açmak için nota tıkla."))
-                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer()
-                if loading { ProgressView().controlSize(.small) }
-                Button { zoom = min(8, zoom * 1.5) } label: { Image(systemName: "plus.magnifyingglass") }.help(T("Zoom in", "Yakınlaş"))
-                Button { zoom = max(0.4, zoom / 1.5) } label: { Image(systemName: "minus.magnifyingglass") }.help(T("Zoom out", "Uzaklaş"))
-                Button { reset() } label: { Image(systemName: "arrow.up.left.and.down.right.magnifyingglass") }.help(T("Show everything", "Tümünü göster"))
-            }.padding([.horizontal, .top], 20).padding(.bottom, 10)
-            HStack(spacing: 6) {
-                Text(T("Folders:", "Klasörler:")).font(.caption).foregroundStyle(.secondary)
-                ForEach(map.available, id: \.self) { f in
-                    Toggle(f.isEmpty ? T("(top level)", "(en üst)") : f + "/", isOn: Binding(get: { map.folders.contains(f) }, set: { value in
-                        var current = Set(map.folders)
-                        if value { current.insert(f) } else { current.remove(f) }
-                        guard !current.isEmpty else { return }
-                        folders = current.sorted(); load()
-                    })).toggleStyle(.button).controlSize(.small)
-                }
-                Spacer()
-                if !map.semantic {
-                    Text(T("Meaning search is off, so these groups follow shared words.", "Anlam araması kapalı; gruplar ortak kelimelere göre.")).font(.caption).foregroundStyle(.secondary)
-                }
-                if map.truncated {
-                    Text(T("Showing the most-linked notes only.", "Yalnızca en çok bağlantılı notlar gösteriliyor.")).font(.caption).foregroundStyle(.secondary)
-                }
-                Text(T("\(map.nodes.count) notes · \(map.edges.count) links", "\(map.nodes.count) not · \(map.edges.count) bağlantı")).font(.caption).foregroundStyle(.secondary)
-            }.padding(.horizontal, 20).padding(.bottom, 8)
-            HStack(alignment: .top, spacing: 0) {
-                GeometryReader { geo in canvas(geo.size).onAppear { canvasSize = geo.size }.onChange(of: geo.size) { canvasSize = geo.size } }
-                    .background(Color(nsColor: .textBackgroundColor))
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.2)))
-                legend.frame(width: 220)
-            }.padding(.horizontal, 20).padding(.bottom, 16)
+    /// Two fingers on a trackpad move the map; a mouse wheel, or ⌘ with two fingers, zooms
+    /// around the pointer. Only while the pointer is over the map, so the page still scrolls elsewhere.
+    func scrolled(_ e: NSEvent, _ size: CGSize) -> Bool {
+        guard let at = scroll.pointer else { return false }
+        if e.hasPreciseScrollingDeltas && !e.modifierFlags.contains(.command) {
+            camera.pan.width += e.scrollingDeltaX; camera.pan.height += e.scrollingDeltaY
+        } else {
+            let away = e.scrollingDeltaY * (e.isDirectionInvertedFromDevice ? -1 : 1) * (e.hasPreciseScrollingDeltas ? 1 : 10)
+            camera = camera.zoomed(by: exp(away * 0.01), at: at, in: size)
         }
-        .onAppear { if !loaded || source != model.vaultSource { load() } }
-        .onChange(of: model.vaultSource) { folders = nil; load() }   // another source has its own folders
+        if hover != nil { hover = nil }
+        if !scrolling { scrolling = true }
+        settle?.cancel()
+        let done = DispatchWorkItem { scrolling = false }
+        settle = done
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18, execute: done)
+        return true
     }
-    var legend: some View {
+    var body: some View {
+        GeometryReader { geo in
+            let size = geo.size
+            let _ = { scroll.handle = { e in scrolled(e, size) } }()
+            let moving = scrolling || livePan != .zero || liveZoom != 1
+            MapLayer(map: map, camera: shown(size), hover: hover, focus: focus, open: open, matches: matches, moving: moving)
+                .contentShape(Rectangle())
+                .onContinuousHover { phase in
+                    switch phase {
+                    case .active(let location):
+                        scroll.pointer = location
+                        let found = moving ? nil : nearest(location, size)
+                        if found != hover { hover = found }   // redraw only when the note under the pointer changes
+                    case .ended:
+                        scroll.pointer = nil
+                        if hover != nil { hover = nil }
+                    }
+                }
+                .simultaneousGesture(SpatialTapGesture().onEnded { value in
+                    if let i = nearest(value.location, size) { openNote(i) }
+                })
+                .gesture(DragGesture(minimumDistance: 3).onChanged { livePan = $0.translation; if hover != nil { hover = nil } }.onEnded { v in
+                    camera.pan.width += v.translation.width; camera.pan.height += v.translation.height; livePan = .zero
+                })
+                .simultaneousGesture(MagnifyGesture().onChanged { v in
+                    if liveZoom == 1 { anchor = v.startLocation }
+                    liveZoom = v.magnification
+                }.onEnded { v in
+                    camera = camera.zoomed(by: v.magnification, at: anchor, in: size); liveZoom = 1
+                })
+                .overlay(alignment: .topLeading) {
+                    if let h = hover, h < map.nodes.count {
+                        let n = map.nodes[h], p = n.point.applying(map.transform(shown(size), size))
+                        MapCard(node: n, topic: topicName(n.cluster), color: map.color(n.cluster))
+                            .frame(width: 250, alignment: .leading)
+                            .offset(x: min(max(8, p.x + 16), size.width - 258), y: p.y > size.height - 120 ? p.y - 110 : p.y + 14)
+                            .allowsHitTesting(false)
+                    }
+                }
+        }
+        .onChange(of: map.id) { hover = nil; livePan = .zero; liveZoom = 1 }
+        .onAppear {
+            scroll.monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [scroll] e in scroll.handle?(e) == true ? nil : e }
+        }
+        .onDisappear { if let m = scroll.monitor { NSEvent.removeMonitor(m) }; scroll.monitor = nil; scroll.handle = nil }
+    }
+}
+
+/// What the pointer is on: the note's title, where it sits and how linked it is.
+struct MapCard: View {
+    let node: MapData.Node, topic: String, color: Color
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Circle().fill(color).frame(width: 8, height: 8)
+                Text(topic).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Text(node.title).font(.callout.weight(.semibold)).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 6) {
+                if !node.type.isEmpty { Text(metaValue(node.type)) }
+                Text(node.folder.isEmpty ? T("Main folder", "Ana klasör") : node.folder + "/").lineLimit(1).truncationMode(.middle)
+            }.font(.caption).foregroundStyle(.secondary)
+            Text(T("\(Int(node.degree)) links · click to open", "\(Int(node.degree)) bağlantı · açmak için tıkla")).font(.caption2).foregroundStyle(.tertiary)
+        }
+        .padding(10)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9))
+        .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.secondary.opacity(0.2)))
+        .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
+    }
+}
+
+/// The topic list beside the map. Equatable, so moving the map does not rebuild it.
+struct MapLegend: View, Equatable {
+    let topics: [MapData.Topic]
+    let focus: Int?
+    let pick: (Int) -> Void
+    let reset: () -> Void
+    static func == (a: MapLegend, b: MapLegend) -> Bool { a.topics == b.topics && a.focus == b.focus }
+    var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 2) {
                 Text(T("Topics", "Konular")).font(.headline).padding(.bottom, 6)
-                ForEach(map.topics, id: \.id) { t in
-                    Button { focusOn(t.id) } label: {
+                ForEach(topics, id: \.id) { t in
+                    Button { pick(t.id) } label: {
                         HStack(spacing: 8) {
                             Circle().fill(topicColor(t.slot)).frame(width: 10, height: 10)
                             Text(t.unlinked ? T("Not indexed yet", "Henüz indekslenmedi") : t.label).lineLimit(2).multilineTextAlignment(.leading)
@@ -3185,138 +3546,163 @@ struct GraphView: View {
             }.padding(.leading, 14)
         }
     }
-    func canvas(_ size: CGSize) -> some View {
-        let at = project(size), u = fit(size) * scale, detail = detail, map = map, focus = focus
-        let hovered = hover.flatMap { $0 < map.nodes.count ? $0 : nil }
-        let lit = Set(hovered.map { map.neighbours[$0] } ?? [])
-        let surface = Color(nsColor: .textBackgroundColor)
-        let colors = Dictionary(uniqueKeysWithValues: map.topics.map { ($0.id, topicColor($0.slot)) })
-        let view = CGRect(origin: .zero, size: size).insetBy(dx: -60, dy: -30)
-        return Canvas(rendersAsynchronously: true) { ctx, _ in
-            // Clouds: one soft disc per topic.
-            for t in map.topics where !t.unlinked {
-                let c = at(t.centre), r = t.r * 1.12 * u
-                let dim = focus != nil && focus != t.id
-                ctx.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)),
-                         with: .color((colors[t.id] ?? .secondary).opacity(dim ? 0.03 : 0.07 + 0.07 * (1 - detail))))
-            }
-            // Links, batched into one path per topic plus one for links between topics.
-            var inner: [Int: Path] = [:], across = Path()
-            for (a, b) in map.edges {
-                let na = map.nodes[a], nb = map.nodes[b]
-                if focus != nil && na.cluster != focus && nb.cluster != focus { continue }
-                if na.cluster == nb.cluster {
-                    inner[na.cluster, default: Path()].move(to: at(na.point)); inner[na.cluster]!.addLine(to: at(nb.point))
-                } else { across.move(to: at(na.point)); across.addLine(to: at(nb.point)) }
-            }
-            ctx.stroke(across, with: .color(Color.secondary.opacity(0.12)), lineWidth: 0.8)
-            for (cluster, path) in inner { ctx.stroke(path, with: .color((colors[cluster] ?? .secondary).opacity(0.28)), lineWidth: 0.8) }
-            if let h = hovered {
-                var path = Path()
-                for j in map.neighbours[h] { path.move(to: at(map.nodes[h].point)); path.addLine(to: at(map.nodes[j].point)) }
-                ctx.stroke(path, with: .color(Color.primary.opacity(0.7)), lineWidth: 1.5)
-            }
-            // Notes: a dot per note with a surface ring so overlapping dots stay distinct.
-            let grow = 0.8 + 0.2 * min(scale, 3)
-            var rings = Path(), dots: [Int: Path] = [:], faded: [Int: Path] = [:]
-            for n in map.nodes {
-                let p = at(n.point)
-                guard view.contains(p) else { continue }
-                let r = n.radius * grow, rect = CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)
-                rings.addEllipse(in: rect.insetBy(dx: -1.5, dy: -1.5))
-                if focus != nil && n.cluster != focus { faded[n.cluster, default: Path()].addEllipse(in: rect) }
-                else { dots[n.cluster, default: Path()].addEllipse(in: rect) }
-            }
-            ctx.fill(rings, with: .color(surface))
-            for (cluster, path) in faded { ctx.fill(path, with: .color((colors[cluster] ?? .secondary).opacity(0.2))) }
-            for (cluster, path) in dots { ctx.fill(path, with: .color(colors[cluster] ?? .secondary)) }
-            if let h = hovered {
-                let n = map.nodes[h], p = at(n.point), r = n.radius * grow + 3
-                ctx.stroke(Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)), with: .color(.primary), lineWidth: 1.5)
-            }
-            // Note titles once zoomed in, plus the hovered note and its neighbours. The
-            // most-linked notes are named first; a title that would cover another is skipped.
-            if detail > 0 || hovered != nil {
-                var placed: [CGRect] = []
-                var order = (detail > 0 ? Array(map.nodes.indices) : []).filter { i in
-                    (focus == nil || map.nodes[i].cluster == focus) && view.contains(at(map.nodes[i].point))
-                }.sorted { map.nodes[$0].degree > map.nodes[$1].degree }
-                if let h = hovered { order = [h] + map.neighbours[h] + order }
-                for i in order {
-                    let n = map.nodes[i], p = at(n.point), strong = i == hovered || lit.contains(i)
-                    let points: CGFloat = i == hovered ? 12 : 10.5
-                    // An estimate is enough to keep titles apart and much cheaper than measuring each one.
-                    let width = CGFloat(n.title.count) * points * 0.55, height = points * 1.3
-                    let rect = CGRect(x: p.x - width / 2, y: p.y + n.radius * grow + 4, width: width, height: height)
-                    if i != hovered && placed.contains(where: { $0.intersects(rect) }) { continue }
-                    placed.append(rect.insetBy(dx: -3, dy: -1))
-                    ctx.draw(Text(n.title).font(.system(size: points, weight: i == hovered ? .semibold : .regular))
-                                .foregroundColor(.primary.opacity(strong ? 1 : detail)),
-                             at: CGPoint(x: p.x, y: rect.minY), anchor: .top)
-                }
-            }
-            // Topic names: zoomed out, a tag in the middle of each cloud; zoomed in, a quieter
-            // name above it so the note titles inside stay readable.
-            for t in map.topics where !t.unlinked && !t.label.isEmpty {
-                let c = at(t.centre), r = t.r * 1.12 * u
-                let dim = focus != nil && focus != t.id
-                let points = min(20, max(12, 10 + sqrt(Double(t.size)) * 1.2))
-                if detail < 1 {
-                    let tag = ctx.resolve(Text(t.label).font(.system(size: points, weight: .bold)).foregroundColor(.primary.opacity(dim ? 0.3 : 1)))
-                    let fits = tag.measure(in: CGSize(width: max(160, r * 2.4), height: 200))
-                    let box = CGRect(x: c.x - fits.width / 2 - 8, y: c.y - fits.height / 2 - 4, width: fits.width + 16, height: fits.height + 8)
-                    ctx.drawLayer { layer in
-                        layer.opacity = 1 - detail
-                        layer.fill(Path(roundedRect: box, cornerRadius: box.height / 2), with: .color(surface.opacity(0.82)))
-                        layer.stroke(Path(roundedRect: box, cornerRadius: box.height / 2), with: .color((colors[t.id] ?? .secondary).opacity(dim ? 0.2 : 0.7)), lineWidth: 1.5)
-                        layer.draw(tag, in: box.insetBy(dx: 8, dy: 4))
-                    }
-                }
-                if detail > 0 {
-                    ctx.draw(Text(t.label).font(.system(size: points, weight: .bold)).foregroundColor(.primary.opacity((dim ? 0.3 : 0.85) * detail)),
-                             at: CGPoint(x: c.x, y: c.y - r - 4), anchor: .bottom)
-                }
-            }
-        }
-        .contentShape(Rectangle())
-        .onContinuousHover { phase in
-            let found: Int?
-            switch phase {
-            case .active(let location): found = nearest(location, size)
-            case .ended: found = nil
-            }
-            if found != hover { hover = found }   // redraw only when the note under the pointer changes
-        }
-        .simultaneousGesture(SpatialTapGesture().onEnded { value in
-            if let i = nearest(value.location, size) { model.openNote(map.nodes[i].path, source: map.sourceId.isEmpty ? model.vaultSource : map.sourceId) }
-        })
-        .gesture(DragGesture(minimumDistance: 3).onChanged { livePan = $0.translation; hover = nil }.onEnded { v in
-            pan.width += v.translation.width; pan.height += v.translation.height; livePan = .zero
-        })
-        .simultaneousGesture(MagnifyGesture().onChanged { liveZoom = $0.magnification }.onEnded { v in
-            zoom = min(8, max(0.4, zoom * v.magnification)); liveZoom = 1
-        })
+}
+
+/// Every note as a dot, notes about the same thing pulled into topic clouds. Zoomed out the clouds and
+/// their names show what the vault is about; zooming in brings out the note titles.
+/// Topics come from the meaning of the notes (the search index's vectors); the lines drawn
+/// are the links, [[wiki links]] and Markdown links alike. Any connected notes folder can be
+/// shown, a GitHub knowledge base too. The map is still unless asked: hovering lights a note
+/// and its links and fades the rest, and only picking a topic, a found note or a zoom button
+/// moves the view, gliding there.
+struct GraphView: View {
+    @ObservedObject var model: Model
+    @State private var map = MapData()
+    @State private var folders: [String]? = nil
+    @State private var loading = false
+    @State private var camera = MapCamera()
+    @State private var focus: Int? = nil
+    @State private var find = ""
+    @State private var canvasSize = CGSize(width: 800, height: 600)
+    /// The folder shown: the one picked here, else the one open on the Notes page.
+    var source: String { model.graphSource.isEmpty ? model.vaultSource : model.graphSource }
+    var key: String { source + "|" + (folders ?? []).joined(separator: ",") }
+    var matches: Set<Int>? {
+        let q = find.lowercased().trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return nil }
+        return Set(map.search.indices.filter { map.search[$0].contains(q) })
     }
-    func reset() { zoom = 1; pan = .zero; focus = nil }
+    var body: some View {
+        let matches = matches
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(T("Map of your notes", "Notlarının haritası")).font(.title2.bold())
+                    Text(T("Each dot is a note; notes about the same thing gather into topics, lines are links. Move with two fingers, zoom by pinching or with ⌘, click a note to open it.",
+                           "Her nokta bir not; aynı şeyden bahseden notlar konulara toplanır, çizgiler linklerdir. İki parmakla kaydır, kıstırarak ya da ⌘ ile yakınlaş, açmak için nota tıkla."))
+                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                if loading { ProgressView().controlSize(.small) }
+                Button { zoom(by: 1.5) } label: { Image(systemName: "plus.magnifyingglass") }.help(T("Zoom in", "Yakınlaş"))
+                Button { zoom(by: 1 / 1.5) } label: { Image(systemName: "minus.magnifyingglass") }.help(T("Zoom out", "Uzaklaş"))
+                Button { reset() } label: { Image(systemName: "arrow.up.left.and.down.right.magnifyingglass") }.help(T("Show everything", "Tümünü göster"))
+            }.padding([.horizontal, .top], 20).padding(.bottom, 10)
+            HStack(spacing: 10) {
+                if model.browsableSources.count > 1 {
+                    Picker(T("Notes folder", "Not klasörü"), selection: Binding(get: { source }, set: { pick($0) })) {
+                        ForEach(model.browsableSources.indices, id: \.self) { i in
+                            Text(model.sourceLabel(model.browsableSources[i])).tag(str(model.browsableSources[i], "source_id"))
+                        }
+                    }.labelsHidden().fixedSize().help(T("Which connected notes folder to map", "Hangi bağlı not klasörünün haritası"))
+                }
+                TextField(T("Find a note", "Not bul"), text: $find).textFieldStyle(.roundedBorder).frame(maxWidth: 220)
+                    .onSubmit { flyToMatch() }
+                if let matches {
+                    Text(matches.isEmpty ? T("No match", "Eşleşme yok") : T("\(matches.count) found · ↩ to go", "\(matches.count) not · gitmek için ↩")).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                if !map.semantic {
+                    Text(T("Meaning search is off, so these groups follow shared words.", "Anlam araması kapalı; gruplar ortak kelimelere göre.")).font(.caption).foregroundStyle(.secondary)
+                }
+                if map.truncated {
+                    Text(T("Showing the most-linked notes only.", "Yalnızca en çok bağlantılı notlar gösteriliyor.")).font(.caption).foregroundStyle(.secondary)
+                }
+                Text(T("\(map.nodes.count) notes · \(map.edges.count) links", "\(map.nodes.count) not · \(map.edges.count) bağlantı")).font(.caption).foregroundStyle(.secondary)
+            }.padding(.horizontal, 20).padding(.bottom, 8)
+            if map.available.count > 1 {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        Text(T("Folders:", "Klasörler:")).font(.caption).foregroundStyle(.secondary)
+                        ForEach(map.available, id: \.self) { f in
+                            Toggle(f.isEmpty ? T("(top level)", "(en üst)") : f + "/", isOn: Binding(get: { map.folders.contains(f) }, set: { value in
+                                var current = Set(map.folders)
+                                if value { current.insert(f) } else { current.remove(f) }
+                                guard !current.isEmpty else { return }
+                                folders = current.sorted(); load()
+                            })).toggleStyle(.button).controlSize(.small)
+                        }
+                    }
+                }.padding(.horizontal, 20).padding(.bottom, 8)
+            }
+            HStack(alignment: .top, spacing: 0) {
+                MapCanvas(map: map, camera: $camera, focus: focus, open: openIndex, matches: matches,
+                          topicName: { id in map.topic(id).map { $0.unlinked ? T("Not indexed yet", "Henüz indekslenmedi") : $0.label } ?? "" },
+                          openNote: { i in model.openNote(map.nodes[i].path, source: map.sourceId.isEmpty ? source : map.sourceId) })
+                    .background(GeometryReader { geo in Color(nsColor: .textBackgroundColor).onAppear { canvasSize = geo.size }.onChange(of: geo.size) { canvasSize = geo.size } })
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.2)))
+                    .overlay {
+                        if map.nodes.isEmpty && !loading {
+                            Text(T("No notes to show in these folders.", "Bu klasörlerde gösterilecek not yok.")).foregroundStyle(.secondary)
+                        }
+                    }
+                MapLegend(topics: map.topics, focus: focus, pick: { focusOn($0) }, reset: { reset() }).equatable().frame(width: 220)
+            }.padding(.horizontal, 20).padding(.bottom, 16)
+        }
+        .onAppear { load() }
+        .onChange(of: model.vaultSource) { if model.graphSource.isEmpty { folders = nil; load() } }   // another source has its own folders
+    }
+    /// The note open on the Notes page, ringed on the map when it is on it.
+    var openIndex: Int? {
+        let path = str(model.note, "path", "")
+        guard !path.isEmpty, str(model.note, "source_id", model.vaultSource) == map.sourceId else { return nil }
+        return map.indexOf[path]
+    }
+    func pick(_ sid: String) {
+        guard sid != source else { return }
+        model.graphSource = sid; folders = nil; find = ""; load()
+    }
+    func glide(_ change: () -> Void) { withAnimation(.smooth(duration: 0.45)) { change() } }
+    func zoom(by factor: CGFloat) {
+        glide { camera = camera.zoomed(by: factor, at: CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2), in: canvasSize) }
+    }
+    func reset() { glide { camera = MapCamera(); focus = nil } }
     /// Centres a topic and zooms until it fills most of the view.
     func focusOn(_ id: Int) {
         guard focus != id, let t = map.topic(id) else { reset(); return }
         let b = map.bounds
-        focus = id
-        zoom = min(8, max(1, min(b.width, b.height) / max(t.r * 2.6, 0.001)))
-        let f = fit(canvasSize)
-        pan = CGSize(width: -(t.centre.x - b.midX) * f * zoom, height: -(t.centre.y - b.midY) * f * zoom)
+        glide {
+            focus = id
+            camera = map.centring(t.centre, zoom: min(8, max(1, min(b.width, b.height) / max(t.r * 2.6, 0.001))), canvasSize)
+        }
     }
+    /// The most-linked note whose title matches, brought to the middle.
+    func flyToMatch() {
+        guard let matches, let best = map.byDegree.first(where: { matches.contains($0) }) else { return }
+        glide { focus = nil; camera = map.centring(map.nodes[best].point, zoom: max(camera.zoom, 3.2), canvasSize) }
+    }
+    /// Shows the map from this session's cache at once and asks the core again only when the
+    /// cached one is older than half a minute; an unchanged answer leaves the view as it is.
     func load() {
-        var fields = model.vaultFields
+        let sid = source, k = key
+        if let cached = model.maps[k] {
+            if cached.data != map { show(cached.data) }
+            if Date().timeIntervalSince(cached.at) < 30 { return }
+        }
+        var fields: [String: Any] = sid.isEmpty ? [:] : ["source_id": sid]
         if let folders { fields["folders"] = folders }
         loading = true
-        let requested = model.vaultSource
-        model.request("vault_graph", fields, clearError: false, quiet: true, orElse: { e in loading = false; model.error = e.localizedDescription }) { value in
+        model.request("vault_graph", fields, clearError: false, quiet: true, orElse: { e in
             loading = false
-            guard requested == model.vaultSource else { return }
-            map = MapData(value); loaded = true; source = requested; hover = nil; focus = nil; zoom = 1; pan = .zero
+            if model.maps[k] == nil { model.error = e.localizedDescription }
+        }) { value in
+            loading = false
+            let raw = NSDictionary(dictionary: value)
+            if let cached = model.maps[k], cached.raw.isEqual(raw) {
+                model.maps[k] = (cached.data, raw, Date())
+                return
+            }
+            let data = MapData(value)
+            model.maps[k] = (data, raw, Date())
+            if k == key { show(data) }      // the owner may have moved on to another folder meanwhile
         }
+    }
+    func show(_ data: MapData) {
+        let moved = data.sourceId != map.sourceId || data.folders != map.folders
+        map = data
+        if moved || map.nodes.isEmpty { camera = MapCamera(); focus = nil }
+        if let f = focus, data.topic(f) == nil { focus = nil }
     }
 }
 
@@ -4392,7 +4778,7 @@ struct ContentView: View {
                 List(selection: $model.page) {
                     ForEach(pages, id: \.0) { item in
                         Label(pageName(item.0), systemImage: item.1).tag(item.0).padding(.vertical, 4)
-                            .badge(item.0 == "Review" ? reviewable(model.files).count + model.pendingReview : 0)
+                            .badge(item.0 == "Review" ? model.reviewFiles.count + model.pendingReview : 0)
                     }
                 }.listStyle(.sidebar)
                 Button { model.showGuide = true } label: { Label(T("How Carry works", "Carry nasıl çalışır?"), systemImage: "questionmark.circle") }

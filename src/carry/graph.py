@@ -19,8 +19,8 @@ from . import okf
 from .errors import CarryError
 from .index import open_readonly, unpack
 from .markdown import parse_frontmatter
-from .vaultview import (MAX_NOTE_BYTES, WIKILINK_RE, _files, _local, _managed, _text,
-                        excluded, is_system)
+from .vaultview import (MAX_NOTE_BYTES, Resolver, _files, _local, _managed, _text,
+                        excluded, is_system, link_targets)
 
 MAX_NODES = 1500
 COLORS = 8          # categorical slots the app can colour; smaller groups stay neutral
@@ -31,32 +31,6 @@ try:  # optional acceleration, as in recall
     import numpy as _np
 except ImportError:  # pragma: no cover - exercised on installs without numpy
     _np = None
-
-
-class _Resolver:
-    """vaultview._resolve with its lookup tables built once for the whole vault."""
-
-    def __init__(self, paths):
-        self.bare = {p.removesuffix('.md'): p for p in paths}
-        self.by_name = {}
-        for key, p in self.bare.items():
-            self.by_name.setdefault(key.rsplit('/', 1)[-1], []).append(p)
-
-    def __call__(self, target, from_rel):
-        wanted = target.strip().removesuffix('.md').strip('/')
-        if not wanted:
-            return None
-        if wanted in self.bare:
-            return self.bare[wanted]
-        if from_rel and '/' in from_rel:
-            near = from_rel.rsplit('/', 1)[0] + '/' + wanted
-            if near in self.bare:
-                return self.bare[near]
-        if '/' in wanted:
-            ends = [p for k, p in self.bare.items() if k.endswith('/' + wanted)]
-        else:
-            ends = self.by_name.get(wanted, [])
-        return min(ends, key=lambda p: (p.count('/'), p)) if ends else None
 
 
 def _read(root, src, managed):
@@ -77,8 +51,9 @@ def _read(root, src, managed):
         if okf.is_reserved_listing(rel, front):
             continue    # an OKF index.md / log.md links everything and is no topic of its own
         heading = next((l[2:].strip() for l in body.splitlines() if l.startswith('# ')), '')
-        # The whole file: `up:` and `related:` links in frontmatter are edges too.
-        links = [m.group(1) for m in WIKILINK_RE.finditer(raw)]
+        # The whole file: `up:` and `related:` links in frontmatter are edges too, and so are
+        # plain Markdown links, which GitHub knowledge bases use instead of [[links]].
+        links = link_targets(raw, rel)
         summary = okf.description(front)
         if not summary:     # a vault without summaries still names its topics from the opening lines
             summary = ' '.join(l for l in body.splitlines() if l.strip() and not l.startswith('#'))[:300]
@@ -218,28 +193,42 @@ def _note_vectors(ws, source_id, paths):
         con = open_readonly(ws.db_path)
     except Exception:
         raise CarryError('graph_needs_index')
-    wanted, sums, meta = set(paths), {}, {}
+    wanted, sums, meta = sorted(set(paths)), {}, {}
     try:
         meta = dict(con.execute('SELECT key, value FROM meta').fetchall())
-        for path, dim, blob in con.execute('SELECT path, dim, vec FROM chunks WHERE source_id = ?', (source_id,)):
-            if path not in wanted or not blob:
-                continue
-            v = unpack(blob, dim)
-            acc = sums.get(path)
-            if acc is None:
-                sums[path] = list(v)
-            elif len(acc) == len(v):
-                for k, x in enumerate(v):
-                    acc[k] += x
+        # Only the map's notes, through the (source_id, path) index: a source's other chunks
+        # (raw chats, clips) are most of the table and their text sits before the vector.
+        for start in range(0, len(wanted), 500):
+            part = wanted[start:start + 500]
+            rows = con.execute(f"SELECT path, dim, vec FROM chunks WHERE source_id = ? AND path IN ({','.join('?' * len(part))})",
+                               (source_id, *part))
+            for path, dim, blob in rows:
+                if not blob:
+                    continue
+                if _np is not None:
+                    v = _np.frombuffer(blob, dtype=_np.float32, count=dim).astype(_np.float64)
+                    acc = sums.get(path)
+                    if acc is None:
+                        sums[path] = v
+                    elif len(acc) == len(v):
+                        acc += v
+                    continue
+                v = unpack(blob, dim)
+                acc = sums.get(path)
+                if acc is None:
+                    sums[path] = list(v)
+                elif len(acc) == len(v):
+                    for k, x in enumerate(v):
+                        acc[k] += x
     except Exception:
         raise CarryError('graph_needs_index')
     finally:
         con.close()
     vectors = {}
     for path, acc in sums.items():
-        norm = math.sqrt(sum(x * x for x in acc))
+        norm = float(_np.sqrt(acc @ acc)) if _np is not None else math.sqrt(sum(x * x for x in acc))
         if norm > 0:
-            vectors[path] = [x / norm for x in acc]
+            vectors[path] = acc / norm if _np is not None else [x / norm for x in acc]
     return vectors, meta.get('semantic') == '1'
 
 
@@ -374,7 +363,7 @@ def build(ws, source_id, folders=None):
     if not isinstance(folders, list) or not all(isinstance(f, str) for f in folders):
         raise CarryError('invalid_graph_folders')
     wanted = set(folders)
-    resolve = _Resolver([n['path'] for n in notes])     # links resolve against the whole vault
+    resolve = Resolver([n['path'] for n in notes])     # links resolve against the whole vault
     notes = [n for n in notes if (n['path'].split('/', 1)[0] if '/' in n['path'] else '') in wanted]
     index = {n['path']: i for i, n in enumerate(notes)}
 

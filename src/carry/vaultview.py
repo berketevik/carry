@@ -10,7 +10,9 @@ import fnmatch
 import os
 from dataclasses import replace
 from pathlib import Path
+import posixpath
 import re
+from urllib.parse import unquote
 
 from . import okf
 from .config import RetrievalConfig, Workspace
@@ -24,7 +26,52 @@ HEAD_BYTES = 4096
 MAX_NOTE_BYTES = 2_000_000
 MARK = re.compile(r' ?<!-- carry: (?:accepted|fixed|skipped) \d{4}-\d{2}-\d{2} -->')
 WIKILINK_RE = re.compile(r"\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]")
+# A plain Markdown link, as GitHub knowledge bases write them: [text](folder/Note%20name.md).
+MDLINK_RE = re.compile(r"(?<!!)\[[^\]\n]*\]\((?:<([^>\n]+)>|([^)\s]+))(?:\s+\"[^\"]*\")?\)")
 INBOX = '+'
+
+
+def link_targets(text, from_rel):
+    """What a note links to: [[wikilink]] targets as written, and Markdown links to other
+    notes as paths from the root (resolved against the linking note's folder, without `.md`)."""
+    targets = [m.group(1).strip() for m in WIKILINK_RE.finditer(text)]
+    folder = from_rel.rsplit('/', 1)[0] if '/' in from_rel else ''
+    for m in MDLINK_RE.finditer(text):
+        target = unquote((m.group(1) or m.group(2)).split('#', 1)[0])
+        if not target.lower().endswith('.md') or ':' in target.split('/', 1)[0]:
+            continue    # web pages, mail, images and other files
+        joined = posixpath.normpath(target.lstrip('/') if target.startswith('/') else posixpath.join(folder, target))
+        if joined != '..' and not joined.startswith('../'):
+            targets.append(joined[:-3])
+    return targets
+
+
+class Resolver:
+    """Obsidian-style resolution: exact path, then next to the linking note, then a basename
+    (the shortest path wins when several notes share it). None when nothing matches.
+    The lookup tables are built once, so resolving every link of a vault stays cheap."""
+
+    def __init__(self, paths):
+        self.bare = {p.removesuffix('.md'): p for p in paths}
+        self.by_name = {}
+        for key, p in self.bare.items():
+            self.by_name.setdefault(key.rsplit('/', 1)[-1], []).append(p)
+
+    def __call__(self, target, from_rel):
+        wanted = target.strip().removesuffix('.md').strip('/')
+        if not wanted:
+            return None
+        if wanted in self.bare:
+            return self.bare[wanted]
+        if from_rel and '/' in from_rel:
+            near = posixpath.normpath(from_rel.rsplit('/', 1)[0] + '/' + wanted)
+            if near in self.bare:
+                return self.bare[near]
+        if '/' in wanted:
+            ends = [p for k, p in self.bare.items() if k.endswith('/' + wanted)]
+        else:
+            ends = self.by_name.get(wanted, [])
+        return min(ends, key=lambda p: (p.count('/'), p)) if ends else None
 
 
 def excluded(relative, patterns):
@@ -182,7 +229,7 @@ def note(ws, source_id, relative):
     raw = path.read_text(encoding='utf-8', errors='replace')
     front, body = parse_frontmatter(raw)
     rel = path.relative_to(root).as_posix()
-    links = sorted({m.group(1).strip() for m in WIKILINK_RE.finditer(body)})
+    links = sorted(set(link_targets(body, rel)))
     heading = next((l[2:].strip() for l in body.splitlines() if l.startswith('# ')), '')
     return dict(source_id=src.source_id, path=rel, absolute=str(path), title=_text(front.get('title')) or heading or path.stem,
                 frontmatter={k: okf.plain(v) if isinstance(v, (str, int, float, bool, list, dict)) or v is None
@@ -193,23 +240,7 @@ def note(ws, source_id, relative):
 
 
 def _resolve(target, from_rel, paths):
-    """Obsidian-style resolution: exact path, then next to the linking note, then a basename
-    (the shortest path wins when several notes share it). None when nothing matches."""
-    wanted = target.strip().removesuffix('.md').strip('/')
-    if not wanted:
-        return None
-    bare = {p.removesuffix('.md'): p for p in paths}
-    if wanted in bare:
-        return bare[wanted]
-    if from_rel and '/' in from_rel:
-        near = from_rel.rsplit('/', 1)[0] + '/' + wanted
-        if near in bare:
-            return bare[near]
-    if '/' in wanted:
-        ends = [p for k, p in bare.items() if k.endswith('/' + wanted)]
-    else:
-        ends = [p for k, p in bare.items() if k.rsplit('/', 1)[-1] == wanted]
-    return min(ends, key=lambda p: (p.count('/'), p)) if ends else None
+    return Resolver(paths)(target, from_rel)
 
 
 def _all_paths(root, src):
@@ -217,11 +248,15 @@ def _all_paths(root, src):
 
 
 def backlinks(ws, source_id, relative, limit=200):
-    """Notes whose [[links]] resolve to this note."""
+    """Notes whose [[links]] or Markdown links resolve to this note."""
+    from urllib.parse import quote
     src, root = _local(ws, source_id)
     target = resolve_within(root, relative).relative_to(root).as_posix()
     paths = _all_paths(root, src)
+    resolve = Resolver(paths)
     stem, found, skipped = Path(target).stem, [], 0
+    # A Markdown link spells the name URL-encoded: `Kişisel%20Vault%20Ayrımı.md`.
+    needles = {stem, stem.replace(' ', '%20'), quote(stem)}
     for rel in paths:
         if rel == target:
             continue
@@ -232,9 +267,9 @@ def backlinks(ws, source_id, relative, limit=200):
             text = (root / rel).read_text(encoding='utf-8', errors='ignore')
         except OSError:
             continue
-        if stem not in text:
+        if not any(n in text for n in needles):
             continue
-        if any(_resolve(m.group(1), rel, paths) == target for m in WIKILINK_RE.finditer(text)):
+        if any(resolve(t, rel) == target for t in link_targets(text, rel)):
             found.append(rel)
             if len(found) >= limit:
                 break
