@@ -81,6 +81,37 @@ class VaultViewTest(unittest.TestCase):
         self.assertEqual((s['preset'], s['default_vault']), ('keyword_assistant', 'notes'))
 
 
+
+class GitHubSourceReadOnlyTest(unittest.TestCase):
+    """The Notes page browses a GitHub source, but its copy is replaced on sync: no write may land there."""
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
+        base = Path(self.tmp.name)
+        self.team = base / 'team'
+        (self.team / '+').mkdir(parents=True)
+        self.draft = self.team / '+' / 'Draft.md'
+        self.draft.write_text('---\ntype: thing\ndraft: true\n---\nTeam draft.\n', encoding='utf-8')
+        team = SourceConfig('team', self.team, scope='team',
+                            github=dict(repository='acme/kb', branch='main', folder='', commit='', synced_at=0))
+        self.ws = Workspace.create(base / 'state', sources=[team], embedding=EmbeddingConfig(provider='hashing'))
+
+    def test_browse_and_read_work(self):
+        self.assertEqual([f['path'] for f in vaultview.browse(self.ws, 'team')['files']], ['+/Draft.md'])
+        self.assertEqual(vaultview.note(self.ws, 'team', '+/Draft.md')['body'].strip(), 'Team draft.')
+
+    def test_writes_are_refused_and_files_stay_unchanged(self):
+        from carry import digest
+        before = self.draft.read_text(encoding='utf-8')
+        for write in (lambda: vaultview.create_note(self.ws, 'team', 'New'),
+                      lambda: vaultview.approve_note(self.ws, 'team', '+/Draft.md'),
+                      lambda: vaultview.approve_many(self.ws, 'team', ['+/Draft.md']),
+                      lambda: digest.decide(self.ws, 'team', '+/Draft.md', 'i1', 'skip')):
+            with self.assertRaises(CarryError) as caught:
+                write()
+            self.assertEqual(str(caught.exception), 'source_read_only')
+        self.assertEqual(self.draft.read_text(encoding='utf-8'), before)
+        self.assertEqual(sorted(p.name for p in self.team.rglob('*.md')), ['Draft.md'])
+
 class ScheduleTest(unittest.TestCase):
     def setUp(self):
         # The launchd backend, on any machine: the fake launchctl stands in for the real one.

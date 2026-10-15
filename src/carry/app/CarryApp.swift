@@ -101,6 +101,7 @@ struct UIError: LocalizedError {
         case "workspace_vault_source_read_only": return L("This vault is connected read-only. Prompt capture needs a writable vault source.")
         case "invalid_vault_request": return L("Choose a language and whether to record prompts, then preview again.")
         case "typesafe_key_not_saved": return L("The key could not be saved in the Keychain. Paste it again; it must not be empty.")
+        case "source_read_only": return L("This is a read-only copy of a GitHub knowledge base. Change it on GitHub; Carry picks up the change at the next sync.")
         case "source_root_missing": return L("This source folder is not available. Reconnect the drive or check the folder in Settings › Sources.")
         case "source_file_missing", "note_not_found": return L("That note no longer exists at this path. Refresh the vault list.")
         case "note_too_large": return L("This file is too large to preview here. Open it in your editor.")
@@ -286,6 +287,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
     var sources: [[String: Any]] { snapshot["workspace"] as? [String: Any] == nil ? [] : (snapshot["workspace"] as! [String: Any])["sources"] as? [[String: Any]] ?? [] }
     var localSources: [[String: Any]] { sources.filter { ($0["github"] as? [String: Any])?.isEmpty != false } }
+    /// Sources the Notes page can show: local folders, and GitHub sources once their read-only copy exists.
+    var browsableSources: [[String: Any]] { sources.filter { ($0["github"] as? [String: Any])?.isEmpty != false || $0["root_available"] as? Bool != false } }
+    /// A GitHub source is a copy replaced on every sync, so the app only reads it.
+    func isReadOnly(_ sid: String) -> Bool { (sources.first { str($0, "source_id") == sid }?["github"] as? [String: Any])?.isEmpty == false }
+    func sourceLabel(_ source: [String: Any]) -> String {
+        (source["github"] as? [String: Any])?.isEmpty == false ? str(source, "source_id") + " (GitHub)" : URL(fileURLWithPath: str(source, "root")).lastPathComponent
+    }
+    /// The vault drafts are reviewed in: a GitHub source picked on the Notes page is left for the default one.
+    func leaveReadOnlyVault() {
+        guard isReadOnly(vaultSource) else { return }
+        let fallback = str(settings, "default_vault", "")
+        if !fallback.isEmpty && !isReadOnly(fallback) { switchVault(fallback) }
+    }
     var activity: [[String: Any]] { (snapshot["activity"] as? [[String: Any]] ?? []).sorted { str($0,"updated") > str($1,"updated") } }
     var adapters: [[String: Any]] { (snapshot["capture"] as? [String: Any])?["adapters"] as? [[String: Any]] ?? [] }
     var connections: [[String: Any]] { snapshot["connections"] as? [[String: Any]] ?? [] }
@@ -1701,7 +1715,7 @@ struct VaultView: View {
         return counts.sorted { $0.value > $1.value }.map { ($0.key, $0.value) }
     }
     @ViewBuilder var bulkBar: some View {
-        if ["drafts", "inbox"].contains(model.vaultFilter) {
+        if ["drafts", "inbox"].contains(model.vaultFilter) && !model.isReadOnly(model.vaultSource) {
             VStack(alignment: .leading, spacing: 8) {
                 if model.vaultFilter == "drafts" && draftFolders.count > 1 {
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -1768,10 +1782,13 @@ struct VaultView: View {
     var body: some View {
         HSplitView {
             VStack(alignment: .leading, spacing: 10) {
-                if model.localSources.count > 1 {
+                if model.browsableSources.count > 1 {
                     Picker(T("Folder", "Klasör"), selection: Binding(get: { model.vaultSource }, set: { model.switchVault($0) })) {
-                        ForEach(model.localSources.indices, id: \.self) { i in Text(URL(fileURLWithPath: str(model.localSources[i], "root")).lastPathComponent).tag(str(model.localSources[i], "source_id")) }
+                        ForEach(model.browsableSources.indices, id: \.self) { i in Text(model.sourceLabel(model.browsableSources[i])).tag(str(model.browsableSources[i], "source_id")) }
                     }
+                }
+                if model.isReadOnly(model.vaultSource) {
+                    Label(T("Read-only copy of a GitHub knowledge base. Change it on GitHub.", "GitHub bilgi bankasının salt okunur kopyası. Değişikliği GitHub'da yapın."), systemImage: "lock").font(.caption).foregroundStyle(.secondary)
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     Text(T("All notes Carry can read. Click one to read it on the right.", "Carry'nin okuyabildiği tüm notlar. Birine tıklayın, sağda okuyun.")).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -1780,7 +1797,9 @@ struct VaultView: View {
                 }
                 HStack {
                     TextField(T("Find by name, folder or summary", "Ada, klasöre ya da özete göre bul"), text: $query).textFieldStyle(.roundedBorder)
-                    Button { model.showNewNote = true } label: { Label(T("New note", "Yeni not"), systemImage: "square.and.pencil") }
+                    if !model.isReadOnly(model.vaultSource) {
+                        Button { model.showNewNote = true } label: { Label(T("New note", "Yeni not"), systemImage: "square.and.pencil") }
+                    }
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     Picker(L("Show"), selection: $model.vaultFilter) {
@@ -1867,7 +1886,10 @@ struct NoteView: View {
                     if let summary = front["summary"] as? String, !isDigestCount(summary) { Text(summary).italic().foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).textSelection(.enabled) }
                     let listed = model.files.first { str($0, "path") == str(note, "path") } ?? [:]
                     let inQueue = listed["review"] as? Bool == true
-                    if inQueue && listed["digest"] as? Bool == true {
+                    let readOnly = model.isReadOnly(model.noteSource)
+                    if readOnly {
+                        EmptyView()
+                    } else if inQueue && listed["digest"] as? Bool == true {
                         DigestItemsView(model: model, path: str(note, "path"), meeting: str(front, "provenance", "") == "meeting").id(str(note, "path"))
                     } else if front["draft"] as? Bool == true && front["lock"] as? Bool != true {
                         VStack(alignment: .leading, spacing: 10) {
@@ -1894,8 +1916,10 @@ struct NoteView: View {
                         }.padding(12).background(Color.orange.opacity(0.08)).clipShape(RoundedRectangle(cornerRadius: 10))
                     }
                     FlowLayout {
-                        if obsidianInstalled { Button(L("Open in Obsidian"), systemImage: "arrow.up.forward.app") { if let u = obsidianURL(absolute) { NSWorkspace.shared.open(u) } } }
-                        Button(T("Open in default app", "Varsayılan uygulamada aç"), systemImage: "square.and.pencil") { NSWorkspace.shared.open(URL(fileURLWithPath: absolute)) }
+                        if !readOnly {
+                            if obsidianInstalled { Button(L("Open in Obsidian"), systemImage: "arrow.up.forward.app") { if let u = obsidianURL(absolute) { NSWorkspace.shared.open(u) } } }
+                            Button(T("Open in default app", "Varsayılan uygulamada aç"), systemImage: "square.and.pencil") { NSWorkspace.shared.open(URL(fileURLWithPath: absolute)) }
+                        }
                         Button(L("Show in Finder"), systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: absolute)]) }
                         Button(L("Copy path"), systemImage: "doc.on.doc") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(absolute, forType: .string) }
                     }.controlSize(.small)
@@ -2591,7 +2615,7 @@ struct SourceCard: View {
                     Text(isGitHub ? sid : URL(fileURLWithPath: str(source, "root")).lastPathComponent).font(.headline)
                     Badge(text: isGitHub ? "GitHub" : (source["writable"] as? Bool == true ? T("Carry may add records", "Carry kayıt ekleyebilir") : T("your notes are not changed", "notlarınız değiştirilmez")))
                     if source["root_available"] as? Bool == false { Badge(text: T("folder not found", "klasör bulunamadı"), color: .red) }
-                    if !isGitHub { Button(T("Show notes", "Notları göster")) { model.switchVault(sid); model.page = "Vault" } }
+                    if !isGitHub || source["root_available"] as? Bool != false { Button(T("Show notes", "Notları göster")) { model.switchVault(sid); model.page = "Vault" } }
                     Button(T("Remove from Carry…", "Carry'den çıkar…"), role: .destructive) { confirmRemove = true }
                 }
                 if source["root_available"] as? Bool == false && !isGitHub {
@@ -2828,7 +2852,7 @@ struct SearchHitCard: View {
                     if str(hit, "text").count > 420 { Button(expanded ? T("Show less", "Daha az göster") : T("Show more", "Devamını göster")) { expanded.toggle() }.buttonStyle(.link) }
                     Spacer()
                     if let url = hit["url"] as? String, let link = URL(string: url) { Link(L("Open this version on GitHub"), destination: link) }
-                    else if model.localSources.contains(where: { str($0, "source_id") == str(hit, "source_id") }) {
+                    if model.browsableSources.contains(where: { str($0, "source_id") == str(hit, "source_id") }) {
                         Button(T("Open note", "Notu aç")) { model.openNote(str(hit, "path"), source: str(hit, "source_id")) }
                     }
                 }
@@ -4383,7 +4407,7 @@ struct ContentView: View {
                     case "Vault": VaultView(model: model)
                     case "Graph": GraphView(model: model)
                     case "Search": Search(model: model).disabled(model.busy)
-                    case "Review": ReviewView(model: model)
+                    case "Review": ReviewView(model: model).onAppear { model.leaveReadOnlyVault() }
                     case "Meetings": MeetingsView(model: model)
                     case "Proposals": Activity(model: model).disabled(model.busy)
                     case "Settings": SettingsView(model: model).disabled(model.busy)
@@ -4466,6 +4490,7 @@ let TR: [String: String] = [
     "This vault is connected read-only. Prompt capture needs a writable vault source.": "Bu not klasörü yalnız okunur bağlı. İstem kaydı için Carry'nin yazabildiği bir klasör gerekir.",
     "Choose a language and whether to record prompts, then preview again.": "Bir dil ve istemlerin kaydedilip kaydedilmeyeceğini seçip yeniden önizleyin.",
     "The key could not be saved in the Keychain. Paste it again; it must not be empty.": "Anahtar Anahtar Zinciri'ne kaydedilemedi. Yeniden yapıştırın; boş olmamalı.",
+    "This is a read-only copy of a GitHub knowledge base. Change it on GitHub; Carry picks up the change at the next sync.": "Bu, GitHub bilgi bankasının salt okunur bir kopyası. Değişikliği GitHub'da yapın; Carry bir sonraki eşitlemede alır.",
     "This source folder is not available. Reconnect the drive or check the folder in Settings › Sources.": "Bu not klasörüne erişilemiyor. Diski yeniden bağlayın ya da Ayarlar › Not klasörleri'nden kontrol edin.",
     "That note no longer exists at this path. Refresh the vault list.": "Bu not artık bu yerde yok. Listeyi yenileyin.",
     "This file is too large to preview here. Open it in your editor.": "Bu dosya burada önizlemek için çok büyük. Editörünüzde açın.",

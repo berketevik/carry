@@ -176,6 +176,8 @@ def decide(ws, source_id, relative, item, action, text=None, today=None):
     statement = ' '.join((text or '').split())
     if action == 'fix' and not statement:
         raise CarryError('fix_needs_text')
+    from .vaultview import _editable
+    _editable(ws, source_id)
     root, path, body, front = _open(ws, source_id, relative)
     if front.get('lock') is True:
         raise CarryError('note_locked')
