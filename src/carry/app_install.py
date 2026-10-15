@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 from .errors import CarryError
 
@@ -91,10 +92,13 @@ def install(target=DEFAULT_PATH, workspace=None, python=None):
         subprocess.run([compiler] + flags + [str(model), '-o', str(helper)], capture_output=True, text=True)
         if helper.exists():
             subprocess.run(['/usr/bin/codesign', '--force', '--sign', '-', str(helper)], capture_output=True)
+        # Launch Services opens the highest CFBundleVersion among every bundle with this ID, so an
+        # older build left in a folder (a pilot package, a test build) would open instead of this
+        # one. The install time only grows, so the app just installed is the one that opens.
         with open(app / 'Contents' / 'Info.plist', 'wb') as f:
             plistlib.dump(dict(CFBundleExecutable='Carry', CFBundleIdentifier=BUNDLE_ID, CFBundleName='Carry',
                                CFBundleDisplayName='Carry', CFBundlePackageType='APPL', CFBundleShortVersionString=_version(),
-                               CFBundleVersion='1', LSMinimumSystemVersion='14.0', NSHighResolutionCapable=True,
+                               CFBundleVersion=str(int(time.time())), LSMinimumSystemVersion='14.0', NSHighResolutionCapable=True,
                                CFBundleIconFile='Carry', **USAGE), f)
         (app / 'Contents' / 'Resources' / 'python-path.txt').write_text((python or sys.executable) + '\n', encoding='utf-8', newline='\n')
         icon = resources.files('carry') / 'app' / 'Carry.icns'

@@ -221,6 +221,22 @@ class AppInstallTest(unittest.TestCase):
         for key in ('NSMicrophoneUsageDescription', 'NSSpeechRecognitionUsageDescription', 'NSAudioCaptureUsageDescription'):
             self.assertIn('Carry', info[key])
 
+    def test_a_new_install_outranks_older_builds(self):
+        """macOS opens the highest bundle version with Carry's ID; old pilot builds say 7."""
+        from carry import app_install
+        import plistlib, subprocess
+        done = subprocess.CompletedProcess([], 0, '', '')
+        versions = []
+        with tempfile.TemporaryDirectory() as tmp:
+            for now in (1_792_000_000, 1_792_000_060):
+                with patch.object(app_install, 'swiftc', return_value='/usr/bin/swiftc'), patch.object(app_install.sys, 'platform', 'darwin'), \
+                        patch.object(app_install.subprocess, 'run', return_value=done), patch.object(app_install.time, 'time', return_value=now):
+                    target = app_install.install(target=Path(tmp) / 'Carry.app')
+                with open(target / 'Contents' / 'Info.plist', 'rb') as f:
+                    versions.append(int(plistlib.load(f)['CFBundleVersion']))
+        self.assertGreater(versions[0], 7)
+        self.assertGreater(versions[1], versions[0])
+
     def test_the_app_brings_apple_s_on_device_model_for_meetings(self):
         from carry import app_install
         from importlib import resources
