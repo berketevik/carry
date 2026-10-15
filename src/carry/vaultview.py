@@ -189,10 +189,26 @@ def _files(root, src):
     return walk_markdown(root, extensions=tuple(src.extensions), max_bytes=float('inf'))
 
 
+def _modified(rel, path, history, local):
+    """A repository file changed when it was last committed; the file's own time is when it
+    was unpacked or pulled here. An uncommitted edit in a team clone is newer than both."""
+    committed = history.get(rel)
+    if committed and rel not in local:
+        from .commits import epoch
+        return epoch(committed), committed
+    return path.stat().st_mtime, committed
+
+
+def _history(src):
+    from .commits import changed_locally, for_source
+    return for_source(src), changed_locally(src)
+
+
 def browse(ws, source_id):
     src, root = _local(ws, source_id)
     indexed = _indexed_paths(ws, src.source_id)
     managed = _managed(root)
+    history, local = _history(src)
     files, truncated = [], False
     for relative, path in _files(root, src):
         if len(files) >= MAX_FILES:
@@ -204,10 +220,11 @@ def browse(ws, source_id):
             continue
         front = _meta(path)
         rel = relative.replace(os.sep, '/')
+        modified, committed = _modified(rel, path, history, local)
         files.append(dict(
             path=rel, name=Path(rel).stem, title=_text(front.get('title')) or front.get('_heading') or Path(rel).stem,
             folder=rel.rsplit('/', 1)[0] if '/' in rel else '',
-            modified=st.st_mtime, size=st.st_size, indexed=not excluded(rel, src.exclude),
+            modified=modified, committed=committed, size=st.st_size, indexed=not excluded(rel, src.exclude),
             index_state=_index_state(rel, src, indexed, path),
             type=_text(front.get('type')), summary=okf.description(front),
             status=_text(front.get('status')), lifecycle=okf.lifecycle(front)[0], intensity=okf.intensity(front),
@@ -229,13 +246,15 @@ def note(ws, source_id, relative):
     raw = path.read_text(encoding='utf-8', errors='replace')
     front, body = parse_frontmatter(raw)
     rel = path.relative_to(root).as_posix()
+    modified, committed = _modified(rel, path, *_history(src))
     links = sorted(set(link_targets(body, rel)))
     heading = next((l[2:].strip() for l in body.splitlines() if l.startswith('# ')), '')
     return dict(source_id=src.source_id, path=rel, absolute=str(path), title=_text(front.get('title')) or heading or path.stem,
                 frontmatter={k: okf.plain(v) if isinstance(v, (str, int, float, bool, list, dict)) or v is None
                              or hasattr(v, 'isoformat') else str(v) for k, v in (front or {}).items()},
                 okf=okf.view(front),
-                body=MARK.sub('', body) if is_digest(front) else body, modified=path.stat().st_mtime, indexed=not excluded(rel, src.exclude),
+                body=MARK.sub('', body) if is_digest(front) else body, modified=modified, committed=committed,
+                indexed=not excluded(rel, src.exclude),
                 index_state=_index_state(rel, src, _indexed_paths(ws, src.source_id), path), links=links)
 
 

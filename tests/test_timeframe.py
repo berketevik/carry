@@ -47,6 +47,12 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(row_date('Plan', 'notes/X.md', {'created': '2026-06-01', 'updated': '2026-09-18'}, f), dt.date(2026, 9, 18))
         self.assertIsNone(row_date('Plan', 'notes/X.md', {}, f))
 
+    def test_a_repository_file_without_dates_belongs_to_its_last_commit(self):
+        committed = '2026-09-16T23:30:00+03:00'
+        self.assertEqual(row_date('Plan', 'X.md', {}, committed=committed), dt.date(2026, 9, 16))
+        # A date the note records itself still wins over when it was committed.
+        self.assertEqual(row_date('Plan', 'X.md', {'updated': '2026-08-02'}, committed=committed), dt.date(2026, 8, 2))
+
     def test_labels(self):
         self.assertEqual(label(parse('geçen hafta', SUNDAY)), '14–20 Eylül 2026')
         self.assertEqual(label(parse('dün', SUNDAY)), '26 Eylül 2026')

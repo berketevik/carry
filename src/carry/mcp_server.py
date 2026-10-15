@@ -186,6 +186,9 @@ def _format_recall(result):
         header = (f"[{number}] {team}{item['citation']} > {item['heading']} "
                   f"[record {item['record_id']} rev {item['revision']} state {item['state']}]")
         body = header + ("\nSource URL: " + item["url"] if item.get("url") else "")
+        if item.get("committed_at"):
+            # When the file last changed in its repository, not when it reached this computer.
+            body += "\nLast commit to this file: " + item["committed_at"]
         # A document's front matter once, with its first passage.
         key = (item["source_id"], item["path"])
         metadata = {k: v for k, v in (item.get("metadata") or {}).items() if k in PASSAGE_METADATA}
