@@ -510,6 +510,15 @@ class MeetTest(unittest.TestCase):
         self.assertEqual(path.read_text(encoding='utf-8').count('source_type:'), 1)
         self.assertEqual(len(meet.read(self.root, rel)[2]), 4)
 
+    def test_a_note_with_windows_line_endings_keeps_its_frontmatter(self):
+        rel = self.saved()['path']
+        path = self.root / rel
+        path.write_bytes(path.read_text(encoding='utf-8').replace('\n', '\r\n').encode('utf-8'))
+        meet.mark_raw(self.root, rel, 'Turkish')
+        front, _ = parse_frontmatter(path.read_text(encoding='utf-8'))
+        self.assertEqual((front['meet_status'], front['duration_minutes'], str(front['created'])), ('raw', 2, '2026-10-13'))
+        self.assertIn('Carry Meet', front['summary'])
+
     def test_a_locked_note_is_never_rewritten(self):
         rel = self.saved()['path']
         path = self.root / rel

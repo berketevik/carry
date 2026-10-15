@@ -32,7 +32,7 @@ import time
 from . import filelock, harvest
 from .background import detached
 from .errors import CarryError
-from .markdown import parse_frontmatter
+from .markdown import FRONTMATTER_RE, parse_frontmatter
 from .mask import mask
 from .paths import resolve_within
 from .persistence import atomic_text
@@ -406,11 +406,9 @@ def write_digest(root, rel, title, groups, meta, language, day):
 
 def _own_front(text):
     """The owner's frontmatter lines, as written: every key but type, source_type and meet_*."""
-    if not text.startswith('---\n'):
-        return []
-    end = text.find('\n---', 3)
+    m = FRONTMATTER_RE.match(text.replace('\r\n', '\n'))
     out, keep = [], False
-    for l in text[4:end].splitlines() if end > 0 else []:
+    for l in m.group(1).splitlines() if m else []:
         if l and not l[0].isspace() and not l.startswith('-'):
             key = l.split(':', 1)[0].strip()
             keep = key not in ('type', 'source_type') and not key.startswith('meet_')
@@ -422,7 +420,9 @@ def _own_front(text):
 def _front(text, front, status, **extra):
     """The note's frontmatter for a rewrite: the owner's keys (tags, related, sources...) stay as
     they were written; Carry sets only type, source_type and meet_*."""
-    head = ['---', 'type: meeting'] + _own_front(text) + ['source_type: meet']
+    own = _own_front(text) or [f'{k}: {json.dumps(front[k], ensure_ascii=False) if k == "summary" else front[k]}'
+                               for k in ('summary', 'created', 'started', 'duration_minutes') if front.get(k) is not None]
+    head = ['---', 'type: meeting'] + own + ['source_type: meet']
     if front.get('meet_language'):
         head.append(f"meet_language: {front['meet_language']}")
     head.append(f'meet_status: {status}')
