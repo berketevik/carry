@@ -58,6 +58,14 @@ def _local(ws, source_id):
     return src, root
 
 
+def _editable(ws, source_id):
+    """A GitHub source is a pinned mirror replaced on every sync: the app reads it, never writes to it."""
+    src, root = _local(ws, source_id)
+    if src.github:
+        raise CarryError('source_read_only')
+    return src, root
+
+
 def default_vault(ws):
     """The source the app shows first: a bootstrapped vault, else the first local
     read-only source, else the first source."""
@@ -230,7 +238,7 @@ def create_note(ws, source_id, title, body=''):
     """A note the owner writes in the app: notes/<title>.md when the folder has notes/, else the top level."""
     import datetime as _dt
     import re as _re
-    src, root = _local(ws, source_id)
+    src, root = _editable(ws, source_id)
     if not isinstance(title, str) or not isinstance(body, str):
         raise CarryError('invalid_note')
     name = _re.sub(r'[\\/:*?"<>|\n\r\t]+', ' ', title)
@@ -278,7 +286,7 @@ def awaits_review(rel, front):
 
 def approve_note(ws, source_id, relative):
     """The owner checked a draft: drop its `draft: true` line. Locked notes and raw material are refused."""
-    src, root = _local(ws, source_id)
+    src, root = _editable(ws, source_id)
     path = resolve_within(root, relative)
     if not path.is_file():
         raise CarryError('source_file_missing')
@@ -309,7 +317,7 @@ def clear_draft(path, relative, raw=None):
 def approve_many(ws, source_id, paths):
     """Approve several drafts at once. Locked notes and raw material (chat logs, clips) are
     skipped with a reason; one failure never stops the rest."""
-    src, root = _local(ws, source_id)
+    src, root = _editable(ws, source_id)
     approved, skipped = [], []
     for rel in paths if isinstance(paths, list) else []:
         try:
