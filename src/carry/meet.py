@@ -68,6 +68,7 @@ LABELS = {
     'Turkish': dict(me='Ben', others='Karşı taraf', meeting='Toplantı', summary='Özet', minutes='Tutanak',
                     transcript='Transkript', decision='Kararlar', open_item='Açık işler', fact='Bilgiler',
                     pending='Özet hazırlanıyor; Carry toplantı bitince bir kez özetler.',
+                    whisper='Canlı transkript boş kaldı; transkripti bu Mac\'te Whisper yazıyor.',
                     failed='Özet çıkarılamadı: {error}. Carry uygulamasında Toplantılar sayfasından yeniden deneyin.',
                     raw='Özet yok: bu not klasörüne bağlı bir asistan yok, transkript ham kaldı. Ayarlar › Asistanlar '
                         'bölümünden Claude Code ya da Codex\'i bağlayıp Toplantılar sayfasından özetleyin.',
@@ -78,6 +79,7 @@ LABELS = {
     'English': dict(me='Me', others='Others', meeting='Meeting', summary='Summary', minutes='Minutes',
                     transcript='Transcript', decision='Decisions', open_item='Open items', fact='Facts',
                     pending='Summary in progress; Carry summarises once the meeting ends.',
+                    whisper='The live transcript stayed empty; Whisper writes the transcript on this Mac.',
                     failed='No summary: {error}. Retry from the Meetings page in the Carry app.',
                     raw='No summary: no assistant is connected to this notes folder, so the transcript stays raw. '
                         'Connect Claude Code or Codex under Settings › Assistants, then summarise it from the Meetings page.',
@@ -195,6 +197,7 @@ def clean_lines(segments):
 ECHO_SECONDS = 10
 ECHO_SHARE = 0.7
 ECHO_WORDS = 4
+SHORT_ECHO_SECONDS = 4
 
 
 def drop_echo(lines):
@@ -208,6 +211,11 @@ def drop_echo(lines):
             heard = set().union(*(w for at, w in others if abs(at - x['start']) <= ECHO_SECONDS))
             if len(own & heard) >= ECHO_SHARE * len(own):
                 continue
+        # A short line is an echo when one line of the other side, begun just before it, says
+        # every one of its words ("Aynen geliyor" two seconds into the other side's sentence).
+        if x['speaker'] == 'me' and 2 <= len(own) < ECHO_WORDS and any(
+                own <= w for at, w in others if -1 <= x['start'] - at <= SHORT_ECHO_SECONDS):
+            continue
         out.append(x)
     return out
 
@@ -218,15 +226,16 @@ def _section(lines, L, mic_only=False):
     return head + '\n'.join(f"- **[{i + 1} · {_clock(x['start'])}] {L[x['speaker']]}:** {x['text']}" for i, x in enumerate(lines)) + '\n'
 
 
-def save(ws, segments, title='', started=None, duration=None, root=None, language=None, mic_only=False):
+def save(ws, segments, title='', started=None, duration=None, root=None, language=None, mic_only=False, whisper=False):
     """Write the transcript as a meeting note at once and return its path in the vault.
     `started` is the recording's start (ISO 8601, local time); `duration` its length in seconds;
-    `mic_only` says the system audio could not be recorded."""
+    `mic_only` says the system audio could not be recorded. With `whisper` (the audio goes to
+    Whisper next) a meeting the live recognizer heard nothing of is saved too, for Whisper to fill."""
     root = meeting_vault(ws, root)
     language = language or harvest.draft_language(ws, root)
     L = labels(language)
     lines = clean_lines(segments)
-    if not lines:
+    if not lines and not whisper:
         raise CarryError('meeting_transcript_empty')
     try:
         when = datetime.datetime.fromisoformat(str(started)) if started else datetime.datetime.now()
@@ -234,7 +243,7 @@ def save(ws, segments, title='', started=None, duration=None, root=None, languag
         raise CarryError('invalid_meeting_start')
     when = when.astimezone() if when.tzinfo else when
     try:
-        minutes = max(1, round(float(duration) / 60)) if duration is not None else max(1, round(lines[-1]['start'] / 60))
+        minutes = max(1, round(float(duration) / 60)) if duration is not None else max(1, round(lines[-1]['start'] / 60) if lines else 1)
     except (TypeError, ValueError):
         raise CarryError('invalid_meeting_duration')
     name = safe_title(title, language)
@@ -246,7 +255,8 @@ def save(ws, segments, title='', started=None, duration=None, root=None, languag
     text = (f'---\ntype: meeting\nsummary: {json.dumps(summary, ensure_ascii=False)}\ncreated: {when:%Y-%m-%d}\n'
             f'started: {when.isoformat(timespec="seconds")}\nduration_minutes: {minutes}\nsource_type: meet\n'
             f'meet_language: {language}\nmeet_status: pending\n' + ('meet_mic_only: true\n' if mic_only else '') +
-            f'---\n\n# {name}\n\n## {L["summary"]}\n\n*{L["pending"]}*\n\n' + _section(lines, L, mic_only))
+            f'---\n\n# {name}\n\n## {L["summary"]}\n\n*{L["pending"]}*\n\n'
+            + (_section(lines, L, mic_only) if lines else f"## {L['transcript']}\n\n*{L['whisper']}*\n"))
     atomic_text(root / rel, text)
     return dict(path=rel, root=str(root), lines=len(lines), minutes=minutes, title=name)
 
@@ -551,6 +561,11 @@ def summarize(ws, rel, root=None, language=None, which=None, audio=None):
     front, title, lines, body = read(root, rel)
     language = language or note_language(front, body) or harvest.draft_language(ws, root)
     if not lines:
+        _record(ws, rel, status='failed', error='meeting_transcript_empty')
+        try:
+            mark_failed(root, rel, CarryError('meeting_transcript_empty'), language)
+        except (CarryError, OSError):
+            pass
         raise CarryError('meeting_transcript_empty')
     day = str(front.get('created') or datetime.date.today().isoformat())
     chain = clients(ws, root, which)
