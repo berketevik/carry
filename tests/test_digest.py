@@ -57,6 +57,16 @@ class DigestTest(unittest.TestCase):
     def ids(self):
         return {it['statement']: it for it in digest.items(self.ws, self.sid, self.rel)['items']}
 
+    def test_a_digest_is_recognised_without_pyyaml(self):
+        # The default install has no PyYAML: the `harvest:` line must still read as a mapping,
+        # or the digest is shown as a plain draft and can be approved wholesale.
+        from carry import markdown
+        with patch.object(markdown, '_yaml', None):
+            front, _ = markdown.parse_frontmatter(DIGEST)
+            self.assertEqual(front['harvest']['extractor'], 'claude:sonnet')
+            self.assertTrue(vaultview.is_digest(front))
+            self.assertEqual(markdown.parse_frontmatter('---\nnote: {not json}\n---\n')[0]['note'], '{not json}')
+
     def test_items_are_parsed_with_sections_dates_and_folded_ones(self):
         got = digest.items(self.ws, self.sid, self.rel)
         items = {it['statement']: it for it in got['items']}

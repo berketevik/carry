@@ -370,7 +370,7 @@ def _dated_rows(con, eligible, files, frame):
     return out
 
 
-RAW_TYPES = ("chat-raw", "source", "clip")
+RAW_TYPES = ("chat-raw", "source", "clip", "meeting")
 
 
 def _written(row):

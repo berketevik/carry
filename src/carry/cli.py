@@ -434,6 +434,30 @@ def cmd_harvest(args):
     return EXIT_FAILED if report['pending'] else EXIT_OK
 
 
+def cmd_meet(args):
+    from . import meet
+    ws = open_workspace(args.workspace)
+    if args.meet_command == 'list':
+        found = meet.listing(ws, args.vault)
+        _print(found, args.json, [f"{m['started'][:16].replace('T', ' ')}  {m['status']:<8} {m['title']}" for m in found['meetings']]
+               or ['no meetings yet'])
+        return EXIT_OK
+    if args.meet_command == 'download-whisper':
+        from . import whisper_model
+        report = meet.download_whisper(ws)
+        _print(report, args.json, [f"Whisper model ready: {whisper_model.model_dir()}"])
+        return EXIT_OK
+    report = meet.summarize(ws, args.path, root=args.vault, language=args.language, which=args.extractor, audio=args.audio)
+    stamp = time.strftime('%Y-%m-%d %H:%M ')  # app runs share one log
+    if report['raw']:
+        _print(report, args.json, [f"{stamp}meeting {report['path']}: no assistant connected, the transcript stays raw"])
+        return EXIT_OK
+    _print(report, args.json, [f"{stamp}meeting {report['path']}: {report['points']} points, {report['items']} items, "
+                               f"{report['dropped']} without a verbatim quote"]
+           + ([f"draft: {report['digest']}"] if report['digest'] else []))
+    return EXIT_OK
+
+
 def cmd_share(args):
     from dataclasses import replace
     from . import share, vaultview
@@ -698,6 +722,20 @@ def build_parser():
     hv.add_argument("--install-schedule", action="store_true", help="run every evening at 21:30 (launchd; Task Scheduler on Windows)")
     hv.add_argument("--remove-schedule", action="store_true")
     hv.set_defaults(func=cmd_harvest)
+
+    mt = sub.add_parser("meet", help="meetings recorded in the app: list them, summarise one again, get the Whisper model")
+    mtsub = mt.add_subparsers(dest="meet_command", required=True)
+    mtsub.add_parser("list", help="meetings in the vault, newest first, with their summary state")
+    ms = mtsub.add_parser("summarize", help="summarise a saved meeting with your assistant (the app does this at Stop)")
+    ms.add_argument("--path", required=True, help="the meeting inside the vault, e.g. 'sources/carry/meet/… .md'")
+    ms.add_argument("--language", choices=("Turkish", "English"), help="language of the summary (default: the drafts')")
+    ms.add_argument("--extractor", help="claude:<model>, codex:<model> or apple:on-device (default: the connected assistant, "
+                                        "claude:sonnet, else codex:gpt-6-astra)")
+    ms.add_argument("--audio", help="the app's audio folder under <workspace>/meet-audio/: transcribe it with Whisper first, then delete it")
+    mtsub.add_parser("download-whisper", help="download the Whisper model (874 MB) that transcribes meetings again after they end")
+    for each in (mtsub.choices["list"], ms):
+        each.add_argument("--vault", help="vault folder (default: the workspace's own notes, never a team's)")
+    mt.set_defaults(func=cmd_meet)
 
     sh = sub.add_parser("share", help="share an approved chat item into a team repo's inbox")
     shsub = sh.add_subparsers(dest="share_command", required=True)

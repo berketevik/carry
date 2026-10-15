@@ -245,7 +245,7 @@ def create_note(ws, source_id, title, body=''):
     return dict(path=path.relative_to(root).as_posix())
 
 
-RAW_TYPES = ('chat-raw', 'source')
+RAW_TYPES = ('chat-raw', 'source', 'meeting')
 
 
 def is_digest(front):
