@@ -477,6 +477,77 @@ class MeetTest(unittest.TestCase):
         self.assertIn('Sistem sesi alınamadı', body)
         self.assertEqual(len(meet.read(self.root, rel)[2]), 2)
 
+    def test_a_renamed_transcript_heading_keeps_the_transcript(self):
+        rel = self.saved()['path']
+        path = self.root / rel
+        path.write_text(path.read_text(encoding='utf-8').replace('## Transkript\n', '## Transkript (düzeltildi) \n'), encoding='utf-8')
+        with self.assertRaises(CarryError):
+            meet.summarize(self.ws, rel, which='claude:sonnet')
+        body = path.read_text(encoding='utf-8')
+        self.assertIn('## Transkript (düzeltildi)', body)
+        self.assertEqual(len(meet.read(self.root, rel)[2]), 4)
+
+    def test_lines_without_their_heading_are_never_rewritten_away(self):
+        rel = self.saved()['path']
+        path = self.root / rel
+        path.write_text(path.read_text(encoding='utf-8').replace('## Transkript\n', '## Konuşma\n'), encoding='utf-8')
+        before = path.read_text(encoding='utf-8')
+        with self.assertRaises(CarryError):
+            meet.summarize(self.ws, rel, which='claude:sonnet')
+        self.assertEqual(path.read_text(encoding='utf-8'), before)
+        with self.assertRaisesRegex(CarryError, 'meeting_transcript_heading_missing'):
+            meet.mark_raw(self.root, rel, 'Turkish')
+
+    def test_a_rewrite_keeps_the_owner_s_frontmatter(self):
+        rel = self.saved()['path']
+        path = self.root / rel
+        text = path.read_text(encoding='utf-8')
+        path.write_text(text.replace('source_type: meet\n', 'source_type: meet\ntags:\n  - carry\nrelated: "[[Carry]]"\n'), encoding='utf-8')
+        meet.mark_raw(self.root, rel, 'Turkish')
+        front, body = parse_frontmatter(path.read_text(encoding='utf-8'))
+        self.assertEqual((front['meet_status'], front['tags'], front['related']), ('raw', ['carry'], '[[Carry]]'))
+        self.assertEqual((front['type'], front['source_type'], front['duration_minutes']), ('meeting', 'meet', 2))
+        self.assertEqual(path.read_text(encoding='utf-8').count('source_type:'), 1)
+        self.assertEqual(len(meet.read(self.root, rel)[2]), 4)
+
+    def test_a_locked_note_is_never_rewritten(self):
+        rel = self.saved()['path']
+        path = self.root / rel
+        path.write_text(path.read_text(encoding='utf-8').replace('source_type: meet\n', 'source_type: meet\nlock: true\n'), encoding='utf-8')
+        before = path.read_text(encoding='utf-8')
+        with self.assertRaisesRegex(CarryError, 'meeting_note_locked'):
+            meet.summarize(self.ws, rel, which='claude:sonnet')
+        with self.assertRaisesRegex(CarryError, 'meeting_note_locked'):
+            meet.write_transcript(self.root, rel, meet.clean_lines(SEGMENTS[:1]), 'whisper')
+        self.assertEqual(path.read_text(encoding='utf-8'), before)
+
+    def test_an_edit_made_while_the_summary_runs_is_kept_in_the_transcript(self):
+        rel = self.saved()['path']
+        path = self.root / rel
+
+        def ask(system, body, which, field):
+            path.write_text(path.read_text(encoding='utf-8').replace('Ayşe cuma', 'Ayşe Yılmaz cuma'), encoding='utf-8')
+            return []
+        with patch.object(harvest, 'ask_agent', side_effect=ask):
+            meet.summarize(self.ws, rel, which='claude:sonnet')
+        self.assertIn('Ayşe Yılmaz cuma', path.read_text(encoding='utf-8'))
+
+    def test_a_side_whisper_mostly_missed_keeps_apple_s_lines(self):
+        rel = self.saved()['path']
+        folder = self.audio()
+        said = dict(me=[(1.5, 6.0, 'Merhaba, bugün Carry toplantı kaydını konuşuyoruz.'),
+                        (21.0, 26.0, 'Ayşe cuma gününe kadar dosya yerini onaylayacak.')],
+                    others=[])  # its voice detection dropped the other side
+        for p in self.whisper(said):
+            p.start(); self.addCleanup(p.stop)
+        self.assertTrue(meet.transcribe(self.ws, rel, self.root, folder.name))
+        self.assertFalse(folder.exists())
+        front, body = parse_frontmatter((self.root / rel).read_text(encoding='utf-8'))
+        self.assertEqual(front['meet_transcript'], 'whisper+apple')
+        self.assertIn('Karşı taraf:** Kayıtlar cihazda yazıya dökülecek ve ses diske yazılmayacak', body)
+        self.assertIn('Karşı taraf:** Sistem sesi macOS on dört', body)
+        self.assertEqual(len(meet.read(self.root, rel)[2]), 4)
+
     def test_cli_lists_meetings(self):
         from carry import cli
         self.saved()

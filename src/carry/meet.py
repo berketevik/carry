@@ -404,28 +404,67 @@ def write_digest(root, rel, title, groups, meta, language, day):
     return digest_rel
 
 
-def _front(front, status, **extra):
-    keep = ('summary', 'created', 'started', 'duration_minutes', 'meet_language')
-    head = ['---', 'type: meeting'] + [f'{k}: {json.dumps(front[k], ensure_ascii=False) if k == "summary" else front[k]}'
-                                       for k in keep if front.get(k) is not None]
-    head += ['source_type: meet', f'meet_status: {status}']
+def _own_front(text):
+    """The owner's frontmatter lines, as written: every key but type, source_type and meet_*."""
+    if not text.startswith('---\n'):
+        return []
+    end = text.find('\n---', 3)
+    out, keep = [], False
+    for l in text[4:end].splitlines() if end > 0 else []:
+        if l and not l[0].isspace() and not l.startswith('-'):
+            key = l.split(':', 1)[0].strip()
+            keep = key not in ('type', 'source_type') and not key.startswith('meet_')
+        if keep:
+            out.append(l)
+    return out
+
+
+def _front(text, front, status, **extra):
+    """The note's frontmatter for a rewrite: the owner's keys (tags, related, sources...) stay as
+    they were written; Carry sets only type, source_type and meet_*."""
+    head = ['---', 'type: meeting'] + _own_front(text) + ['source_type: meet']
+    if front.get('meet_language'):
+        head.append(f"meet_language: {front['meet_language']}")
+    head.append(f'meet_status: {status}')
     # Who wrote the transcript and whether the other side was heard outlive every rewrite.
     extra = dict(dict(transcript=front.get('meet_transcript'), mic_only=front.get('meet_mic_only')), **extra)
     head += [f'meet_{k}: {json.dumps(v, ensure_ascii=False)}' for k, v in extra.items() if v]
     return '\n'.join(head + ['---', '', ''])
 
 
+def _note(root, rel):
+    """(path, text, frontmatter, body) of a meeting note Carry may rewrite: a locked note is
+    never rewritten."""
+    path = resolve_within(root, rel)
+    if not path.is_file():
+        raise CarryError('source_file_missing')
+    text = path.read_text(encoding='utf-8')
+    front, body = parse_frontmatter(text)
+    if front.get('lock') is True or str(front.get('lock')).strip().lower() == 'true':
+        raise CarryError('meeting_note_locked')
+    return path, text, front, body
+
+
+HEADING = re.compile(r'^## (?:%s)\b[^\n]*\n' % '|'.join(re.escape(L['transcript']) for L in LABELS.values()), re.M)
+
+
 def note_language(front, body):
     """The language a meeting note was saved in: recorded since it was saved, else its headings."""
     if front.get('meet_language') in LABELS:
         return front['meet_language']
-    return next((lang for lang, L in LABELS.items() if f"\n## {L['transcript']}\n" in body), None)
+    m = HEADING.search(body)
+    return next((lang for lang, L in LABELS.items() if m and m.group().startswith(f"## {L['transcript']}")), None)
 
 
 def _transcript(body):
-    """The transcript section, kept as it was, whatever language the note was saved in."""
-    at = [body.index(m) for m in (f"## {L['transcript']}\n" for L in LABELS.values()) if m in body]
-    return body[min(at):] if at else ''
+    """The transcript section, kept as it was, whatever language the note was saved in. A note
+    whose lines are there without the heading is never rewritten: that would drop them."""
+    m = HEADING.search(body)
+    if m:
+        return body[m.start():]
+    if any(LINE.match(l) for l in body.splitlines()):
+        raise CarryError('meeting_transcript_heading_missing')
+    return ''
 
 
 def _who(which):
@@ -437,9 +476,11 @@ def _who(which):
 
 
 def write_note(root, rel, front, title, body, points, items, language, digest_rel=None, cut=None, which=None):
-    """The meeting note with its summary and minutes above the transcript, which stays as it was."""
+    """The meeting note with its summary and minutes above the transcript, which stays as it was
+    (read again here: the summary takes minutes, and the owner may have edited the note)."""
     L = labels(language)
     day = str(front.get('created') or datetime.date.today().isoformat())
+    path, text, front, body = _note(root, rel)
     transcript = _transcript(body)
     out = [f'# {title}', '', f"## {L['summary']}", '']
     out += [f"- {p['statement']} *({p['clock']})*" for p in points] or [f"*{L['nothing']}*"]
@@ -454,34 +495,37 @@ def write_note(root, rel, front, title, body, points, items, language, digest_re
         out += [f"*{L['nothing']}*", '']
     if cut:
         out += [f"*{L['cut'].format(line=cut - 1)}*", '']
-    atomic_text(root / rel, _front(front, 'done', digest=digest_rel, extractor=which) + '\n'.join(out) + '\n' + transcript)
+    atomic_text(path, _front(text, front, 'done', digest=digest_rel, extractor=which) + '\n'.join(out) + '\n' + transcript)
 
 
 def mark_failed(root, rel, error, language):
     """A failed summary says so in the note; the transcript is never touched."""
-    front, title, _, body = read(root, rel)
+    _, title, _, _ = read(root, rel)
+    path, text, front, body = _note(root, rel)
     L = labels(language)
     transcript = _transcript(body)
-    text = f"# {title}\n\n## {L['summary']}\n\n*{L['failed'].format(error=error)}*\n\n"
-    atomic_text(root / rel, _front(front, 'failed', error=str(error)[:200]) + text + transcript)
+    above = f"# {title}\n\n## {L['summary']}\n\n*{L['failed'].format(error=error)}*\n\n"
+    atomic_text(path, _front(text, front, 'failed', error=str(error)[:200]) + above + transcript)
 
 
 def mark_raw(root, rel, language):
     """No assistant is connected: the note keeps its transcript and says how to summarise it."""
-    front, title, _, body = read(root, rel)
+    _, title, _, _ = read(root, rel)
+    path, text, front, body = _note(root, rel)
     L = labels(language)
-    text = f"# {title}\n\n## {L['summary']}\n\n*{L['raw']}*\n\n"
-    atomic_text(root / rel, _front(front, 'raw') + text + _transcript(body))
+    transcript = _transcript(body)
+    above = f"# {title}\n\n## {L['summary']}\n\n*{L['raw']}*\n\n"
+    atomic_text(path, _front(text, front, 'raw') + above + transcript)
 
 
 def write_transcript(root, rel, lines, transcript):
     """Another transcript in place of the note's: the summary part above it stays as it was."""
-    front, _, _, body = read(root, rel)
+    path, text, front, body = _note(root, rel)
     L = labels(note_language(front, body) or 'English')
     old = _transcript(body)
     head = body[:len(body) - len(old)] if old else body
-    atomic_text(root / rel, _front(front, str(front.get('meet_status') or 'pending'), transcript=transcript) + head.lstrip('\n')
-                + _section(lines, L, bool(front.get('meet_mic_only'))))
+    atomic_text(path, _front(text, front, str(front.get('meet_status') or 'pending'), transcript=transcript)
+                + head.lstrip('\n') + _section(lines, L, bool(front.get('meet_mic_only'))))
 
 
 def clients(ws=None, root=None, which=None):
@@ -503,6 +547,7 @@ def summarize(ws, rel, root=None, language=None, which=None, audio=None):
     audio = audio_folder(ws, audio)  # only the app's own folder is read, then deleted
     if audio:
         transcribe(ws, rel, root, audio)
+    _note(root, rel)  # a locked note goes to no assistant
     front, title, lines, body = read(root, rel)
     language = language or note_language(front, body) or harvest.draft_language(ws, root)
     if not lines:
@@ -629,6 +674,27 @@ def _whisper_lock(ws):
     return handle
 
 
+WHISPER_SHARE = 0.3  # a side Whisper heard far less of than Apple did keeps Apple's lines
+
+
+def _keep_apple_sides(front, body, segments):
+    """Whisper's segments, with Apple's lines kept for a side Whisper mostly missed (its voice
+    detection dropped a quiet speaker, or the side's audio stopped early): the audio is deleted
+    next, so Apple's lines are the only other copy. Returns (segments, sides kept)."""
+    L = labels(note_language(front, body) or 'English')
+    by_label = {L[s]: s for s in SPEAKERS}
+    apple = [dict(start=_seconds(m['at']), speaker=by_label.get(m['speaker'].strip()), text=m['text'])
+             for m in (LINE.match(l) for l in body.splitlines()) if m]
+    kept = []
+    for side in SPEAKERS:
+        heard = sum(len(words(x['text']).split()) for x in apple if x['speaker'] == side)
+        got = sum(len(words(x['text']).split()) for x in segments if x['speaker'] == side)
+        if heard and got < WHISPER_SHARE * heard:
+            segments = [x for x in segments if x['speaker'] != side] + [x for x in apple if x['speaker'] == side]
+            kept.append(side)
+    return segments, kept
+
+
 def transcribe(ws, rel, root, name):
     """Whisper's transcript of each side in place of Apple's, merged in time order with the
     echo left out; the audio is deleted whatever happens. When Whisper cannot run, Apple's
@@ -636,7 +702,7 @@ def transcribe(ws, rel, root, name):
     from . import whisper_model
     folder = _audio_root(ws) / name
     try:
-        front, _, _, body = read(root, rel)
+        _, _, front, body = _note(root, rel)
         language = WHISPER_LANGUAGES.get(note_language(front, body), 'en')
         lock = _whisper_lock(ws)
         try:
@@ -655,10 +721,11 @@ def transcribe(ws, rel, root, name):
         finally:
             filelock.unlock(lock)
             lock.close()
+        segments, kept = _keep_apple_sides(front, body, segments)
         lines = clean_lines(segments)
         if not lines:
             return False
-        write_transcript(root, rel, lines, 'whisper')
+        write_transcript(root, rel, lines, 'whisper+apple' if kept else 'whisper')
         return True
     except Exception as exc:  # Whisper never costs a meeting: Apple's transcript is already saved
         print(f"{time.strftime('%Y-%m-%d %H:%M')} whisper {rel}: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
@@ -691,10 +758,16 @@ def _state(ws):
 
 
 def _record(ws, rel, **entry):
-    # Only the app's spawn and the summary process itself write an entry, minutes apart.
-    state = _state(ws)
-    state[rel] = dict(entry, updated=time.time())
-    atomic_text(ws.state_dir / STATE_NAME, json.dumps(state, indent=1, ensure_ascii=False) + '\n')
+    # Two meetings in a row run two jobs: each read-modify-write holds the file's lock.
+    with open(Path(ws.state_dir) / (STATE_NAME + '.lock'), 'a+') as handle:
+        while not filelock.try_lock(handle):
+            time.sleep(0.05)
+        try:
+            state = _state(ws)
+            state[rel] = dict(entry, updated=time.time())
+            atomic_text(ws.state_dir / STATE_NAME, json.dumps(state, indent=1, ensure_ascii=False) + '\n')
+        finally:
+            filelock.unlock(handle)
 
 
 def _alive(pid):
