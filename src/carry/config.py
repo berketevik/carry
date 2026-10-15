@@ -26,8 +26,9 @@ DEFAULT_CHUNK_OVERLAP = 150
 class SourceConfig:
     """A configured Markdown root.
 
-    `scope` is a label for attribution and display. It is not authorization; the
-    product must not treat "team" as permission to read or publish anything.
+    `scope` is a label for attribution and display, and the boundary of a scoped
+    MCP server: one started with `--scope team` serves only team sources. It is
+    never permission to publish anything.
     """
     source_id: str
     root: Path

@@ -7,13 +7,18 @@ core and formats the result.
 
 Read tools are always available. Optional draft proposals require an explicit
 per-client switch and a server-bound client identity; no MCP tool accepts drafts.
+
+A server started with `--scope team` (or CARRY_SCOPE) serves only the sources of
+that scope: recall, catalog and status never reach another source, a hidden source
+answers like an unknown one, and proposals are not offered. With no source in the
+scope every read fails closed.
 """
 import json
 import os
 import sys
 
 from . import __version__, lifecycle
-from .config import open_workspace
+from .config import SCOPES, open_workspace
 from .console import use_utf8
 from .errors import CarryError
 from .recall import recall
@@ -112,8 +117,8 @@ PROPOSE_TOOL = {
         "required": ["content", "event_id", "source_refs"]}}
 
 
-def available_tools(state_dir=None, client=None):
-    if client:
+def available_tools(state_dir=None, client=None, scope=None):
+    if client and not scope:
         try:
             if lifecycle.client_enabled(_workspace(state_dir), client):
                 return [*TOOLS, PROPOSE_TOOL]
@@ -124,6 +129,13 @@ def available_tools(state_dir=None, client=None):
 
 def _workspace(state_dir=None):
     return open_workspace(state_dir or os.environ.get("CARRY_WORKSPACE"))
+
+
+def _visible(workspace, scope):
+    """Source ids a server bound to `scope` may read; None when the server is not scoped."""
+    if scope is None:
+        return None
+    return [s.source_id for s in workspace.sources if s.scope == scope]
 
 
 # What an assistant acts on. The judge's internals and the index's build record stay in
@@ -178,13 +190,15 @@ def _format_recall(result):
     return "\n\n".join(parts), False
 
 
-def call_tool(name, arguments, state_dir=None, client=None):
+def call_tool(name, arguments, state_dir=None, client=None, scope=None):
     """Dispatch one tool call. Returns (text, is_error)."""
     arguments = arguments or {}
     try:
         if not isinstance(arguments, dict):
             return "Invalid request: arguments must be an object.", True
         if name == "carry_propose":
+            if scope:
+                return "Proposals are not available on a scoped server.", True
             if not client:
                 return "Proposal writes require a server-bound client identity.", True
             allowed = set(PROPOSE_TOOL['inputSchema']['properties'])
@@ -216,7 +230,8 @@ def call_tool(name, arguments, state_dir=None, client=None):
                 return "Invalid request: queries must be an array of strings.", True
             result = recall(workspace, query, source_ids=source_ids, budget=budget, queries=queries or (),
                             include_history=bool(arguments.get("include_history")),
-                            include_drafts=bool(arguments.get("include_drafts")))
+                            include_drafts=bool(arguments.get("include_drafts")),
+                            visible=_visible(workspace, scope))
             result.setdefault("diagnostics", {})["refresh"] = refresh
             return _format_recall(result)
         if name == "carry_catalog":
@@ -228,11 +243,12 @@ def call_tool(name, arguments, state_dir=None, client=None):
             if folder is not None and not isinstance(folder, str):
                 return "Invalid request: folder must be a string.", True
             workspace = _workspace(state_dir)
-            known = {s.source_id for s in workspace.sources}
+            visible = _visible(workspace, scope)
+            known = {s.source_id for s in workspace.sources} if visible is None else set(visible)
             if source_ids and set(source_ids) - known:
                 return "Invalid request: unknown source ids.", True
             from .recall import catalog_entries
-            result = catalog_entries(workspace, source_ids=source_ids, folder=folder)
+            result = catalog_entries(workspace, source_ids=source_ids, folder=folder, visible=visible)
             if not result["ok"]:
                 return "Catalog unavailable: " + result["error"], True
             lines = [f"{e['source_id']}:{e['path']} — {e['summary']}" for e in result["entries"]]
@@ -240,7 +256,9 @@ def call_tool(name, arguments, state_dir=None, client=None):
                     if result["truncated"] else "")
             return (GROUNDING + "\n\n" + "\n".join(lines) + tail), False
         if name == "carry_status":
-            payload = status(_workspace(state_dir), probe_provider=bool(arguments.get("probe")))
+            workspace = _workspace(state_dir)
+            payload = status(workspace, probe_provider=bool(arguments.get("probe")),
+                             visible=_visible(workspace, scope))
             return json.dumps(payload, ensure_ascii=False, indent=2, default=str), False
         return f"Unknown tool: {name}", True
     except CarryError as exc:
@@ -249,7 +267,7 @@ def call_tool(name, arguments, state_dir=None, client=None):
         return f"Carry failed: {type(exc).__name__}", True
 
 
-def handle_message(message, state_dir=None, client=None):
+def handle_message(message, state_dir=None, client=None, scope=None):
     """Map one JSON-RPC message to a response, or None for notifications."""
     if (not isinstance(message, dict) or message.get("jsonrpc") != "2.0"
             or not isinstance(message.get("method"), str)
@@ -279,15 +297,15 @@ def handle_message(message, state_dir=None, client=None):
     if method == "ping":
         return ok({})
     if method == "tools/list":
-        return ok({"tools": available_tools(state_dir, client)})
+        return ok({"tools": available_tools(state_dir, client, scope)})
     if method == "tools/call":
-        text, is_error = call_tool(params.get("name"), params.get("arguments"), state_dir, client)
+        text, is_error = call_tool(params.get("name"), params.get("arguments"), state_dir, client, scope)
         return ok({"content": [{"type": "text", "text": text}], "isError": is_error})
     return {"jsonrpc": "2.0", "id": message_id,
             "error": {"code": -32601, "message": "Method not found: " + str(method)}}
 
 
-def serve(stdin=None, stdout=None, state_dir=None, client=None):
+def serve(stdin=None, stdout=None, state_dir=None, client=None, scope=None):
     stdin = stdin or sys.stdin
     stdout = stdout or sys.stdout
     for line in stdin:
@@ -304,12 +322,12 @@ def serve(stdin=None, stdout=None, state_dir=None, client=None):
         if message == []:
             message = None
         if isinstance(message, list):  # batch
-            responses = [r for r in (handle_message(m, state_dir, client) for m in message) if r]
+            responses = [r for r in (handle_message(m, state_dir, client, scope) for m in message) if r]
             if responses:
                 stdout.write(json.dumps(responses, ensure_ascii=False) + "\n")
                 stdout.flush()
             continue
-        response = handle_message(message, state_dir, client)
+        response = handle_message(message, state_dir, client, scope)
         if response is not None:
             stdout.write(json.dumps(response, ensure_ascii=False, default=str) + "\n")
             stdout.flush()
@@ -330,6 +348,20 @@ def main(argv=None):
     if client is not None and client not in lifecycle.CLIENTS:
         print('carry-mcp: invalid client identity', file=sys.stderr)
         return 1
+    scope = os.environ.get('CARRY_SCOPE') or None
+    if '--scope' in argv:
+        position = argv.index('--scope')
+        scope = argv[position + 1] if position + 1 < len(argv) else ''
+    if scope is not None and scope not in SCOPES:
+        print('carry-mcp: invalid scope (expected one of: %s)' % ', '.join(SCOPES), file=sys.stderr)
+        return 1
+    if scope:
+        try:
+            if not _visible(_workspace(state_dir), scope):
+                print(f'carry-mcp: no source has scope {scope!r}; every read will fail until one is added',
+                      file=sys.stderr)
+        except (CarryError, OSError, ValueError):
+            pass  # read tools report configuration problems themselves
     import threading
     stopped = threading.Event()
     def maintain():
@@ -343,7 +375,7 @@ def main(argv=None):
     thread = threading.Thread(target=maintain, daemon=True)
     thread.start()
     try:
-        return serve(state_dir=state_dir, client=client)
+        return serve(state_dir=state_dir, client=client, scope=scope)
     finally:
         stopped.set()
 

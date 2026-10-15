@@ -11,7 +11,28 @@ from .index import db_is_usable, health
 from . import sidecar as sidecar_map
 
 
-def status(workspace, probe_provider=False):
+SCOPED_DEGRADATIONS = ("records_need_reconciliation", "correction_target_conflict")
+
+
+def status(workspace, probe_provider=False, visible=None):
+    """With `visible` (the source ids a scoped caller may read), only those sources are
+    described: no state directory, no other source's root, sync state or counts, and
+    nothing about the owner's records, review queue or prompt capture."""
+    payload = _status(workspace, probe_provider)
+    if visible is None:
+        return payload
+    visible = set(visible)
+    sources = [s for s in payload["workspace"]["sources"] if s["source_id"] in visible]
+    return dict(
+        github_sync={k: v for k, v in payload["github_sync"].items() if k in visible},
+        workspace=dict(sources=sources),
+        index=dict(usable=payload["index"]["usable"], state=payload["index"]["state"]),
+        embedding=payload["embedding"],
+        degradation=[d for d in payload["degradation"] if d not in SCOPED_DEGRADATIONS],
+        ok=payload["ok"])
+
+
+def _status(workspace, probe_provider=False):
     workspace.validate()
     index_health = health(workspace)
     try:
