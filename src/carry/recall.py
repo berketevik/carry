@@ -57,24 +57,29 @@ def fts_match_string(query, prefix=None):
     return " OR ".join(terms) if terms else ""
 
 
-def unmatched_terms(con, query, limit=12):
+def unmatched_terms(con, query, limit=12, allowed=None):
     """Query terms that appear nowhere in the corpus.
 
     A caller asking about something the corpus never mentions deserves to see
     that fact next to the passages, so a partial keyword match is not mistaken
-    for an answer.
+    for an answer. With `allowed` (chunk ids), only those chunks count: a search
+    scoped to some sources must not reveal which words the other sources contain.
     """
     missing = []
     for token in dict.fromkeys(re.findall(r"\w{3,}", query.lower(), flags=re.UNICODE)):
         if len(missing) >= limit:
             break
         try:
-            row = con.execute(
-                "SELECT 1 FROM chunks_fts WHERE chunks_fts MATCH ? LIMIT 1",
-                (f'"{token}"',)).fetchone()
+            if allowed is None:
+                found = con.execute(
+                    "SELECT 1 FROM chunks_fts WHERE chunks_fts MATCH ? LIMIT 1",
+                    (f'"{token}"',)).fetchone() is not None
+            else:
+                found = any(r[0] in allowed for r in con.execute(
+                    "SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH ?", (f'"{token}"',)))
         except sqlite3.Error:
             return missing
-        if row is None:
+        if not found:
             missing.append(token)
     return missing
 
@@ -130,7 +135,7 @@ def _candidates(workspace, query, con, limit, source_ids=None, diagnostics=None,
                 "SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH ? ORDER BY rank LIMIT ?",
                 (match, -1))
                 if r[0] in allowed][:retrieval.branch_candidates]
-            diagnostics["unmatched_terms"] = unmatched_terms(con, query)
+            diagnostics["unmatched_terms"] = unmatched_terms(con, query, allowed=allowed if source_ids else None)
         except sqlite3.Error:
             diagnostics["warnings"].append("fts_unavailable")
 
@@ -298,9 +303,28 @@ def _eligible(workspace, files, include_drafts=False, include_history=False, dia
 CATALOG_MAX_CHARS = 120000
 
 
-def catalog_entries(workspace, source_ids=None, folder=None, max_chars=CATALOG_MAX_CHARS):
+def visible_sources(source_ids, visible):
+    """The sources a scoped caller may read: (source_ids, error).
+
+    `visible` None means no scope (every configured source); a list is the whole of
+    what the caller may see. An empty list fails closed rather than falling through to
+    "all", and a hidden source is reported exactly like an unknown one."""
+    if visible is None:
+        return source_ids, None
+    visible = list(dict.fromkeys(visible))
+    if not visible:
+        return None, "no_visible_sources"
+    if source_ids and set(source_ids) - set(visible):
+        return None, "unknown_source_ids"
+    return list(dict.fromkeys(source_ids)) if source_ids else visible, None
+
+
+def catalog_entries(workspace, source_ids=None, folder=None, max_chars=CATALOG_MAX_CHARS, visible=None):
     """One line per servable file (path and summary, else title): the index an agent
     reads when keyword search cannot reach a note. Same eligibility as recall."""
+    source_ids, error = visible_sources(source_ids, visible)
+    if error:
+        return dict(ok=False, error=error, entries=[])
     if not db_is_usable(workspace.db_path):
         return dict(ok=False, error="index_unavailable", entries=[])
     folder = (folder or "").strip().strip("/")
@@ -396,12 +420,21 @@ def _listing(rows):
                  truncated=len(r["text"]) > LISTING_TEXT) for r in ordered], len(best)
 
 
-def recall(workspace, query, source_ids=None, budget=None, include_history=False, include_drafts=False, queries=(), today=None):
-    """Return cited evidence, or an explicit no-evidence / unavailable state."""
+def recall(workspace, query, source_ids=None, budget=None, include_history=False, include_drafts=False, queries=(), today=None,
+           visible=None):
+    """Return cited evidence, or an explicit no-evidence / unavailable state.
+
+    `visible` limits a scoped caller to those sources (see visible_sources)."""
     started = time.monotonic()
     workspace.validate()
     query = (query or "").strip()[:MAX_QUERY_CHARS]
     known = {s.source_id for s in workspace.sources}
+    if visible is not None:
+        requested = source_ids
+        source_ids, error = visible_sources(source_ids, visible)
+        if error:
+            return dict(ok=False, status="invalid_request", error=error,
+                        detail=list(requested or []), evidence=[], sources=[], diagnostics={})
     if source_ids:
         source_ids = list(dict.fromkeys(source_ids))
         unknown = [s for s in source_ids if s not in known]
