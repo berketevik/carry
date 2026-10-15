@@ -1,5 +1,5 @@
-// carry-model: Apple's on-device model, the fallback that summarises a meeting when no
-// assistant of the owner answers (Claude Code, Codex). It reads {"instructions", "prompt"}
+// carry-model: Apple's on-device model, which summarises a meeting only when named
+// (`carry meet summarize --extractor apple:on-device`). It reads {"instructions", "prompt"}
 // as JSON on stdin and writes {"items": [...]} on stdout, the shape meet.py asks every
 // assistant for. Nothing leaves this Mac. `carry app install` builds it next to the app.
 import Foundation
