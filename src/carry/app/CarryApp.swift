@@ -231,7 +231,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     @Published var history: [(String, String)] = []
     @Published var historyIndex = -1
     private var noteToken = 0
-    private var lastJobState = ""
+    private var lastJob = ""  // state and start time of the job last seen
     func tick() {
         guard !workspace.isEmpty, !busy else { return }
         if ["starting", "waiting_for_browser"].contains(str(githubLogin, "state")) {
@@ -254,11 +254,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         } else {
             run("maintenance_status", clearError: false, quiet: true) { value in
                 self.job = value
-                let state = str(value, "state")
-                if self.lastJobState != state && state != "running" { self.refresh() }
-                self.lastJobState = state
+                let seen = str(value, "state") + str(value, "started_at", "")
+                if self.lastJob != seen && Model.reloads(after: value) { self.refresh() }
+                self.lastJob = seen
             }
         }
+    }
+    /// A job that ended reloads the window, except the automatic check that found the index
+    /// fresh: it runs every minute, and reloading after it made the page jump each time.
+    static func reloads(after job: [String: Any]) -> Bool {
+        str(job, "state") != "running"
+            && !(str(job, "action", "") == "maintain" && str(job["result"] as? [String: Any] ?? [:], "status", "") == "fresh")
+    }
+    /// The banner of a running job. The automatic check usually ends within a second, so its
+    /// banner waits three: shown at once it pushed the page down and back every minute.
+    var jobBanner: Bool {
+        str(job, "state") == "running"
+            && (str(job, "action", "") != "maintain" || Date().timeIntervalSince1970 - num(job, "started_at") >= 3)
     }
     func loadRepositories(page: Int = 1) {
         run("github_repositories", ["page": page]) { value in
@@ -4259,7 +4271,7 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 if !model.error.isEmpty { banner(model.error, color: .red) }
                 if !model.notice.isEmpty { banner(model.notice, color: .secondary) }
-                if str(model.job, "state") == "running" {
+                if model.jobBanner {
                     HStack {
                         ProgressView().controlSize(.small)
                         Text(L(str(model.job, "stage", "Preparing").replacingOccurrences(of: "_", with: " ").capitalized))
