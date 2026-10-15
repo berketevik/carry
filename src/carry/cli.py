@@ -90,6 +90,35 @@ def cmd_status(args):
     return EXIT_OK if payload["ok"] else EXIT_FAILED
 
 
+def cmd_team(args):
+    from . import team
+    workspace = open_workspace(args.workspace)
+    if args.apply:
+        result = team.apply_settings(workspace)
+        applied = result["applied"]
+        lines = ([f"applied {k} = {v}" for k, v in applied.items()] or ["already matches the team settings"]
+                 if result["report"] else ["no team settings (.carry/team.json) in any team source"])
+        _print(result, args.json, lines)
+        return EXIT_OK
+    report = team.settings_report(workspace)
+    if not report:
+        _print(dict(report=None), args.json, ["no team settings (.carry/team.json) in any team source"])
+        return EXIT_OK
+    lines = [f"team sources: {', '.join(report['sources']) or 'none'}"]
+    lines += [f"{k}: team {v['team']}, this workspace {v['local']}" for k, v in report["differ"].items()]
+    if report["conflict"]:
+        lines.append("team sources disagree; nothing can be applied")
+    if report["too_old"]:
+        lines.append(f"Carry {report['carry_version']} is older than the team minimum {report['min_carry_version']}: carry update")
+    lines += [f"warning: {w}" for w in report["warnings"]]
+    if report["apply"]:
+        lines.append("apply with: " + report["apply"])
+    elif not report["differ"] and not report["conflict"]:
+        lines.append("search settings match the team")
+    _print(report, args.json, lines)
+    return EXIT_OK
+
+
 def cmd_eval(args):
     from . import evaluate
     questions = evaluate.load_set(args.question_set)
@@ -505,6 +534,10 @@ def build_parser():
     st = sub.add_parser("status", help="integration and index status")
     st.add_argument("--probe", action="store_true", help="contact the embedding provider")
     st.set_defaults(func=cmd_status)
+
+    tm = sub.add_parser("team", help="the team knowledge base's shared search settings (.carry/team.json)")
+    tm.add_argument("--apply", action="store_true", help="write the team's search settings into this workspace")
+    tm.set_defaults(func=cmd_team)
 
     rc = sub.add_parser("recall", help="retrieve cited evidence")
     rc.add_argument("query")

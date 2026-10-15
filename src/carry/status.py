@@ -26,6 +26,7 @@ def status(workspace, probe_provider=False, visible=None):
     return dict(
         github_sync={k: v for k, v in payload["github_sync"].items() if k in visible},
         workspace=dict(sources=sources),
+        team_settings=payload["team_settings"],
         index=dict(usable=payload["index"]["usable"], state=payload["index"]["state"]),
         embedding=payload["embedding"],
         degradation=[d for d in payload["degradation"] if d not in SCOPED_DEGRADATIONS],
@@ -65,11 +66,14 @@ def _status(workspace, probe_provider=False):
     if review_info['target_conflicts']:
         degradation.append('correction_target_conflict')
     from .maintenance import job_status, sync_status
-    from .team import clone_degradations
+    from .team import clone_degradations, settings_flags, settings_report
     syncs = sync_status(workspace)
     degradation += clone_degradations(syncs, [s.source_id for s in workspace.sources])
+    team_settings = settings_report(workspace)
+    degradation += settings_flags(team_settings)
     return dict(
         maintenance=job_status(workspace), github_sync=syncs,
+        team_settings=team_settings,
         review=review_info,
         workspace=dict(state_dir=str(workspace.state_dir),
                        sources=[dict(source_id=s.source_id, scope=s.scope,

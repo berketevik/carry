@@ -102,6 +102,15 @@ class SetupTest(unittest.TestCase):
                                     semantic_default=False, app=False, **options)
         return code, out.getvalue(), Workspace.load(self.base / 'ws')
 
+    def test_team_settings_are_applied_after_the_search_preset(self):
+        clone = self.team_copy()
+        (clone / '.carry').mkdir()
+        (clone / '.carry' / 'team.json').write_text('{"retrieval": {"top_k": 5, "max_chars": 9000}}', encoding='utf-8')
+        code, out, ws = self.run_team(['2', '2', str(clone)])
+        self.assertEqual(code, 0)
+        self.assertEqual((ws.retrieval.top_k, ws.retrieval.max_chars), (5, 9000))
+        self.assertIn('ortak arama ayarları uygulandı', out)
+
     def test_team_only_connects_the_existing_copy_read_only_as_team_knowledge(self):
         clone = self.team_copy()
         code, out, ws = self.run_team(['2', '2', str(clone)])
