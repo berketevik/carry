@@ -791,7 +791,7 @@ func tabName(_ key: String) -> String {
     case "Search": return T("Search", "Arama")
     case "Sources": return T("Note folders", "Not klasörleri")
     case "Index": return T("Index", "İndeks")
-    case "Harvest": return T("Capture", "Yakalama")
+    case "Harvest": return T("Session recap", "Oturum özeti")
     case "Clients": return T("Assistants", "Asistanlar")
     default: return T("General", "Genel")
     }
@@ -841,11 +841,11 @@ let glossary: [(String, String, String, String)] = [
      "Carry records a meeting on this Mac and writes down what is said, from your microphone and the sound of the call. When it ends the transcript is saved with your notes; Whisper then transcribes the audio again on this Mac and the audio is deleted. Your connected assistant summarises the meeting once; with none connected the transcript stays as it is. Its decisions, open items and facts wait for you on the Review page.",
      "Carry toplantıyı bu Mac'te kaydeder ve konuşulanı yazıya döker: mikrofonunuzdan ve görüşmenin sesinden. Toplantı bitince transkript notlarınıza kaydedilir; ardından Whisper sesi bu Mac'te yeniden yazıya döker ve ses silinir. Bağlı asistanınız toplantıyı bir kez özetler; bağlı asistan yoksa transkript olduğu gibi kalır. Kararlar, açık işler ve bilgiler İncele sayfasında sizi bekler."),
     ("Inbox", "Gelen kutusu",
-     "The + folder, where new chat drafts and captures collect. What waits for you there is on the Review page.",
-     "Yeni sohbet taslaklarının ve kayıtların toplandığı + klasörü. Orada sizi bekleyenler İncele sayfasındadır."),
+     "The + folder, where new session recaps and captures collect. What waits for you there is on the Review page.",
+     "Yeni oturum özetlerinin ve kayıtların toplandığı + klasörü. Orada sizi bekleyenler İncele sayfasındadır."),
     ("Draft", "Taslak",
-     "A note you have not checked yet. Chat drafts in your Inbox wait for you on the Review page. Notes your assistants write elsewhere are marked as drafts too, but they are searchable and never wait for you; approve one when you have checked it.",
-     "Henüz kontrol etmediğiniz not. Gelen kutusundaki sohbet taslakları İncele sayfasında sizi bekler. Asistanlarınızın başka yerlere yazdığı notlar da taslak işaretlidir ama aranabilir ve sizi beklemez; kontrol ettiğinizde onaylayabilirsiniz."),
+     "A note you have not checked yet. Session recaps in your Inbox wait for you on the Review page. Notes your assistants write elsewhere are marked as drafts too, but they are searchable and never wait for you; approve one when you have checked it.",
+     "Henüz kontrol etmediğiniz not. Gelen kutusundaki oturum özetleri İncele sayfasında sizi bekler. Asistanlarınızın başka yerlere yazdığı notlar da taslak işaretlidir ama aranabilir ve sizi beklemez; kontrol ettiğinizde onaylayabilirsiniz."),
     ("Change proposals", "Değişiklik önerileri",
      "Corrections an assistant proposes to notes it may not change directly. You accept or reject each one.",
      "Asistanın doğrudan değiştiremediği notlar için önerdiği düzeltmeler. Her birini siz kabul eder ya da reddedersiniz."),
@@ -866,7 +866,7 @@ struct GuideSheet: View {
                     FlowLayout {
                         Button(T("Write my first note", "İlk notumu yaz")) { dismiss(); model.showNewNote = true }
                         Button(T("Use it with my assistant", "Asistanımla kullan")) { dismiss(); model.page = "Settings"; model.settingsTab = "Clients" }
-                        Button(T("Review chat drafts", "Sohbet taslaklarını incele")) { dismiss(); model.page = "Review" }
+                        Button(T("Review session recaps", "Oturum özetlerini incele")) { dismiss(); model.page = "Review" }
                         Button(T("Record a meeting", "Toplantı kaydet")) { dismiss(); model.page = "Meetings" }
                     }
                     Divider()
@@ -1309,7 +1309,7 @@ struct ReviewView: View {
         HSplitView {
             VStack(alignment: .leading, spacing: 12) {
                 Text(pageName("Review")).font(.title.bold())
-                Text(T("What waits in your Inbox. Open a chat draft and accept, fix or skip each item; accepted items go to that day's daily note. Other captures you approve as a whole. Notes your assistants write elsewhere are searchable as they are and do not wait here; find them with the Drafts filter on the Notes page.",
+                Text(T("What waits in your Inbox. Open a session recap and accept, fix or skip each item; accepted items go to that day's daily note. Other captures you approve as a whole. Notes your assistants write elsewhere are searchable as they are and do not wait here; find them with the Drafts filter on the Notes page.",
                        "Gelen kutunuzda bekleyenler. Bir sohbet taslağını açıp her maddeyi kabul edin, düzeltin ya da atlayın; kabul edilenler o günün günlük notuna gider. Diğer kayıtları bütün olarak onaylarsınız. Asistanlarınızın başka klasörlere yazdığı notlar olduğu gibi aranabilir ve burada beklemez; Notlar sayfasındaki Taslaklar filtresiyle bulursunuz."))
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 if model.pendingReview > 0 {
@@ -1631,9 +1631,9 @@ struct Overview: View {
     }
 }
 
-/// Inbox drafts are named for uniqueness ("2026-10-12 — harvest codex 01a12c05", "2026-10-15 —
+/// Inbox drafts are named for uniqueness ("2026-10-12 — session codex 01a12c05", before 0.14 "— harvest …", "2026-10-15 —
 /// toplantı 1647 — Toplantı"); people see who and when instead. Other notes keep their title.
-let inboxNamePattern = try? NSRegularExpression(pattern: #"^(\d{4}-\d{2}-\d{2}) — (?:harvest (\w+) [0-9a-f]+|(?:toplantı|meeting) (\d{2})(\d{2})(?: — (.*?))?)( \(\d+\))?$"#)
+let inboxNamePattern = try? NSRegularExpression(pattern: #"^(\d{4}-\d{2}-\d{2}) — (?:(?:session|harvest) (\w+) [0-9a-f]+|(?:toplantı|meeting) (\d{2})(\d{2})(?: — (.*?))?)( \(\d+\))?$"#)
 func displayTitle(_ f: [String: Any]) -> String {
     let title = str(f, "title", str(f, "name"))
     let path = str(f, "path", "")
@@ -1893,7 +1893,7 @@ struct VaultView: View {
                 if model.vault["truncated"] as? Bool == true { Text(L("This vault has more files than Carry lists (20,000).")).font(.caption).foregroundStyle(.orange) }
                 if rows.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(model.vaultFilter == "inbox" ? T("The Inbox is empty. New chat drafts will show up here.", "Gelen kutusu boş. Yeni sohbet taslakları burada görünecek.")
+                        Text(model.vaultFilter == "inbox" ? T("The Inbox is empty. New session recaps will show up here.", "Gelen kutusu boş. Yeni oturum özetleri burada görünecek.")
                              : T("No notes match this filter.", "Bu filtreye uyan not yok.")).foregroundStyle(.secondary)
                         if model.vaultFilter != "mine" || !query.isEmpty { Button(T("Clear filter", "Filtreyi temizle")) { model.vaultFilter = "mine"; query = "" }.buttonStyle(.link) }
                         if model.ownNotes == 0 { Button(T("Write my first note", "İlk notumu yaz")) { model.showNewNote = true } }
@@ -2205,8 +2205,8 @@ struct SearchSettings: View {
                         Text(T("The check keeps only passages that really answer the question, so your assistant is not misled.", "Kontrol, yalnızca soruyu gerçekten yanıtlayan parçaları tutar; böylece asistanınız yanılmaz.")).font(.caption).foregroundStyle(.secondary)
                         option(isOn: checker == "jev", title: "TypeSafe Jev", uses: [T("online service", "çevrimiçi hizmet"), T("access key", "erişim anahtarı")],
                                short: T("Most accurate and fastest (about half a second). Needs a TypeSafe key.", "En isabetli ve en hızlı (yaklaşık yarım saniye). TypeSafe anahtarı gerekir."),
-                               long: T("A specialised service checks which passages answer the question and drops passages that try to instruct an AI. The question and up to 32 found passages go to TypeSafe in the US (secrets masked, best effort; TypeSafe says it does not train on them). In Carry's 36-question test, meaning + Jev put the right note first 34 times, the best result. Chat drafts are checked there too: masked chat excerpts and note passages go to TypeSafe while they are compared with your notes.",
-                                       "Bu işe özel bir hizmet, hangi parçaların soruyu yanıtladığını kontrol eder ve yapay zekâya talimat vermeye çalışan parçaları eler. Soru ve en fazla 32 bulunan parça ABD'deki TypeSafe'e gider (gizli bilgiler elden geldiğince maskelenir; TypeSafe bunlarla model eğitmediğini belirtiyor). Carry'nin 36 soruluk testinde anlam + Jev doğru notu 34 kez ilk sıraya koydu; en iyi sonuç buydu. Sohbet taslakları da orada denetlenir: notlarınızla karşılaştırılırken maskelenmiş sohbet alıntıları ve not parçaları TypeSafe'e gider."),
+                               long: T("A specialised service checks which passages answer the question and drops passages that try to instruct an AI. The question and up to 32 found passages go to TypeSafe in the US (secrets masked, best effort; TypeSafe says it does not train on them). In Carry's 36-question test, meaning + Jev put the right note first 34 times, the best result. Session recaps are checked there too: masked chat excerpts and note passages go to TypeSafe while they are compared with your notes.",
+                                       "Bu işe özel bir hizmet, hangi parçaların soruyu yanıtladığını kontrol eder ve yapay zekâya talimat vermeye çalışan parçaları eler. Soru ve en fazla 32 bulunan parça ABD'deki TypeSafe'e gider (gizli bilgiler elden geldiğince maskelenir; TypeSafe bunlarla model eğitmediğini belirtiyor). Carry'nin 36 soruluk testinde anlam + Jev doğru notu 34 kez ilk sıraya koydu; en iyi sonuç buydu. Oturum özetleri de orada denetlenir: notlarınızla karşılaştırılırken maskelenmiş sohbet alıntıları ve not parçaları TypeSafe'e gider."),
                                badge: nil) { checker = "jev" }
                         option(isOn: checker == "assistant", title: T("My own assistant (Claude or GPT)", "Kendi asistanım (Claude ya da GPT)"), uses: ["Claude Code: Claude Sonnet", "Codex: GPT"],
                                short: T("No extra service or key: the assistant you already use sorts the results.", "Ek hizmet ya da anahtar yok: zaten kullandığınız asistan sonuçları ayıklar."),
@@ -2430,7 +2430,7 @@ struct HarvestSettings: View {
                 PageIntro(icon: "tray.and.arrow.down", title: T("Capture", "Yakalama"),
                           text: T("What Carry takes from your chats. After you chat with your assistant in your notes folder, Carry picks out what is worth keeping (decisions, facts, preferences, unfinished work) into a draft; you go through it item by item on the Review page. Recording your prompts word for word is a separate, optional step below.",
                                   "Carry'nin sohbetlerinizden aldıkları. Not klasörünüzde asistanınızla sohbet ettikten sonra Carry saklanmaya değer olanları (kararlar, bilgiler, tercihler, yarım kalan işler) bir taslağa çıkarır; siz İncele sayfasında madde madde geçersiniz. Mesajlarınızı kelimesi kelimesine kaydetmek ayrı ve isteğe bağlı bir adımdır, aşağıda."))
-                Text(T("Chat drafts", "Sohbet taslakları")).font(.title3.bold())
+                Text(T("Session recaps", "Oturum özetleri")).font(.title3.bold())
                 GroupBox(L("Drafts")) {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack { Text(L("Language of drafts")); Picker(L("Language of drafts"), selection: language) { Text("Türkçe").tag("Turkish"); Text("English").tag("English") }.pickerStyle(.segmented).labelsHidden().fixedSize() }
@@ -2499,7 +2499,7 @@ struct AdvancedSettings: View {
                 GroupBox(L("Language")) {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack { Text(L("App language")); Picker(L("App language"), selection: $model.language) { Text("Türkçe").tag("tr"); Text("English").tag("en") }.pickerStyle(.segmented).labelsHidden().fixedSize() }
-                        Text(T("Changes Carry's own screens. The language of chat drafts is set on the Capture tab.", "Carry'nin ekranlarını değiştirir. Sohbet taslaklarının dili Yakalama sekmesinden ayarlanır.")).font(.caption).foregroundStyle(.secondary)
+                        Text(T("Changes Carry's own screens. The language of session recaps is set on the Session recap tab.", "Carry'nin ekranlarını değiştirir. Oturum özetlerinin dili Oturum özeti sekmesinden ayarlanır.")).font(.caption).foregroundStyle(.secondary)
                     }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
                 }
                 GroupBox(T("Help", "Yardım")) {
@@ -3039,8 +3039,8 @@ struct Activity: View {
             VStack(alignment: .leading, spacing: 14) {
                 Button { model.page = "Review" } label: { Label(pageName("Review"), systemImage: "chevron.left") }.buttonStyle(.link)
                 Text(pageName("Proposals")).font(.title.bold())
-                Text(T("Changes your assistant proposes to your existing notes. Accept or reject each one here. (New chat drafts are on the Review page.)",
-                       "Asistanınızın mevcut notlarınız için önerdiği değişiklikler. Her birini burada kabul edin ya da reddedin. (Yeni sohbet taslakları İncele sayfasındadır.)")).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(T("Changes your assistant proposes to your existing notes. Accept or reject each one here. (New session recaps are on the Review page.)",
+                       "Asistanınızın mevcut notlarınız için önerdiği değişiklikler. Her birini burada kabul edin ya da reddedin. (Yeni oturum özetleri İncele sayfasındadır.)")).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 Toggle(T("Only those waiting for approval", "Yalnız onay bekleyenler"), isOn: $pendingOnly)
                 ForEach(model.adapters.indices, id: \.self) { i in
                     let adapter = model.adapters[i]
@@ -3058,7 +3058,7 @@ struct Activity: View {
                         Text(model.activity.isEmpty ? T("No proposals have arrived yet.", "Henüz hiç öneri gelmedi.") : T("Nothing waits for your approval.", "Onayınızı bekleyen öneri yok.")).fontWeight(.medium)
                         Text(T("This page fills only when an assistant asks to correct one of your notes: instead of editing the note itself, it sends a proposal here for your yes or no. That happens rarely, so an empty page is normal.",
                                "Bu sayfa yalnızca bir asistan notlarınızdan birini düzeltmek istediğinde dolar: notu kendisi değiştirmek yerine öneriyi evet ya da hayır demeniz için buraya gönderir. Bu seyrek olur; sayfanın boş olması normaldir.")).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                        Text(T("New chat drafts are reviewed on the Review page.", "Yeni sohbet taslaklarını İncele sayfasında inceleyebilirsiniz.")).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        Text(T("New session recaps are reviewed on the Review page.", "Yeni oturum özetlerini İncele sayfasında inceleyebilirsiniz.")).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         Button(T("Open Review", "İncele'yi aç")) { model.page = "Review" }.buttonStyle(.link)
                         Button(T("Open drafts", "Taslakları aç")) { model.showVault("drafts") }.buttonStyle(.link)
                         if !model.anyAssistantConnected { Button(L("Connect a client")) { model.page = "Settings"; model.settingsTab = "Clients" }.buttonStyle(.link) }
@@ -4893,7 +4893,7 @@ let TR: [String: String] = [
     "That note no longer exists at this path. Refresh the vault list.": "Bu not artık bu yerde yok. Listeyi yenileyin.",
     "This file is too large to preview here. Open it in your editor.": "Bu dosya burada önizlemek için çok büyük. Editörünüzde açın.",
     "One of the values is outside its allowed range. Check the numbers and save again.": "Değerlerden biri izin verilen aralığın dışında. Sayıları kontrol edip yeniden kaydedin.",
-    "Choose a valid time for the nightly harvest.": "Gecelik çalışma için geçerli bir saat seçin.",
+    "Choose a valid time for the nightly harvest.": "Gecelik oturum özeti için geçerli bir saat seçin.",
     "Add a Markdown folder or vault in Settings › Sources first.": "Önce Ayarlar › Not klasörleri'nden bir not klasörü ekleyin.",
     "Semantic search · Jev judges": "En iyi (akıllı arama + Jev)",
     "Semantic search · your assistant checks": "Akıllı",
@@ -4929,16 +4929,16 @@ let TR: [String: String] = [
     "No notes found.": "Not bulunamadı.",
     "Folders": "Klasörler",
     "Open items from recent chats": "Son sohbetlerden açık işler",
-    "No open items. Harvest drafts them from finished chats.": "Açık iş yok. Harvest bunları biten sohbetlerden taslak olarak çıkarır.",
+    "No open items. Harvest drafts them from finished chats.": "Açık iş yok. Oturum özeti bunları biten sohbetlerden taslak olarak çıkarır.",
     "Recent decisions": "Son kararlar",
     "Recent commits (%d)": "Son commit'ler (%d)",
     "Open draft": "Taslağı aç",
-    "Nightly harvest": "Gecelik sohbet notları",
-    "Runs every evening at %@ · drafts in %@. Chats also harvest when they end.": "Her akşam %@'da çalışır · taslak dili: %@. Sohbet bittiğinde de not çıkarılır.",
-    "Not scheduled. Chats still harvest when they end if the client hooks are set up.": "Gecelik çalışma kapalı. Sohbet bittiğinde yine de not çıkarılır.",
-    "Run harvest now": "Sohbetlerden şimdi not çıkar",
-    "Harvest started in the background. New drafts appear in the inbox (+/).": "Sohbetlerden not çıkarma başladı. Yeni taslaklar Gelen kutusunda görünecek.",
-    "Harvest settings": "Sohbet notu ayarları",
+    "Nightly harvest": "Gecelik oturum özeti",
+    "Runs every evening at %@ · drafts in %@. Chats also harvest when they end.": "Her akşam %@'da çalışır · taslak dili: %@. Her sohbet bittiğinde de özetlenir.",
+    "Not scheduled. Chats still harvest when they end if the client hooks are set up.": "Gecelik özet kapalı. Her sohbet bittiğinde yine de özetlenir.",
+    "Run harvest now": "Oturum özetini şimdi çıkar",
+    "Harvest started in the background. New drafts appear in the inbox (+/).": "Oturum özeti başladı. Yeni taslaklar Gelen kutusunda görünecek.",
+    "Harvest settings": "Oturum özeti ayarları",
     "Filter by name, folder or summary": "Ada, klasöre ya da özete göre süz",
     "Show": "Göster",
     "All notes": "Tüm notlar",
@@ -4990,12 +4990,12 @@ let TR: [String: String] = [
     "Revert": "Geri al",
     "Carry reads finished Claude Code and Codex chats of your vault and drafts what deserves a note: decisions, facts, preferences and open items. Drafts land in the inbox (+/) for you to review; nothing is filed by itself.": "Carry, vault'unuzdaki biten Claude Code ve Codex sohbetlerini okur ve not olmayı hak edenleri taslak olarak çıkarır: kararlar, bilgiler, tercihler ve açık işler. Taslaklar incelemeniz için gelen kutusuna (+/) düşer; hiçbir şey kendiliğinden dosyalanmaz.",
     "Every evening": "Her akşam",
-    "Harvest finished chats every evening": "Günün sohbetlerinden her akşam not çıkar",
+    "Harvest finished chats every evening": "Günün sohbetlerini her akşam özetle",
     "Time": "Saat",
     "Language of drafts": "Taslakların dili",
     "Save schedule": "Kaydet",
-    "Nightly harvest scheduled.": "Gecelik çalışma ayarlandı.",
-    "Nightly harvest turned off.": "Gecelik çalışma kapatıldı.",
+    "Nightly harvest scheduled.": "Gecelik oturum özeti ayarlandı.",
+    "Nightly harvest turned off.": "Gecelik oturum özeti kapatıldı.",
     "Runs through launchd (%@) while you are logged in.": "Mac'inizde oturumunuz açıkken çalışır.",
     "When a chat ends": "Bir sohbet bittiğinde",
     "Claude Code and Codex call Carry when a chat in the vault ends, and the next chat starts with a short state pack of open items and decisions. These hooks are set up by `carry setup` or on the Clients tab; Codex asks you to approve each hook once.": "Not klasörünüzde bir sohbet bittiğinde Claude Code ve Codex Carry'ye haber verir; bir sonraki sohbet, açık işler ve kararlardan oluşan kısa bir özetle başlar. Bu otomatik kurulumla gelir (`carry setup`); Codex bunu ilk seferde bir kez onaylamanızı ister.",
@@ -5007,7 +5007,7 @@ let TR: [String: String] = [
     "Language, workspace, index maintenance and diagnostics.": "Dil, çalışma alanı, indeks bakımı ve tanılama.",
     "Language": "Dil",
     "App language": "Uygulama dili",
-    "Changes the app’s interface. Harvest drafts use the language set on the Harvest tab.": "Uygulamanın arayüzünü değiştirir. Harvest taslakları Harvest sekmesindeki dili kullanır.",
+    "Changes the app’s interface. Harvest drafts use the language set on the Harvest tab.": "Uygulamanın arayüzünü değiştirir. Oturum özetleri Oturum özeti sekmesindeki dili kullanır.",
     "Workspace": "Çalışma alanı",
     "Holds Carry’s settings and a disposable index. Your notes are never stored here.": "Carry'nin ayarlarını ve silinebilir indeksini tutar. Notlarınız asla burada saklanmaz.",
     "Open another workspace": "Başka bir çalışma alanı aç",
@@ -5166,14 +5166,14 @@ let TR: [String: String] = [
     "Model Ready": "Model hazır",
     "Finished": "Bitti",
     "Failed": "Başarısız",
-    "Harvest finished. New drafts, if any, are in the inbox (+/).": "Bitti. Yeni taslak çıktıysa Gelen kutusunda.",
-    "Harvest stopped with an error. See the log on the Harvest tab.": "Bir hata oluştu. Ayrıntı için Yakalama sekmesindeki kayda bakın.",
+    "Harvest finished. New drafts, if any, are in the inbox (+/).": "Bitti. Yeni özet çıktıysa Gelen kutusunda.",
+    "Harvest stopped with an error. See the log on the Harvest tab.": "Bir hata oluştu. Ayrıntı için Oturum özeti sekmesindeki kayda bakın.",
     "The open note was moved or deleted outside Carry, so it was closed.": "Açık not Carry dışında taşındığı ya da silindiği için kapatıldı.",
     "A harvest is already running.": "Zaten çalışıyor.",
     "Show all changes": "Tüm değişiklikleri göster",
-    "The nightly harvest on this Mac belongs to another Carry workspace.": "Bu Mac'teki gecelik çalışma başka bir Carry kurulumuna ait.",
-    "launchd has not loaded this job. Save the schedule again on the Harvest tab.": "Gecelik çalışma macOS tarafından başlatılmamış. Yakalama sekmesinden yeniden kaydedin.",
-    "Harvest running…": "Sohbetlerden not çıkarılıyor…",
+    "The nightly harvest on this Mac belongs to another Carry workspace.": "Bu Mac'teki gecelik özet başka bir Carry kurulumuna ait.",
+    "launchd has not loaded this job. Save the schedule again on the Harvest tab.": "Gecelik özet macOS tarafından başlatılmamış. Oturum özeti sekmesinden yeniden kaydedin.",
+    "Harvest running…": "Oturum özeti çıkarılıyor…",
     "Waiting to be indexed": "Değişti; arama birazdan güncellenecek",
     "Showing %d of %d notes. Narrow the filter to see the rest.": "%d / %d not gösteriliyor. Kalanlar için aramayı daraltın.",
     "This vault has more files than Carry lists (20,000).": "Bu klasörde Carry'nin gösterebildiğinden (20.000) fazla dosya var.",
@@ -5183,16 +5183,16 @@ let TR: [String: String] = [
     "waiting to be indexed": "arama birazdan güncellenecek",
     "Unsaved changes": "Kaydedilmemiş değişiklikler",
     "Discard": "Vazgeç",
-    "Draft language saved. It applies to every harvest: nightly, manual and at chat end.": "Taslak dili kaydedildi. Tüm sohbet notlarında geçerli.",
-    "Used by every harvest: nightly, manual and at chat end.": "Gecelik, elle başlatılan ve sohbet sonu tüm sohbet notlarında kullanılır.",
-    "The nightly harvest on this Mac belongs to another Carry workspace (%@). Saving here replaces it.": "Bu Mac'teki gecelik çalışma başka bir Carry kurulumuna ait (%@). Burada kaydederseniz onun yerini alır.",
-    "Replace the other workspace’s nightly harvest?": "Diğer kurulumun gecelik çalışması değiştirilsin mi?",
+    "Draft language saved. It applies to every harvest: nightly, manual and at chat end.": "Taslak dili kaydedildi. Tüm oturum özetlerinde geçerli.",
+    "Used by every harvest: nightly, manual and at chat end.": "Gecelik, elle başlatılan ve sohbet sonu tüm oturum özetlerinde kullanılır.",
+    "The nightly harvest on this Mac belongs to another Carry workspace (%@). Saving here replaces it.": "Bu Mac'teki gecelik özet başka bir Carry kurulumuna ait (%@). Burada kaydederseniz onun yerini alır.",
+    "Replace the other workspace’s nightly harvest?": "Diğer kurulumun gecelik özeti değiştirilsin mi?",
     "Replace": "Değiştir",
-    "There is one nightly harvest per Mac user. The other workspace stops harvesting at night; its chat-end hooks keep working.": "Her Mac kullanıcısı için tek bir gecelik çalışma olabilir. Diğer kurulum geceleri not çıkarmayı bırakır; sohbet sonu notları çalışmaya devam eder.",
+    "There is one nightly harvest per Mac user. The other workspace stops harvesting at night; its chat-end hooks keep working.": "Her Mac kullanıcısı için tek bir gecelik özet olabilir. Diğer kurulum geceleri özet çıkarmayı bırakır; sohbet sonu özetleri çalışmaya devam eder.",
     "Off: this source’s passages are never sent to Jev. Search results can still reach your connected assistant and the model it uses.": "Kapalıysa bu kaynağın pasajları Jev'e hiç gönderilmez. Arama sonuçları yine de bağlı asistanınıza ve onun kullandığı modele iletilebilir.",
     "Relevance %@": "Alaka puanı %@",
     "No decision proposals waiting for approval.": "Onay bekleyen karar önerisi yok.",
-    "Proposals come from connected clients (carry_propose). Harvest drafts and draft notes live in the vault instead.": "Öneriler bağlı asistanlardan gelir. Sohbet notları ve taslaklar ise Notlar sayfasında durur.",
+    "Proposals come from connected clients (carry_propose). Harvest drafts and draft notes live in the vault instead.": "Öneriler bağlı asistanlardan gelir. Oturum özetleri ve taslaklar ise Notlar sayfasında durur.",
     "Open vault drafts": "Taslakları aç",
     "Open inbox": "Gelen kutusunu aç",
     "Connect a client": "Asistan bağla",
@@ -5229,26 +5229,26 @@ let EN: [String: String] = [
     "Show in Vault": "Show in Notes",
     "Read in Vault": "Read in Notes",
     "Index": "Search",
-    "Nightly harvest": "Nightly chat notes",
-    "Harvest started in the background. New drafts appear in the inbox (+/).": "Started. New drafts will appear in your Inbox.",
-    "Harvest settings": "Chat notes settings",
+    "Nightly harvest": "Nightly session recap",
+    "Harvest started in the background. New drafts appear in the inbox (+/).": "Started. New recaps will appear in your Inbox.",
+    "Harvest settings": "Session recap settings",
     "Not indexed: excluded from search": "Left out of search",
     "not indexed": "left out of search",
     "indexed": "searchable",
     "waiting to be indexed": "search updates in a moment",
     "Waiting to be indexed": "Changed; search updates in a moment",
-    "Harvest finished chats every evening": "Take notes from the day's chats every evening",
-    "Run harvest now": "Take notes from chats now",
-    "Harvest running…": "Taking notes from chats…",
-    "Harvest finished. New drafts, if any, are in the inbox (+/).": "Done. New drafts, if any, are in your Inbox.",
-    "Harvest stopped with an error. See the log on the Harvest tab.": "Something went wrong. See the log on the Capture tab.",
-    "Runs every evening at %@ · drafts in %@. Chats also harvest when they end.": "Runs every evening at %@ · drafts in %@. Notes are also taken when a chat ends.",
-    "Not scheduled. Chats still harvest when they end if the client hooks are set up.": "The nightly run is off. Notes are still taken when a chat ends.",
+    "Harvest finished chats every evening": "Recap the day's chats every evening",
+    "Run harvest now": "Recap chats now",
+    "Harvest running…": "Recapping chats…",
+    "Harvest finished. New drafts, if any, are in the inbox (+/).": "Done. New recaps, if any, are in your Inbox.",
+    "Harvest stopped with an error. See the log on the Harvest tab.": "Something went wrong. See the log on the Session recap tab.",
+    "Runs every evening at %@ · drafts in %@. Chats also harvest when they end.": "Runs every evening at %@ · drafts in %@. Each chat is also recapped when it ends.",
+    "Not scheduled. Chats still harvest when they end if the client hooks are set up.": "The nightly recap is off. Chats are still recapped when they end.",
     "Runs through launchd (%@) while you are logged in.": "Runs while you are logged in to your Mac.",
     "Create a personal vault": "Create a new notes folder",
     "Create vault": "Create notes folder",
     "Choose or create an empty folder for your vault": "Choose or create an empty folder for your notes",
-    "Proposals come from connected clients (carry_propose). Harvest drafts and draft notes live in the vault instead.": "Proposals come from connected assistants. Chat notes and drafts are on the Notes page instead.",
+    "Proposals come from connected clients (carry_propose). Harvest drafts and draft notes live in the vault instead.": "Proposals come from connected assistants. Session recaps and drafts are on the Notes page instead.",
     "Open vault drafts": "Open drafts",
     "Connect a client": "Connect an assistant",
     "The index is not ready yet. Check the background task status.": "Search is not ready yet; Carry is reading your notes. Try again in a moment.",
@@ -5258,4 +5258,17 @@ let EN: [String: String] = [
     "Indexing": "Reading notes",
     "Client": "Assistant",
     "Save schedule": "Save",
+    "Choose a valid time for the nightly harvest.": "Choose a valid time for the nightly session recap.",
+    "No open items. Harvest drafts them from finished chats.": "No open items. The session recap drafts them from finished chats.",
+    "Nightly harvest scheduled.": "Nightly session recap scheduled.",
+    "Nightly harvest turned off.": "Nightly session recap turned off.",
+    "Changes the app’s interface. Harvest drafts use the language set on the Harvest tab.": "Changes the app’s interface. Session recaps use the language set on the Session recap tab.",
+    "A harvest is already running.": "A recap is already running.",
+    "The nightly harvest on this Mac belongs to another Carry workspace.": "The nightly recap on this Mac belongs to another Carry workspace.",
+    "launchd has not loaded this job. Save the schedule again on the Harvest tab.": "launchd has not loaded this job. Save the schedule again on the Session recap tab.",
+    "Draft language saved. It applies to every harvest: nightly, manual and at chat end.": "Draft language saved. It applies to every recap: nightly, by hand and at chat end.",
+    "Used by every harvest: nightly, manual and at chat end.": "Used by every recap: nightly, by hand and at chat end.",
+    "The nightly harvest on this Mac belongs to another Carry workspace (%@). Saving here replaces it.": "The nightly recap on this Mac belongs to another Carry workspace (%@). Saving here replaces it.",
+    "Replace the other workspace’s nightly harvest?": "Replace the other workspace’s nightly recap?",
+    "There is one nightly harvest per Mac user. The other workspace stops harvesting at night; its chat-end hooks keep working.": "There is one nightly recap per Mac user. The other workspace stops recapping at night; its chat-end hooks keep working.",
 ]
