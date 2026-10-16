@@ -138,13 +138,17 @@ class Workspace:
     """State directory plus configured sources.
 
     The state directory holds configuration and derived data (index, receipts,
-    status, sidecar). Canonical records and captured events live in sources. It must
-    live outside every source root so a rebuild can never touch user files.
+    status, sidecar). Canonical records and captured events live in sources. It lives
+    either outside every source root or at exactly `<vault>/.carry/state`, the standard
+    place: the indexer skips dot folders, so a rebuild still never touches user files.
+    `home` names the source whose `.carry/settings.json` holds the shared settings when
+    the state lives elsewhere (see shared.py).
     """
     state_dir: Path
     sources: tuple = field(default_factory=tuple)
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
+    home: str = ""
 
     # --- derived paths ---
     @property
@@ -188,7 +192,9 @@ class Workspace:
         return replace(self, sources=tuple(sources)).validate()
 
     def validate(self):
+        from .shared import in_vault_root
         state = Path(self.state_dir).expanduser().resolve()
+        vault = in_vault_root(state)
         seen = set()
         roots = []
         for src in self.sources:
@@ -197,9 +203,13 @@ class Workspace:
                 raise WorkspaceError("duplicate_source_id")
             seen.add(src.source_id)
             root = resolve_root(src.root)
-            if is_contained(root, state):
+            # The one place inside a source the state may live: that vault's `.carry/state`.
+            if is_contained(root, state) and root != vault:
                 raise WorkspaceError("state_dir_inside_source_root")
             for other in roots:
+                # A GitHub snapshot lives in the state directory, so inside the vault that holds it.
+                if is_contained(state, root) or is_contained(state, other):
+                    continue
                 if is_contained(other, root) or is_contained(root, other):
                     raise WorkspaceError("nested_source_roots")
             roots.append(root)
@@ -215,8 +225,11 @@ class Workspace:
 
     # --- persistence ---
     def to_json(self):
-        return dict(version=CONFIG_VERSION, sources=[s.to_json() for s in self.sources],
+        data = dict(version=CONFIG_VERSION, sources=[s.to_json() for s in self.sources],
                     embedding=self.embedding.to_json(), retrieval=self.retrieval.to_json())
+        if self.home:
+            data["home"] = self.home
+        return data
 
     def save(self):
         self.validate()
@@ -225,25 +238,27 @@ class Workspace:
         tmp.write_text(json.dumps(self.to_json(), indent=2, ensure_ascii=False) + "\n",
                        encoding="utf-8", newline="\n")
         os.replace(tmp, self.config_path)
+        # A changed shared value reaches the vault's settings.json, so the other devices get it.
+        from .shared import write_back
+        try:
+            write_back(self)
+        except OSError:
+            pass
         return self
 
     @staticmethod
     def load(state_dir):
+        from . import shared
         state_dir = Path(state_dir).expanduser().resolve()
-        path = state_dir / CONFIG_NAME
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            raise WorkspaceError("workspace_not_initialized")
-        except ValueError:
-            raise WorkspaceError("workspace_config_unreadable")
-        if data.get("version") != CONFIG_VERSION:
-            raise WorkspaceError("unsupported_config_version")
-        return Workspace(
+        data = _read_config(state_dir)
+        workspace = Workspace(
             state_dir=state_dir,
             sources=tuple(SourceConfig.from_json(s) for s in data.get("sources", [])),
             embedding=EmbeddingConfig.from_json(data.get("embedding")),
-            retrieval=RetrievalConfig.from_json(data.get("retrieval"))).validate()
+            retrieval=RetrievalConfig.from_json(data.get("retrieval")),
+            home=str(data.get("home") or ""))
+        settings, _ = shared.read(shared.settings_path(workspace))
+        return shared.overlay(workspace, settings).validate()
 
     @staticmethod
     def create(state_dir, sources=(), embedding=None, retrieval=None, exist_ok=False):
@@ -256,9 +271,51 @@ class Workspace:
                          retrieval=retrieval or RetrievalConfig()).save()
 
 
+def _read_config(state_dir):
+    path = Path(state_dir) / CONFIG_NAME
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise WorkspaceError("workspace_not_initialized")
+    except ValueError:
+        raise WorkspaceError("workspace_config_unreadable")
+    if data.get("version") != CONFIG_VERSION:
+        raise WorkspaceError("unsupported_config_version")
+    return data
+
+
+def device_values(workspace):
+    """This device's own workspace.json values of the shared keys, before the overlay."""
+    from . import shared
+    data = _read_config(workspace.state_dir)
+    home = shared.home_source(workspace)
+    exclude = next((s.get("exclude", []) for s in data.get("sources", [])
+                    if home is not None and s.get("source_id") == home.source_id), None)
+    return dict(retrieval=data.get("retrieval") or {}, embedding=data.get("embedding") or {}, exclude=exclude)
+
+
+def discover(start=None):
+    """The state directory for a command run inside a vault: the nearest `.carry/state`, else
+    the nearest `.carry/local.json` pointer; None when neither is found."""
+    start = Path(start or os.getcwd()).expanduser().resolve()
+    chain = [start, *start.parents]
+    for folder in chain:
+        candidate = folder / ".carry" / "state"
+        if (candidate / CONFIG_NAME).is_file():
+            return candidate
+    for folder in chain:
+        try:
+            pointer = json.loads((folder / ".carry" / "local.json").read_text(encoding="utf-8")).get("workspace")
+        except (OSError, ValueError, AttributeError):
+            continue
+        if pointer and (Path(pointer).expanduser() / CONFIG_NAME).is_file():
+            return Path(pointer).expanduser()
+    return None
+
+
 def open_workspace(state_dir=None):
-    """Resolve a workspace from an explicit path or CARRY_WORKSPACE."""
-    state_dir = state_dir or os.environ.get("CARRY_WORKSPACE")
+    """Resolve a workspace: an explicit path, CARRY_WORKSPACE, or the vault the command runs in."""
+    state_dir = state_dir or os.environ.get("CARRY_WORKSPACE") or discover()
     if not state_dir:
         raise WorkspaceError("workspace_not_specified")
     return Workspace.load(state_dir)

@@ -32,6 +32,10 @@ SKIP_SECTIONS = ('Yapılmış görünüyor', 'Apparently done', 'Vazgeçilmiş g
 
 
 def workspace_for(root):
+    """The state for a vault: its own `.carry/state`, else the `.carry/local.json` pointer."""
+    own = Path(root) / '.carry' / 'state'
+    if (own / 'workspace.json').is_file():
+        return str(own)
     try:
         return json.loads((Path(root) / LOCAL).read_text(encoding='utf-8')).get('workspace')
     except (OSError, ValueError):
@@ -85,6 +89,10 @@ def _items(path):
 
 def pack(root, workspace=None, language=None, max_chars=MAX_CHARS, today=None):
     root = Path(root).resolve()
+    if language is None:
+        # The vault's shared settings first, then the template stamp.
+        from . import shared
+        language = shared.read(root / '.carry' / 'settings.json')[0].get('language')
     if language is None:
         try:
             language = json.loads((root / '.carry/vault.json').read_text(encoding='utf-8')).get('language', 'English')

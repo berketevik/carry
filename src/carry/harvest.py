@@ -842,7 +842,12 @@ LANGUAGE_NAME = 'harvest.json'
 
 
 def draft_language(workspace, root=None):
-    """Language of harvest drafts: the app's setting, else the vault's, else the nightly job's, else English."""
+    """Language of recaps: the vault's shared settings, else this device's setting, else the
+    template stamp, else the nightly job's, else English."""
+    from . import shared
+    chosen = shared.language(workspace, root)
+    if chosen:
+        return chosen
     try:
         chosen = json.loads((Path(workspace.state_dir) / LANGUAGE_NAME).read_text(encoding='utf-8')).get('language')
         if chosen:
@@ -870,6 +875,9 @@ def set_draft_language(workspace, language):
     # The setting shares harvest.json with the threads' recap state: change only its key, or the
     # next sweep would recap every chat again.
     _update_state(workspace.state_dir, lambda state: state.__setitem__('language', language))
+    # A vault in the standard layout shares it with its other devices.
+    from . import shared
+    shared.set_language(workspace, language)
     return language
 
 

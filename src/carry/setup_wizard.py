@@ -341,6 +341,22 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
         warn('Bağlanacak bir klasör kalmadı; kurulumu yeniden çalıştırabilirsin.')
         return 1
     ws = Workspace.load(ws.state_dir)
+    # ~/CarryState is only where the wizard starts; a folder the owner chose stays where it is.
+    legacy = Path('~/CarryState').expanduser()
+    chosen = state_dir and Path(state_dir).expanduser().resolve() != legacy.resolve()
+    if own and not chosen:
+        # The standard place: Carry's files in the notes folder's .carry/ (shared settings committed,
+        # this device's state ignored by git); a cloud-synced folder keeps the state outside.
+        from . import statedir
+        cloud = statedir.cloud_service(own)
+        if cloud:
+            warn(f'{own} {cloud} ile eşitleniyor; Carry\'nin arama dizini orada bozulabileceği için {state} içinde kalıyor.')
+        else:
+            try:
+                ws = Workspace.load(statedir.move(ws, own)['state_dir'])
+                ok(f'Carry\'nin dosyaları not klasöründe: {own / ".carry"}')
+            except CarryError as exc:
+                warn(f'Carry\'nin dosyaları not klasörüne taşınamadı ({exc}); {state} içinde kalıyor.')
 
     # 2. Search: by meaning, through Ollama when it is installed, otherwise with the model
     # built into Carry. No question: the owner's assistant checks the results either way.
