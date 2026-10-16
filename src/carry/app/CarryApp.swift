@@ -2460,10 +2460,15 @@ struct HarvestSettings: View {
                         if model.assistants["chat_end"] as? Bool == true {
                             Label(T("On for this notes folder", "Bu not klasörü için açık"), systemImage: "checkmark.circle.fill").foregroundStyle(.green)
                             Text(L("Claude Code and Codex call Carry when a chat in the vault ends, and the next chat starts with a short state pack of open items and decisions. These hooks are set up by `carry setup` or on the Clients tab; Codex asks you to approve each hook once.")).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                            if model.assistants["checkpoint"] as? Bool == true {
+                                Label(T("Also before a long chat is compacted", "Uzun bir sohbet sıkıştırılmadan önce de"), systemImage: "checkmark.circle").foregroundStyle(.green)
+                                Text(T("Before Claude Code or Codex compacts a chat, Carry recaps it so far; the chat end then recaps only what came after.",
+                                       "Claude Code ya da Codex bir sohbeti sıkıştırmadan önce Carry o ana kadarki kısmın özetini çıkarır; sohbet bitince yalnız sonrası özetlenir.")).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                            }
                         } else {
                             Label(T("Not set up for this notes folder", "Bu not klasörü için kurulu değil"), systemImage: "info.circle").foregroundStyle(.secondary)
-                            Text(T("Notes folders created by Carry have this on from the start. For a folder you already had, turn on the evening run above: it collects the day's chats in one go.",
-                                   "Carry'nin oluşturduğu not klasörlerinde bu baştan açıktır. Önceden sahip olduğunuz bir klasör için yukarıdan akşam çalışmasını açın: günün sohbetlerini tek seferde toplar.")).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                            Text(T("Notes folders created by Carry have this on from the start. For a folder you already had, run `carry session hooks --install` once on this Mac, or turn on the evening run above: it collects the day's chats in one go.",
+                                   "Carry'nin oluşturduğu not klasörlerinde bu baştan açıktır. Önceden sahip olduğunuz bir klasör için bu Mac'te bir kez `carry session hooks --install` çalıştırın ya da yukarıdan akşam çalışmasını açın: günün sohbetlerini tek seferde toplar.")).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         }
                     }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
                 }

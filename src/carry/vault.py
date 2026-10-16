@@ -10,6 +10,7 @@ import hashlib
 from importlib import resources
 import json
 from pathlib import Path
+import re
 import shlex
 import shutil
 import subprocess
@@ -24,7 +25,7 @@ from .errors import CarryError
 from .paths import is_contained, resolve_root
 from .persistence import atomic_text, writer_lock
 
-TEMPLATE_VERSION = '5'     # 4: notes follow Open Knowledge Format v0.2; 5: carry session commands and recap names
+TEMPLATE_VERSION = '6'     # 4: notes follow Open Knowledge Format v0.2; 5: carry session commands and recap names; 6: session checkpoint
 GUIDE_BASE = '3.12'
 RECALL_TOOL = 'carry_recall'
 STAMP = '.carry/vault.json'
@@ -100,8 +101,24 @@ def _session_end(workspace):
         [sys.executable, '-I', '-m', 'carry.cli', '--workspace', str(workspace), 'session', 'end']))]}]
 
 
+CHECKPOINT_TIMEOUT = 5
+
+
+def _checkpoint_command(base, extra=()):
+    # Exit 2 from a PreCompact hook blocks the compaction; `|| true` keeps even a Carry too old to
+    # know `session checkpoint` (an argparse error exits 2) from ever holding a chat back.
+    return shlex.join(base + ['session', 'checkpoint', *extra]) + ' || true'
+
+
+def _session_checkpoint(workspace):
+    # Before Claude Code or Codex compacts a chat: recap it so far in the background, return at once.
+    return [{'hooks': [dict(type='command', timeout=CHECKPOINT_TIMEOUT, command=_checkpoint_command(
+        [sys.executable, '-I', '-m', 'carry.cli', '--workspace', str(workspace)]))]}]
+
+
 def _codex_hooks(workspace, capture):
-    hooks = {'SessionStart': _session_start(workspace), 'SessionEnd': _session_end(workspace)}
+    hooks = {'SessionStart': _session_start(workspace), 'SessionEnd': _session_end(workspace),
+             'PreCompact': _session_checkpoint(workspace)}
     if capture:
         command = shlex.join([sys.executable, '-I', '-m', 'carry.hook', '--workspace', str(workspace), '--client', 'codex'])
         hooks['UserPromptSubmit'] = [{'hooks': [dict(type='command', command=command, timeout=10)]}]
@@ -109,7 +126,8 @@ def _codex_hooks(workspace, capture):
 
 
 def _claude_settings(workspace, capture):
-    hooks = {'SessionStart': _session_start(workspace), 'SessionEnd': _session_end(workspace)}
+    hooks = {'SessionStart': _session_start(workspace), 'SessionEnd': _session_end(workspace),
+             'PreCompact': _session_checkpoint(workspace)}
     if capture:
         command = shlex.join([sys.executable, '-I', '-m', 'carry.hook', '--workspace', str(workspace), '--client', 'claude'])
         hooks['UserPromptSubmit'] = [{'hooks': [dict(type='command', command=command, timeout=10)]}]
@@ -122,6 +140,153 @@ def _hooks(workspace):
                               '--client', client])
         return _json({'hooks': {'UserPromptSubmit': [{'hooks': [dict(type='command', command=command, timeout=10)]}]}})
     return {'.claude/settings.local.json': _claude_settings(workspace, capture=True), '.codex/hooks.json': _codex_hooks(workspace, capture=True)}
+
+
+# -- session hooks on an existing vault (`carry session hooks`) ------------------------------
+
+SESSION_EVENTS = dict(start='SessionStart', end='SessionEnd', checkpoint='PreCompact')
+
+
+def session_hook_kind(command):
+    """'start', 'end' or 'checkpoint' for a command Carry wrote for a session hook (any version), else None."""
+    command = str(command or '')
+    if 'carry' not in command:
+        return None
+    if re.search(r'\bsession\s+checkpoint\b', command):
+        return 'checkpoint'
+    if re.search(r'\bsession\s+end\b', command) or ('harvest' in command and '--from-hook' in command):
+        return 'end'
+    if re.search(r'\bsession\s+start\b', command) or re.search(r'carry\.cli\b.*\scontext(\s|$)', command):
+        return 'start'
+    return None
+
+
+def _hook_commands(data):
+    """(event, group index, hook) for every command in a Claude Code or Codex hooks object."""
+    for event, groups in ((data or {}).get('hooks') or {}).items():
+        for g in groups if isinstance(groups, list) else []:
+            inner = g.get('hooks') if isinstance(g, dict) else None
+            for h in inner if isinstance(inner, list) else ([g] if isinstance(g, dict) else []):
+                if isinstance(h, dict):
+                    yield event, h
+
+
+def _hook_files(root, client):
+    root = Path(root)
+    if client == 'claude':
+        return [root / '.claude' / 'settings.local.json', root / '.claude' / 'settings.json',
+                Path.home() / '.claude' / 'settings.json']
+    return [root / '.codex' / 'hooks.json', Path.home() / '.codex' / 'hooks.json']
+
+
+def _tracked(root, rel):
+    try:
+        return subprocess.run(['git', '-C', str(root), 'ls-files', '--error-unmatch', rel],
+                              capture_output=True).returncode == 0
+    except OSError:
+        return False
+
+
+def _hook_target(root, client):
+    """The file this device's session hooks go to, and a note when it is not the vault's own:
+    the hook commands name this device's Python and workspace, so they never go into a committed file."""
+    root = Path(root)
+    rel = '.claude/settings.local.json' if client == 'claude' else '.codex/hooks.json'
+    if not _tracked(root, rel):
+        return root / rel, None
+    home = Path.home() / ('.claude/settings.json' if client == 'claude' else '.codex/hooks.json')
+    return home, f"{rel} is committed in the vault: the hooks go to {home} and act only inside the vault"
+
+
+def _found(paths):
+    found = dict(start=False, end=False, checkpoint=False)
+    for path in paths:
+        try:
+            data = _object(_read(path))
+        except (CarryError, OSError, ValueError):
+            continue
+        for _, hook in _hook_commands(data):
+            kind = session_hook_kind(hook.get('command'))
+            if kind:
+                found[kind] = True
+    return found
+
+
+def session_hooks_status(root, clients=('claude', 'codex')):
+    out = {}
+    for client in clients:
+        target, note = _hook_target(root, client)
+        out[client] = dict(path=str(target), hooks=_found(_hook_files(root, client)), note=note)
+    return out
+
+
+def _without_session_hooks(data):
+    """The hooks object with every Carry session hook taken out and everything else kept."""
+    hooks = data.get('hooks')
+    if not isinstance(hooks, dict):
+        return data
+    for event in list(hooks):
+        groups = hooks[event] if isinstance(hooks[event], list) else []
+        kept = []
+        for g in groups:
+            inner = g.get('hooks') if isinstance(g, dict) else None
+            if isinstance(inner, list):
+                rest = [h for h in inner if not (isinstance(h, dict) and session_hook_kind(h.get('command')))]
+                if rest or not inner:
+                    kept.append(dict(g, hooks=rest))
+            elif not (isinstance(g, dict) and session_hook_kind(g.get('command'))):
+                kept.append(g)
+        if kept:
+            hooks[event] = kept
+        else:
+            del hooks[event]
+    if not hooks:
+        del data['hooks']
+    return data
+
+
+def _write_hooks(path, text, data):
+    new = _json(data)
+    if new == (text or ''):
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if text is not None:
+        atomic_text(path.with_name(path.name + '.bak-carry'), text)  # what was there before this change
+    atomic_text(path, new)
+    return True
+
+
+def set_session_hooks(state_dir, root, clients=('claude', 'codex'), on=True):
+    """Turn the session hooks on (start, end, checkpoint) or off for the vault on this device.
+    Only Carry's own session hooks change; every other hook and setting in the file is kept."""
+    root = Path(root).expanduser().resolve()
+    base = [sys.executable, '-I', '-m', 'carry.cli', '--workspace', str(Path(state_dir).expanduser().resolve())]
+    where = ['--vault', str(root)]
+    ours = dict(
+        SessionStart=[{'hooks': [dict(type='command', timeout=10, command=shlex.join(base + ['session', 'start', '--from-hook', *where]))]}],
+        SessionEnd=[{'hooks': [dict(type='command', timeout=3, command=shlex.join(base + ['session', 'end', *where]))]}],
+        PreCompact=[{'hooks': [dict(type='command', timeout=CHECKPOINT_TIMEOUT, command=_checkpoint_command(base, where))]}])
+    out = {}
+    for client in clients:
+        target, note = _hook_target(root, client)
+        changed = []
+        # Off: take Carry's session hooks out wherever this client reads them for the vault.
+        # On: write them to the target, after taking older copies out of it.
+        for path in (_hook_files(root, client) if not on else [target]):
+            if path != target and root in path.parents and _tracked(root, path.relative_to(root).as_posix()):
+                continue  # never edit a committed file of the vault
+            text = _read(path)
+            if text is None and not on:
+                continue
+            data = _without_session_hooks(_object(text))
+            if on:
+                hooks = data.setdefault('hooks', {})
+                for event, groups in ours.items():
+                    hooks.setdefault(event, []).extend(groups)
+            if _write_hooks(path, text, data):
+                changed.append(str(path))
+        out[client] = dict(path=str(target), hooks=_found(_hook_files(root, client)), note=note, changed=changed)
+    return out
 
 
 def _has_user_files(target):

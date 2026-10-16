@@ -122,7 +122,7 @@ status: draft
 | Today's observation or log line | append to `log/YYYY-MM-DD.md` |
 | Unclassifiable spark | stays in `+/` until context arrives |
 | Carry capture draft in `sources/carry/` | synthesize into `notes/` when durable; review it with Carry, do not hand-edit |
-| Carry session recap `+/YYYY-MM-DD — session …` (written when a chat ends; `— harvest …` before Carry 0.14) | the owner accepts, fixes or skips each item on Carry's Review page (accepted items land in `log/<chat date>.md`); when asked to route one by hand, do the same with the owner: write each accepted item to `log/<chat date>.md` with its quote and the raw's link, never edit the note a conflict points to (Conflict resolution decides), leave *Already recorded*, *Apparently done* and *Apparently dropped* alone; an item marked as the assistant's suggestion is not the owner's decision |
+| Carry session recap `+/YYYY-MM-DD — session …` (written when a chat ends, and before a long chat is compacted; `— harvest …` before Carry 0.14) | the owner accepts, fixes or skips each item on Carry's Review page (accepted items land in `log/<chat date>.md`); when asked to route one by hand, do the same with the owner: write each accepted item to `log/<chat date>.md` with its quote and the raw's link, never edit the note a conflict points to (Conflict resolution decides), leave *Already recorded*, *Apparently done* and *Apparently dropped* alone; an item marked as the assistant's suggestion is not the owner's decision |
 
 After routing: fix frontmatter, add links, report what moved and why.
 
