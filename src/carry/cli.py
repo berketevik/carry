@@ -412,16 +412,41 @@ def cmd_search(args):
     return EXIT_OK
 
 
-def _session_hook_end(args):
-    """SessionEnd from Claude Code or Codex: start the recap in the background; never fail the
-    client, never block it."""
+def _session_hook(args, command='end'):
+    """SessionEnd (`end`) or PreCompact (`checkpoint`) from Claude Code or Codex: start the recap
+    in the background; never fail the client, never block it. Silent and always exit 0: a
+    PreCompact hook that exits 2 or prints a block decision stops the compaction."""
     from . import harvest
     try:
         ws = open_workspace(args.workspace)
         harvest.spawn_from_hook(ws.state_dir, harvest.hook_payload(sys.stdin), harvest.vault_root(ws, args.vault),
-                                language=args.language)
+                                language=args.language, command=command)
     except Exception:
         pass
+    return EXIT_OK
+
+
+def _session_hook_end(args):
+    return _session_hook(args, 'end')
+
+
+def _session_hooks(args, action):
+    """Turn the session hooks (start, end, checkpoint) on or off for the vault on this device."""
+    from . import harvest, vault
+    ws = open_workspace(args.workspace)
+    root = harvest.vault_root(ws, args.vault)
+    clients = ('claude', 'codex') if args.client == 'both' else (args.client,)
+    if action == 'status':
+        result = vault.session_hooks_status(root, clients)
+    else:
+        result = vault.set_session_hooks(ws.state_dir, root, clients, on=action == 'install')
+    lines = []
+    for client in clients:
+        info = result[client]
+        state = ', '.join(f"{name} {'on' if info['hooks'].get(name) else 'off'}" for name in ('start', 'end', 'checkpoint'))
+        lines.append(f"{client}: {state}" + (f" ({info['path']})" if info.get('path') else '') +
+                     (f" · {info['note']}" if info.get('note') else ''))
+    _print(result, args.json, lines)
     return EXIT_OK
 
 
@@ -454,39 +479,46 @@ def _session_schedule(args, action):
     return EXIT_OK
 
 
-def _session_run(args, thread=None):
-    """Recap one transcript (`session end --thread`) or every idle thread of the vault (`session sweep`)."""
+def _session_run(args, thread=None, trigger=None):
+    """Recap one transcript (`session end --thread`, `session checkpoint --thread`) or every idle
+    thread of the vault (`session sweep`)."""
     from . import harvest
     ws = open_workspace(args.workspace)
     opt = lambda name, default=None: getattr(args, name, default)
     report = harvest.run(ws, root=args.vault, dry_run=opt('dry_run', False), include_filed=opt('include_filed', False),
                          limit=opt('limit'), min_idle=opt('min_idle', harvest.MIN_IDLE_MINUTES), language=args.language,
                          which=opt('extractor'), thread=thread, min_exchanges=opt('min_exchanges'),
-                         progress=(lambda m: None) if args.json else print)
+                         progress=(lambda m: None) if args.json else print, trigger=trigger)
     stamp = time.strftime('%Y-%m-%d %H:%M ') if thread else ''  # chat-end runs share one log
     # The app reads `threads N:` and the `draft:` lines back from the log (desktop._harvest_result).
+    busy = f", busy {report['busy']}" if report.get('busy') else ''
     _print(report, args.json, [f"{stamp}threads {report['threads']}: recapped {report['harvested']}, "
                                f"already filed {report['skipped_filed']}, active {report['skipped_active']}, "
-                               f"pending {report['pending']}"] + [f'draft: {d}' for d in report['digests']])
+                               f"pending {report['pending']}{busy}"] + [f'draft: {d}' for d in report['digests']])
     return EXIT_FAILED if report['pending'] else EXIT_OK
 
 
 def cmd_session(args):
-    """`carry session start | end | sweep | schedule`: the state pack a thread starts from, the
-    recap of a finished thread, the nightly sweep of idle threads, and that sweep's schedule."""
-    if args.session_command == 'start':
+    """`carry session start | end | checkpoint | sweep | schedule | hooks`: the state pack a thread
+    starts from, the recap of a finished thread, the recap so far before a chat compacts, the
+    nightly sweep of idle threads, that sweep's schedule, and the hooks that run them."""
+    command = args.session_command
+    if command == 'start':
         return cmd_context(args)
-    if args.session_command == 'end':
+    if command in ('end', 'checkpoint'):
         if args.thread:
-            return _session_run(args, thread=args.thread)
+            return _session_run(args, thread=args.thread, trigger=command)
         if sys.stdin is None or sys.stdin.isatty():
-            _print(dict(status='error', error='session_end_needs_hook_input'), args.json,
-                   ['carry session end reads the client hook JSON on stdin; by hand use --thread <transcript.jsonl>'])
+            hook = 'SessionEnd' if command == 'end' else 'PreCompact'
+            _print(dict(status='error', error=f'session_{command}_needs_hook_input'), args.json,
+                   [f'carry session {command} reads the {hook} hook JSON on stdin; by hand use --thread <transcript.jsonl>'])
             return EXIT_FAILED
-        return _session_hook_end(args)
-    if args.session_command == 'sweep':
+        return _session_hook(args, command)
+    if command == 'sweep':
         return _session_run(args)
     action = 'install' if args.install else 'remove' if args.remove else 'status'
+    if command == 'hooks':
+        return _session_hooks(args, action)
     return _session_schedule(args, action)
 
 
@@ -791,6 +823,11 @@ def build_parser():
                                           "stdin and works in the background, or recaps --thread now")
     run_options(se_end, sweep=False)
     se_end.add_argument("--thread", help="recap this transcript file now, without waiting")
+    se_cp = sssub.add_parser("checkpoint", help="recap a running thread so far, before Claude Code or Codex compacts it: "
+                                                "reads the PreCompact hook's JSON on stdin and works in the background, "
+                                                "or recaps --thread now; the chat end recaps only what comes after")
+    run_options(se_cp, sweep=False)
+    se_cp.add_argument("--thread", help="recap this transcript file so far, now")
     run_options(sssub.add_parser("sweep", help="recap every finished, idle thread of the vault (what the nightly job runs)"),
                 sweep=True)
     sch = sssub.add_parser("schedule", help="the nightly sweep at 21:30 (launchd; Task Scheduler on Windows); shows it by default")
@@ -800,6 +837,14 @@ def build_parser():
     what.add_argument("--status", action="store_true")
     sch.add_argument("--vault", help="vault folder the sweep writes to (default: the workspace's vault source)")
     sch.add_argument("--language", choices=("Turkish", "English"))
+    hk = sssub.add_parser("hooks", help="turn the session hooks (start, end, checkpoint) on or off for the vault on this "
+                                        "device; shows them by default")
+    what = hk.add_mutually_exclusive_group()
+    what.add_argument("--install", action="store_true")
+    what.add_argument("--remove", action="store_true")
+    what.add_argument("--status", action="store_true")
+    hk.add_argument("--vault", help="vault folder (default: the workspace's vault source)")
+    hk.add_argument("--client", choices=("claude", "codex", "both"), default="both")
     ss.set_defaults(func=cmd_session)
 
     cx = sub.add_parser("context", help="old name of `carry session start`")
@@ -885,9 +930,21 @@ def build_parser():
     return parser
 
 
+def _is_checkpoint_hook(argv):
+    """`session checkpoint` without --thread: Carry run as a PreCompact hook."""
+    words = list(sys.argv[1:] if argv is None else argv)
+    return 'session' in words and 'checkpoint' in words[words.index('session') + 1:] and '--thread' not in words
+
+
 def main(argv=None):
     use_utf8()
-    args = build_parser().parse_args(argv)
+    try:
+        args = build_parser().parse_args(argv)
+    except SystemExit as exc:
+        # argparse exits 2 on a usage error, and a PreCompact hook that exits 2 blocks the compaction.
+        if exc.code == 2 and _is_checkpoint_hook(argv):
+            return EXIT_OK
+        raise
     try:
         return args.func(args)
     except RevisionConflict as exc:

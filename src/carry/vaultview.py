@@ -423,25 +423,36 @@ def assistants(ws, root=None):
                     connected = '[mcp_servers.carry]' in (root / '.codex' / 'config.toml').read_text(encoding='utf-8')
             except (OSError, ValueError, AttributeError):
                 connected = False
-        out[client] = dict(installed=installed, connected=connected, chat_end=_chat_end_hook(client, root))
-    return dict(root=str(root) if root else None, chat_end=any(v['chat_end'] for v in out.values()), **out)
+        out[client] = dict(installed=installed, connected=connected, chat_end=_chat_end_hook(client, root),
+                           checkpoint=_checkpoint_hook(client, root))
+    return dict(root=str(root) if root else None, chat_end=any(v['chat_end'] for v in out.values()),
+                checkpoint=any(v['checkpoint'] for v in out.values()), **out)
+
+
+def _hook_places(client, root):
+    if client == 'claude':
+        return ([root / '.claude' / 'settings.json', root / '.claude' / 'settings.local.json'] if root else []) + \
+            [Path.home() / '.claude' / 'settings.json']
+    return ([root / '.codex' / 'hooks.json'] if root else []) + [Path.home() / '.codex' / 'hooks.json']
+
+
+def _hook_text(client, root):
+    for place in _hook_places(client, root):
+        try:
+            yield place.read_text(encoding='utf-8')
+        except OSError:
+            continue
 
 
 def _chat_end_hook(client, root):
     """Does this assistant run Carry's session recap when a chat in the notes folder ends?
     `session end` since 0.14; hooks written before it run `harvest --from-hook`."""
-    if client == 'claude':
-        places = [root / '.claude' / 'settings.json', root / '.claude' / 'settings.local.json'] if root else []
-    else:
-        places = ([root / '.codex' / 'hooks.json'] if root else []) + [Path.home() / '.codex' / 'hooks.json']
-    for place in places:
-        try:
-            text = place.read_text(encoding='utf-8')
-        except OSError:
-            continue
-        if ('harvest' in text and '--from-hook' in text) or ' session end' in text:
-            return True
-    return False
+    return any(('harvest' in text and '--from-hook' in text) or ' session end' in text for text in _hook_text(client, root))
+
+
+def _checkpoint_hook(client, root):
+    """Does this assistant recap a chat so far before it compacts it (`session checkpoint`, 0.15)?"""
+    return any(' session checkpoint' in text for text in _hook_text(client, root))
 
 
 def schedule_for(ws):
