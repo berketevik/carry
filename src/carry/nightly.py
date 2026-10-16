@@ -1,4 +1,4 @@
-"""Entry point of the Windows nightly task: `carry ... harvest` with its output appended to
+"""Entry point of the Windows nightly task: `carry ... session sweep` with its output appended to
 harvest.log, since Task Scheduler (unlike launchd's StandardOutPath) keeps none.
 
 The task starts pythonw, which has no console, so no window opens at night. But every console

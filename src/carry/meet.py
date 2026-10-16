@@ -388,7 +388,7 @@ def _digest_name(root, day, stem, L):
 
 
 def write_digest(root, rel, title, groups, meta, language, day):
-    """The meeting's items as a draft digest in +/, in the harvest digest's format, so the
+    """The meeting's items as a draft digest in +/, in the session recap's format, so the
     Review page decides them item by item and accepted ones go to that day's log."""
     L, H = labels(language), harvest.LABELS.get(language, harvest.LABELS['English'])
     stem = Path(rel).stem
@@ -397,7 +397,7 @@ def write_digest(root, rel, title, groups, meta, language, day):
     lines = ['---', 'type: output', f'description: {json.dumps(summary, ensure_ascii=False)}', f'created: {day}',
              'status: draft', f'generated: {okf.flow(okf.event(okf.carry_actor()))}', 'provenance: meeting',
              *okf.source_lines([okf.entry(rel)]),
-             f'harvest: {json.dumps(meta, ensure_ascii=False)}', '---', '', f"# {L['meeting']}: {title}", '']
+             f'session: {json.dumps(meta, ensure_ascii=False)}', '---', '', f"# {L['meeting']}: {title}", '']
 
     def item_line(it):
         where = f" ↔ [[{Path(it['match']).stem}]]" if it.get('match') else ''

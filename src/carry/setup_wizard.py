@@ -455,6 +455,6 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
     say()
     say(paint('  İstersen sonra:', DIM))
     if own:
-        say(paint('    her akşam sohbetlerden taslak not   carry harvest --install-schedule', DIM))
+        say(paint('    her akşam oturum özeti çıkar        carry session schedule --install', DIM))
     say(paint('    Carry\'yi başka bir klasörde de kullan   carry connect claude <klasör>', DIM))
     return 0

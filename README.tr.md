@@ -6,7 +6,7 @@
 
 Eylülde bir müşterinizin user ID'lerinin hatalı olduğunu buluyorsunuz. Kasımda onları düzeltmeye oturduğunuzda asistanınız önce notlarınıza bakar: ne bulduğunuzu hatırlatır ve nerede yazdığını gösterir. Notlarınız bilgisayarınızda, düz Markdown (`.md`) dosyaları olarak kalır.
 
-**Sürüm 0.13.0 · macOS 14+ · pilot**
+**Sürüm 0.14.0 · macOS 14+ · pilot**
 
 ## Başlayın
 
@@ -29,14 +29,14 @@ Kurulum iki şey sorar: neye bağlanacağınızı (kendi notlarınız, ekibinizi
 
 1. **Notlarınız aranabilir hale gelir.** Carry onları kısa parçalara böler ve bilgisayarınızda bir arama dizini tutar: kelimelere ve anlamına göre. Anlam modeli (yaklaşık 330 MB) Carry'nin içinde, Mac'inizin GPU'sunda çalışır; bilgisayarınızda [Ollama](https://ollama.com) varsa Carry onu kullanır.
 2. **Asistanınız önce notlarınıza bakar.** Notlarda arar, yalnızca soruyu gerçekten cevaplayan parçaları tutar ve her birinin kaynağını göstererek cevap verir. “Geçen hafta” ya da “eylülde” gibi ifadeler aramayı o döneme daraltır. Her sohbet de son kararların ve yarım kalan işlerin kısa bir özetiyle açılır.
-3. **Sohbetler, onayladığınız taslaklara dönüşür.** Sohbet bitince Carry kararları ve açık işleri not klasörünüzdeki `+/` gelen kutusuna taslak olarak yazar. Carry uygulamasında her maddeyi kabul eder, düzeltir ya da atlarsınız; kabul edilenler o günün log'una yazılır, siz onaylamadan hiçbir şey kaydedilmez.
-4. **Toplantılar da nota dönüşür.** Uygulamadaki Toplantılar sayfasından ya da bir görüşme mikrofonu açtığında menü çubuğundan Carry toplantıyı kaydeder ve konuşulanı o anda yazıya döker: mikrofonunuz ve macOS 14.2 ve sonrasında görüşmenin sesi, Mac'inizde yazıya dökülür. Durdur'a basınca transkript `sources/carry/meet/` altına kaydedilir. Apple Silicon bir Mac'te ardından Whisper (large-v3-turbo, bir kez yaklaşık 875 MB indirilir) her iki tarafın sesini Mac'inizin GPU'sunda yeniden ve daha doğru yazıya döker; mikrofon bir görüşmede açıkken bekler, bitince ses silinir. Sonra bağlı asistanınız toplantıyı bir kez özetler; kararlar, açık işler ve bilgiler söylendikleri satırla birlikte sohbet taslakları gibi İncele'ye gelir. Bağlı asistan yoksa transkript olduğu gibi kalır.
+3. **Her sohbet, onayladığınız bir oturum özetiyle biter.** Sohbet bitince Carry kararları ve açık işleri not klasörünüzdeki `+/` gelen kutusuna taslak olarak yazar (`carry session end`; asistanın sohbet sonu hook'u çalıştırır). Carry uygulamasında her maddeyi kabul eder, düzeltir ya da atlarsınız; kabul edilenler o günün log'una yazılır, siz onaylamadan hiçbir şey kaydedilmez.
+4. **Toplantılar da nota dönüşür.** Uygulamadaki Toplantılar sayfasından ya da bir görüşme mikrofonu açtığında menü çubuğundan Carry toplantıyı kaydeder ve konuşulanı o anda yazıya döker: mikrofonunuz ve macOS 14.2 ve sonrasında görüşmenin sesi, Mac'inizde yazıya dökülür. Durdur'a basınca transkript `sources/carry/meet/` altına kaydedilir. Apple Silicon bir Mac'te ardından Whisper (large-v3-turbo, bir kez yaklaşık 875 MB indirilir) her iki tarafın sesini Mac'inizin GPU'sunda yeniden ve daha doğru yazıya döker; mikrofon bir görüşmede açıkken bekler, bitince ses silinir. Sonra bağlı asistanınız toplantıyı bir kez özetler; kararlar, açık işler ve bilgiler söylendikleri satırla birlikte oturum özetleri gibi İncele'ye gelir. Bağlı asistan yoksa transkript olduğu gibi kalır.
 
 Notlar, Google'ın [Open Knowledge Format](https://github.com/GoogleCloudPlatform/open-knowledge-format) standardında (OKF v0.2) düz Markdown dosyalarıdır: frontmatter notun ne olduğunu (`type`), sizin kontrol edip etmediğinizi (`status`, `verified`), neye dayandığını (`sources`) ve ne zaman eskiyeceğini (`stale_after`) söyler. Carry bunları her parçanın yanında gösterir; uygulamada bir taslağı onayladığınızda kontrolünüz nota yazılır.
 
 ## Verileriniz
 
-Carry notlarınızı hiçbir yere yüklemez ve kendine ait bir çevrimiçi hizmet kullanmaz. Asistanınızın okuduğu parçalar yalnızca o asistana gider (kendi hesabınızla Claude Code ya da Codex); sohbet taslakları da onun üzerinden çıkarılır. Toplantılar Mac'inizde yazıya dökülür: canlı olarak Apple'ın tanıyıcısıyla (Dikte'nin açık olması gerekir), sonra Whisper ile. Ses yalnız Whisper yazıya dökene kadar Carry'nin çalışma klasöründe kalır, Mac'inizden çıkmaz, ardından silinir. Özet için bağlı asistanınıza yalnızca transkript gider; bağlı asistan yoksa toplantıdan hiçbir şey Mac'inizden çıkmaz.
+Carry notlarınızı hiçbir yere yüklemez ve kendine ait bir çevrimiçi hizmet kullanmaz. Asistanınızın okuduğu parçalar yalnızca o asistana gider (kendi hesabınızla Claude Code ya da Codex); oturum özetleri de onun üzerinden çıkarılır. Toplantılar Mac'inizde yazıya dökülür: canlı olarak Apple'ın tanıyıcısıyla (Dikte'nin açık olması gerekir), sonra Whisper ile. Ses yalnız Whisper yazıya dökene kadar Carry'nin çalışma klasöründe kalır, Mac'inizden çıkmaz, ardından silinir. Özet için bağlı asistanınıza yalnızca transkript gider; bağlı asistan yoksa toplantıdan hiçbir şey Mac'inizden çıkmaz.
 
 <details>
 <summary><b>Sonra gerekirse</b></summary>
@@ -45,7 +45,7 @@ Carry notlarınızı hiçbir yere yüklemez ve kendine ait bir çevrimiçi hizme
 |---|---|
 | Ekibinizin bilgi bankasını sonradan eklemek | `carry setup --team sahip/depo` |
 | Ekip deposunun arama dizinini depoyla birlikte göndermek, böylece ekip arkadaşları hemen arar (deponun klonunda çalıştırıp commit ve push edin) | `carry github pack --id team --out <klon>/.carry/index.db` |
-| Sohbet taslaklarını her akşam 21:30'da almak | `carry harvest --install-schedule` |
+| Sohbet sonu hook'unun kaçırdığı olursa diye her akşam 21:30'da biten sohbetleri de özetlemek | `carry session schedule --install` |
 | Anlamına göre aramayı açıp kapatmak | `carry search --semantic on` (ya da `off`) |
 | Onayladığınız taslaklara adınızı yazdırmak (`verified: human:<ad>`) | `carry owner --set <ad>` |
 | Carry'yi güncellemek | `carry update`, ardından `carry app install` |
@@ -80,7 +80,8 @@ Python 3.11+ ister. Anlamına göre arama `llama-cpp-python` (llama.cpp; kurulum
 
 - **Pilot:** uygulama Mac'inizde derlenir ve ad-hoc imzalanır; noter onaylı sürüm yoktur.
 - Claude Code ve Codex ile çalışır. Yalnız `.md` dosyalarını okur.
-- Arama ve sohbet taslakları eksik ya da yanlış olabilir; taslakları kaynaklarıyla kontrol edin.
+- Arama ve oturum özetleri eksik ya da yanlış olabilir; taslakları kaynaklarıyla kontrol edin.
+- `carry session` 0.14'ten önce `carry harvest` idi (`carry session start` da `carry context`); eski adlar çalışmaya devam eder, önceden yazılan özetler `— harvest —` dosya adlarını korur.
 - Toplantı transkripti yalnızca sizi karşı taraftan ayırır, her konuşmacıyı ayrı ayrı göstermez. Hoparlörle görüşürken mikrofonunuz görüşmenin sesini de duyar; Carry bu yankıları ayıklar ama en temiz transkript kulaklıkla çıkar.
 - Özetin yedeği olan Apple'ın cihazdaki modeli Claude ya da Codex'ten daha az madde yakalar ve maddeleri notlarınızla karşılaştırmaz; her madde yine alıntısıyla gelir, İncele'de kontrol edin.
 - Gizli bilgi maskeleme kusursuz değildir.

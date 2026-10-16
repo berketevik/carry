@@ -1,7 +1,7 @@
-"""`carry context`: the state pack a new thread starts from (Continuity 1c).
+"""`carry session start` (`carry context` before 0.14): the state pack a new thread starts from (Continuity 1c).
 
 At most about 2k tokens: recent commits, open items and decisions from recent
-harvest drafts (items shown as done are left out), what waits for review, and
+session recaps (items shown as done are left out), what waits for review, and
 index health. Claude Code runs it as a SessionStart hook in a Carry vault; Codex
 is told to run it first. Read-only: it writes nothing.
 """
@@ -42,7 +42,9 @@ def _digests(root, days=DAYS, today=None):
     today = today or datetime.date.today()
     inbox = Path(root) / '+'
     found = []
-    for p in sorted(inbox.glob('* — harvest *.md'), reverse=True):
+    # Session recaps: `<day> — session …` since 0.14, `<day> — harvest …` before it.
+    recaps = [*inbox.glob('* — session *.md'), *inbox.glob('* — harvest *.md')]
+    for p in sorted(recaps, key=lambda p: p.name, reverse=True):
         try:
             day = datetime.date.fromisoformat(p.name[:10])
         except ValueError:

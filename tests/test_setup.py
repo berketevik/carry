@@ -88,7 +88,7 @@ class SetupTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertTrue((self.base / 'Vault' / 'LLM-GUIDE.md').exists())
         self.assertIn('carry connect claude', out.getvalue())
-        self.assertIn('carry harvest --install-schedule', out.getvalue())
+        self.assertIn('carry session schedule --install', out.getvalue())
 
     def team_copy(self):
         clone = self.base / 'okb'; clone.mkdir()

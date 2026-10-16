@@ -1,4 +1,5 @@
-"""The nightly harvest on Windows: one per-user Task Scheduler task, the counterpart of the launchd job.
+"""The nightly sweep (`carry session sweep`) on Windows: one per-user Task Scheduler task, the
+counterpart of the launchd job; it keeps its pre-0.14 task name, so installing replaces it in place.
 
 Like the launchd plist, Carry keeps its own copy of the task definition and reads the schedule
 back from it; `schtasks /Query` only answers whether the task is registered. The task runs
@@ -31,7 +32,7 @@ def interpreter():
 
 
 def task_xml(state_dir, hour, minute, extra=()):
-    arguments = subprocess.list2cmdline(['-I', '-m', 'carry.nightly', '--workspace', str(state_dir), 'harvest', *extra])
+    arguments = subprocess.list2cmdline(['-I', '-m', 'carry.nightly', '--workspace', str(state_dir), 'session', 'sweep', *extra])
     return f'''<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="{NS['t']}">
   <RegistrationInfo><Description>Carry: drafts from the day's chats, for review in the app.</Description></RegistrationInfo>

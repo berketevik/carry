@@ -185,12 +185,12 @@ def is_secret(metadata):
 
 
 def is_pending_digest(metadata):
-    """A chat digest waits for review like a proposal until the owner's decisions move it out of
-    `status: draft` (or the legacy `draft: true`), wherever it lands: a folder that does not
-    exclude +/ must not serve it as an accepted note. Any other draft stays searchable."""
+    """A session recap (`session:`, or `harvest:` before 0.14) waits for review like a proposal
+    until the owner's decisions move it out of `status: draft` (or the legacy `draft: true`),
+    wherever it lands: a folder that does not exclude +/ must not serve it as an accepted note.
+    Any other draft stays searchable."""
     metadata = metadata or {}
-    return (isinstance(metadata.get("harvest"), dict) and "extractor" in metadata["harvest"]
-            and okf.is_draft(metadata))
+    return okf.is_recap(metadata) and okf.is_draft(metadata)
 
 
 def _local_only(workspace, files, row):

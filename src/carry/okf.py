@@ -106,6 +106,24 @@ def is_deprecated(front):
     return lifecycle(front)[0] == "deprecated"
 
 
+RUN_KEYS = ("session", "harvest")  # Carry's run record on a session recap; `harvest:` before 0.14
+
+
+def run_record(front):
+    """Carry's own run record on a session recap or meeting digest (`session:`, `harvest:` in
+    recaps written before 0.14), or {} for any other note."""
+    for key in RUN_KEYS:
+        value = (front or {}).get(key)
+        if isinstance(value, dict):
+            return value
+    return {}
+
+
+def is_recap(front):
+    """A session recap or meeting digest Carry wrote: its run record names the extractor."""
+    return "extractor" in run_record(front)
+
+
 def _event(value):
     if not isinstance(value, dict):
         return None

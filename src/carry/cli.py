@@ -412,43 +412,92 @@ def cmd_search(args):
     return EXIT_OK
 
 
-def cmd_harvest(args):
+def _session_hook_end(args):
+    """SessionEnd from Claude Code or Codex: start the recap in the background; never fail the
+    client, never block it."""
     from . import harvest
-    if args.from_hook:
-        # SessionEnd from Claude Code or Codex: never fail the client, never block it.
-        try:
-            ws = open_workspace(args.workspace)
-            harvest.spawn_from_hook(ws.state_dir, harvest.hook_payload(sys.stdin), harvest.vault_root(ws, args.vault),
-                                    language=args.language)
-        except Exception:
-            pass
-        return EXIT_OK
+    try:
+        ws = open_workspace(args.workspace)
+        harvest.spawn_from_hook(ws.state_dir, harvest.hook_payload(sys.stdin), harvest.vault_root(ws, args.vault),
+                                language=args.language)
+    except Exception:
+        pass
+    return EXIT_OK
+
+
+def _session_schedule(args, action):
+    """The nightly sweep: install, remove or show it (one launchd job or Windows task per user)."""
+    from . import harvest
     ws = open_workspace(args.workspace)
-    if (args.install_schedule or args.remove_schedule) and sys.platform not in ('darwin', 'win32'):
-        import shutil
-        line = f"30 21 * * * {shutil.which('carry') or 'carry'} --workspace {ws.state_dir} harvest"
-        _print(dict(cron=line), args.json, ['nightly harvest is scheduled on macOS and Windows; add this line with `crontab -e`:', line])
-        return EXIT_OK
-    if args.install_schedule or args.remove_schedule:
-        import shutil
-        if args.remove_schedule:
-            harvest.remove_schedule()
-            _print(dict(schedule='removed'), args.json, ['nightly harvest removed'])
+    if action == 'status':
+        status = harvest.schedule_status()
+        if not status.get('installed'):
+            _print(status, args.json, ['nightly sweep: not scheduled'])
             return EXIT_OK
-        carry_bin = shutil.which('carry') or os.path.abspath(sys.argv[0])
-        harvest.install_schedule(carry_bin, ws.state_dir, vault=args.vault, language=args.language)
-        plist = harvest.schedule_path()
-        _print(dict(schedule=str(plist)), args.json, [f'nightly harvest at 21:30: {plist}'])
+        when = f"{status.get('hour')}:{int(status.get('minute') or 0):02d}"
+        _print(status, args.json, [f"nightly sweep at {when}: {status.get('path')}" + ('' if status.get('loaded') else ' (not loaded by launchd)')])
         return EXIT_OK
-    report = harvest.run(ws, root=args.vault, dry_run=args.dry_run, include_filed=args.include_filed,
-                         limit=args.limit, min_idle=args.min_idle, language=args.language, which=args.extractor,
-                         thread=args.thread, min_exchanges=args.min_exchanges,
+    if sys.platform not in ('darwin', 'win32'):
+        import shutil
+        line = f"30 21 * * * {shutil.which('carry') or 'carry'} --workspace {ws.state_dir} session sweep"
+        _print(dict(cron=line), args.json, ['the nightly sweep is scheduled on macOS and Windows; add this line with `crontab -e`:', line])
+        return EXIT_OK
+    if action == 'remove':
+        harvest.remove_schedule()
+        _print(dict(schedule='removed'), args.json, ['nightly sweep removed'])
+        return EXIT_OK
+    import shutil
+    carry_bin = shutil.which('carry') or os.path.abspath(sys.argv[0])
+    harvest.install_schedule(carry_bin, ws.state_dir, vault=args.vault, language=args.language)
+    plist = harvest.schedule_path()
+    _print(dict(schedule=str(plist)), args.json, [f'nightly sweep at 21:30: {plist}'])
+    return EXIT_OK
+
+
+def _session_run(args, thread=None):
+    """Recap one transcript (`session end --thread`) or every idle thread of the vault (`session sweep`)."""
+    from . import harvest
+    ws = open_workspace(args.workspace)
+    opt = lambda name, default=None: getattr(args, name, default)
+    report = harvest.run(ws, root=args.vault, dry_run=opt('dry_run', False), include_filed=opt('include_filed', False),
+                         limit=opt('limit'), min_idle=opt('min_idle', harvest.MIN_IDLE_MINUTES), language=args.language,
+                         which=opt('extractor'), thread=thread, min_exchanges=opt('min_exchanges'),
                          progress=(lambda m: None) if args.json else print)
-    stamp = time.strftime('%Y-%m-%d %H:%M ') if args.thread else ''  # hook runs share one log
-    _print(report, args.json, [f"{stamp}threads {report['threads']}: harvested {report['harvested']}, "
+    stamp = time.strftime('%Y-%m-%d %H:%M ') if thread else ''  # chat-end runs share one log
+    # The app reads `threads N:` and the `draft:` lines back from the log (desktop._harvest_result).
+    _print(report, args.json, [f"{stamp}threads {report['threads']}: recapped {report['harvested']}, "
                                f"already filed {report['skipped_filed']}, active {report['skipped_active']}, "
                                f"pending {report['pending']}"] + [f'draft: {d}' for d in report['digests']])
     return EXIT_FAILED if report['pending'] else EXIT_OK
+
+
+def cmd_session(args):
+    """`carry session start | end | sweep | schedule`: the state pack a thread starts from, the
+    recap of a finished thread, the nightly sweep of idle threads, and that sweep's schedule."""
+    if args.session_command == 'start':
+        return cmd_context(args)
+    if args.session_command == 'end':
+        if args.thread:
+            return _session_run(args, thread=args.thread)
+        if sys.stdin is None or sys.stdin.isatty():
+            _print(dict(status='error', error='session_end_needs_hook_input'), args.json,
+                   ['carry session end reads the client hook JSON on stdin; by hand use --thread <transcript.jsonl>'])
+            return EXIT_FAILED
+        return _session_hook_end(args)
+    if args.session_command == 'sweep':
+        return _session_run(args)
+    action = 'install' if args.install else 'remove' if args.remove else 'status'
+    return _session_schedule(args, action)
+
+
+def cmd_harvest(args):
+    """`carry harvest`, the name before 0.14: --from-hook is `session end`, --thread and a plain run
+    are `session end --thread` and `session sweep`, the schedule flags are `session schedule`."""
+    if args.from_hook:
+        return _session_hook_end(args)
+    if args.install_schedule or args.remove_schedule:
+        return _session_schedule(args, 'remove' if args.remove_schedule else 'install')
+    return _session_run(args, thread=args.thread)
 
 
 def cmd_meet(args):
@@ -716,11 +765,45 @@ def build_parser():
     cnsub.add_parser("undo", help="roll back one connection").add_argument("id")
     cn.set_defaults(func=cmd_connect)
 
-    cx = sub.add_parser("context", help="state pack for a new thread: recent commits, open items, drafts to review")
-    cx.add_argument("--vault", help="vault folder (default: current directory)")
-    cx.add_argument("--max-chars", type=int, default=7000)
-    cx.add_argument("--language", choices=("Turkish", "English"))
-    cx.add_argument("--from-hook", action="store_true", help="SessionStart hook: read the client's JSON on stdin")
+    def start_options(p):
+        p.add_argument("--vault", help="vault folder (default: current directory)")
+        p.add_argument("--max-chars", type=int, default=7000)
+        p.add_argument("--language", choices=("Turkish", "English"))
+        p.add_argument("--from-hook", action="store_true", help="SessionStart hook: read the client's JSON on stdin")
+
+    def run_options(p, sweep):
+        p.add_argument("--vault", help="vault folder (default: the workspace's vault source)")
+        p.add_argument("--language", choices=("Turkish", "English"), help="language of the recaps (default: the vault's)")
+        p.add_argument("--extractor", help="claude:<model> or codex:<model> (default: claude:sonnet, else codex:gpt-6-astra)")
+        p.add_argument("--min-exchanges", type=int, help="skip threads shorter than this (default 2)")
+        if sweep:
+            p.add_argument("--dry-run", action="store_true")
+            p.add_argument("--include-filed", action="store_true", help="also threads that already wrote notes")
+            p.add_argument("--limit", type=int, help="at most this many threads per run")
+            p.add_argument("--min-idle", type=int, default=30, help="skip threads written to in the last N minutes")
+
+    ss = sub.add_parser("session", help="a chat session with Carry: the state pack it starts from, its recap "
+                                        "when it ends, and the nightly sweep of idle chats")
+    sssub = ss.add_subparsers(dest="session_command", required=True)
+    start_options(sssub.add_parser("start", help="state pack for a new thread: recent commits, open items, recaps to review "
+                                                 "(the SessionStart hook)"))
+    se_end = sssub.add_parser("end", help="recap a finished thread into +/ for review: reads the SessionEnd hook's JSON on "
+                                          "stdin and works in the background, or recaps --thread now")
+    run_options(se_end, sweep=False)
+    se_end.add_argument("--thread", help="recap this transcript file now, without waiting")
+    run_options(sssub.add_parser("sweep", help="recap every finished, idle thread of the vault (what the nightly job runs)"),
+                sweep=True)
+    sch = sssub.add_parser("schedule", help="the nightly sweep at 21:30 (launchd; Task Scheduler on Windows); shows it by default")
+    what = sch.add_mutually_exclusive_group()
+    what.add_argument("--install", action="store_true")
+    what.add_argument("--remove", action="store_true")
+    what.add_argument("--status", action="store_true")
+    sch.add_argument("--vault", help="vault folder the sweep writes to (default: the workspace's vault source)")
+    sch.add_argument("--language", choices=("Turkish", "English"))
+    ss.set_defaults(func=cmd_session)
+
+    cx = sub.add_parser("context", help="old name of `carry session start`")
+    start_options(cx)
     cx.set_defaults(func=cmd_context)
 
     se = sub.add_parser("search", help="switch semantic search (embeddinggemma via Ollama) on or off and choose the judge")
@@ -729,19 +812,13 @@ def build_parser():
     se.add_argument("--install-ollama", action="store_true", help="install Ollama with Homebrew if it is missing")
     se.set_defaults(func=cmd_search)
 
-    hv = sub.add_parser("harvest", help="draft notes from finished Claude Code / Codex threads of the vault")
-    hv.add_argument("--vault", help="vault folder (default: the workspace's vault source)")
-    hv.add_argument("--dry-run", action="store_true")
-    hv.add_argument("--include-filed", action="store_true", help="also threads that already wrote notes")
-    hv.add_argument("--limit", type=int, help="at most this many threads per run")
-    hv.add_argument("--min-idle", type=int, default=30, help="skip threads written to in the last N minutes")
-    hv.add_argument("--language", choices=("Turkish", "English"), help="language of the drafts (default: the vault's)")
-    hv.add_argument("--thread", help="harvest only this transcript file (no idle wait)")
-    hv.add_argument("--from-hook", action="store_true", help="SessionEnd hook: read the client's JSON on stdin, harvest in the background")
-    hv.add_argument("--min-exchanges", type=int, help="skip threads shorter than this (default 2)")
-    hv.add_argument("--extractor", help="claude:<model> or codex:<model> (default: claude:sonnet, else codex:gpt-6-astra)")
-    hv.add_argument("--install-schedule", action="store_true", help="run every evening at 21:30 (launchd; Task Scheduler on Windows)")
-    hv.add_argument("--remove-schedule", action="store_true")
+    hv = sub.add_parser("harvest", help="old name of `carry session sweep` (--thread: `session end --thread`, "
+                                        "--from-hook: `session end`, the schedule flags: `session schedule`)")
+    run_options(hv, sweep=True)
+    hv.add_argument("--thread", help="old form of `carry session end --thread`")
+    hv.add_argument("--from-hook", action="store_true", help="old form of `carry session end` (hooks written before 0.14)")
+    hv.add_argument("--install-schedule", action="store_true", help="old form of `carry session schedule --install`")
+    hv.add_argument("--remove-schedule", action="store_true", help="old form of `carry session schedule --remove`")
     hv.set_defaults(func=cmd_harvest)
 
     mt = sub.add_parser("meet", help="meetings recorded in the app: list them, summarise one again, get the Whisper model")
