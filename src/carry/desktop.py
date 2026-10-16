@@ -120,7 +120,7 @@ def _is_harvest(pid, state_dir):
         command = _command_line(int(pid))
     except (OSError, ValueError, TypeError, subprocess.SubprocessError):
         return False
-    return ' harvest' in command and str(state_dir) in command
+    return (' harvest' in command or ' session sweep' in command) and str(state_dir) in command
 
 
 def _command_line(pid):
@@ -389,7 +389,7 @@ class Bridge:
             if harvest_job(ws).get('running'):
                 return dict(started=False, **harvest_job(ws))
             vault = harvest_vault(ws, None)
-            args = [carry_executable(), '--workspace', str(ws.state_dir), 'harvest', '--vault', vault]
+            args = [carry_executable(), '--workspace', str(ws.state_dir), 'session', 'sweep', '--vault', vault]
             log_path = ws.state_dir / 'harvest.log'
             offset = log_path.stat().st_size if log_path.exists() else 0
             with open(log_path, 'a') as log:

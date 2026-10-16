@@ -320,7 +320,7 @@ RAW_TYPES = ('chat-raw', 'source', 'meeting')
 
 
 def is_digest(front):
-    return isinstance(front.get('harvest'), dict) and 'extractor' in front['harvest']
+    return okf.is_recap(front)
 
 
 def _blocked(front):
@@ -428,7 +428,8 @@ def assistants(ws, root=None):
 
 
 def _chat_end_hook(client, root):
-    """Does this assistant run Carry's harvest when a chat in the notes folder ends?"""
+    """Does this assistant run Carry's session recap when a chat in the notes folder ends?
+    `session end` since 0.14; hooks written before it run `harvest --from-hook`."""
     if client == 'claude':
         places = [root / '.claude' / 'settings.json', root / '.claude' / 'settings.local.json'] if root else []
     else:
@@ -438,7 +439,7 @@ def _chat_end_hook(client, root):
             text = place.read_text(encoding='utf-8')
         except OSError:
             continue
-        if 'harvest' in text and '--from-hook' in text:
+        if ('harvest' in text and '--from-hook' in text) or ' session end' in text:
             return True
     return False
 

@@ -88,14 +88,16 @@ def _wiring(workspace):
 
 
 def _session_start(workspace):
+    # The state pack a new thread starts from (`carry context` before 0.14).
     return [{'hooks': [dict(type='command', timeout=10, command=shlex.join(
-        [sys.executable, '-I', '-m', 'carry.cli', '--workspace', str(workspace), 'context']))]}]
+        [sys.executable, '-I', '-m', 'carry.cli', '--workspace', str(workspace), 'session', 'start']))]}]
 
 
 def _session_end(workspace):
-    # Starts the harvest of the closed thread in the background and returns at once.
+    # Starts the recap of the closed thread in the background and returns at once
+    # (`carry harvest --from-hook` before 0.14).
     return [{'hooks': [dict(type='command', timeout=3, command=shlex.join(
-        [sys.executable, '-I', '-m', 'carry.cli', '--workspace', str(workspace), 'harvest', '--from-hook']))]}]
+        [sys.executable, '-I', '-m', 'carry.cli', '--workspace', str(workspace), 'session', 'end']))]}]
 
 
 def _codex_hooks(workspace, capture):

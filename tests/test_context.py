@@ -1,4 +1,4 @@
-"""carry context: state pack from commits and recent harvest drafts; SessionStart wiring."""
+"""carry session start (formerly carry context): state pack from commits and recent session recaps; hook wiring."""
 import datetime
 import io
 import json
@@ -46,7 +46,7 @@ class ContextTest(unittest.TestCase):
         settings = json.loads((self.root / '.claude' / 'settings.local.json').read_text(encoding='utf-8'))
         command = settings['hooks']['SessionStart'][0]['hooks'][0]['command']
         self.assertIn('carry.cli', command)
-        self.assertIn(' context', command)
+        self.assertTrue(command.endswith(' session start'))
         self.assertEqual(context.workspace_for(self.root), str(self.base / 'ws'))
         self.assertIn('.carry/local.json', (self.root / '.gitignore').read_text(encoding='utf-8'))
 
@@ -54,9 +54,9 @@ class ContextTest(unittest.TestCase):
         claude = json.loads((self.root / '.claude' / 'settings.local.json').read_text(encoding='utf-8'))['hooks']
         codex = json.loads((self.root / '.codex' / 'hooks.json').read_text(encoding='utf-8'))['hooks']
         for hooks in (claude, codex):
-            self.assertIn(' context', hooks['SessionStart'][0]['hooks'][0]['command'])
+            self.assertTrue(hooks['SessionStart'][0]['hooks'][0]['command'].endswith(' session start'))
             end = hooks['SessionEnd'][0]['hooks'][0]
-            self.assertIn('harvest --from-hook', end['command'])
+            self.assertTrue(end['command'].endswith(' session end'))
             self.assertLessEqual(end['timeout'], 3)
         self.assertNotIn('UserPromptSubmit', codex)
 

@@ -276,7 +276,9 @@ class WritersTest(unittest.TestCase):
         self.assertFalse({'summary', 'draft'} & set(front))
         self.assertIn('1 new', front['description'])
         raw, _ = parse_frontmatter((self.root / raw_rel).read_text(encoding='utf-8'))
-        self.assertEqual((raw['type'], raw['source_type']), ('chat-raw', 'harvest'))
+        self.assertEqual((raw['type'], raw['source_type']), ('chat-raw', 'session'))
+        self.assertTrue(raw_rel.startswith('sources/carry/session/'))
+        self.assertEqual(front['session']['extractor'], 'claude:sonnet')
         self.assertTrue(raw['generated']['by'].startswith('carry/'))
         with patch.object(markdown, '_yaml', None):
             plain, _ = parse_frontmatter((self.root / digest_rel).read_text(encoding='utf-8'))

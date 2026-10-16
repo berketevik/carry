@@ -42,7 +42,9 @@ def _digests(root, days=DAYS, today=None):
     today = today or datetime.date.today()
     inbox = Path(root) / '+'
     found = []
-    for p in sorted(inbox.glob('* — harvest *.md'), reverse=True):
+    # Session recaps: `<day> — session …` since 0.14, `<day> — harvest …` before it.
+    recaps = [*inbox.glob('* — session *.md'), *inbox.glob('* — harvest *.md')]
+    for p in sorted(recaps, key=lambda p: p.name, reverse=True):
         try:
             day = datetime.date.fromisoformat(p.name[:10])
         except ValueError:

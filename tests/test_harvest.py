@@ -83,9 +83,12 @@ class HarvestTest(unittest.TestCase):
         self.assertIn('The pilot ships on 15 October.', digest)
         self.assertNotIn('1M', digest)
         self.assertIn('"dropped_without_quote": 1', digest)
-        raws = list((self.root / 'sources/carry/harvest').glob('*.md'))
+        raws = list((self.root / 'sources/carry/session').glob('*.md'))
         self.assertEqual(len(raws), 1)
         self.assertIn('type: chat-raw', raws[0].read_text(encoding='utf-8'))
+        self.assertRegex(report['digests'][0], r'^\+/\d{4}-\d{2}-\d{2} — session claude [0-9a-f]{8}\.md$')
+        self.assertIn('\nsession: {', digest)
+        self.assertNotIn('\nharvest:', digest)
 
     def test_assistant_suggestion_is_not_filed_as_the_owners_decision(self):
         self.thread('bbbb2222', [('What should we do about ECC?', 'I recommend installing only selected skills.')])

@@ -96,7 +96,7 @@ def parse(text):
     # it as a wikilink; a new log file's frontmatter keeps it as an OKF entry.
     entries = okf.source_entries(front)
     raw = okf.as_wikilink(entries[0]['resource']) if entries else ''
-    run = front.get('harvest') if isinstance(front.get('harvest'), dict) else {}
+    run = okf.run_record(front)
     return dict(items=items, raw=raw, raw_entry=entries[0] if entries else None, language=language or 'English',
                 created=str(front.get('created') or ''), kind='meeting' if run.get('kind') == 'meeting' else 'chat')
 
