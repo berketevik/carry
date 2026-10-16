@@ -6,7 +6,7 @@
 
 In September you find that a client's user IDs are broken. In November you sit down to fix them, and your assistant checks your notes first: it reminds you what you found, with a link to where it's written. Your notes stay on your computer as plain Markdown (`.md`) files.
 
-**Version 0.15.0 · macOS 14+ · pilot**
+**Version 0.16.0 · macOS 14+ · pilot**
 
 ## Get started
 
@@ -44,14 +44,36 @@ Carry doesn't upload your notes anywhere and uses no online service of its own. 
 | To | Run |
 |---|---|
 | Add your team's knowledge base later | `carry setup --team owner/repo` |
-| Ship the team repo's search index with it, so teammates search at once (run where the repo is cloned, then commit and push) | `carry github pack --id team --out <clone>/.carry/index.db` |
+| Move an older setup's files into the notes folder (see below; `--dry-run` shows every step) | `carry state move --vault <notes folder>` |
+| Optional, not part of the standard: ship a large team repo's vectors with it, so teammates skip embedding it (run in the clone, then commit and push) | `carry github pack --id team --out <clone>/.carry/index.db` |
 | Also recap every finished chat each evening at 21:30, in case a chat-end hook missed one | `carry session schedule --install` |
 | Turn search by meaning on or off | `carry search --semantic on` (or `off`) |
 | Put your name on the drafts you approve (`verified: human:<name>`) | `carry owner --set <name>` |
 | Update Carry | `carry update`, then `carry app install` |
 | Check that everything works | `carry status --probe` |
 
-Commands that read notes need Carry's own folder: `export CARRY_WORKSPACE="$HOME/CarryState"` or `carry --workspace <folder> …`. Run `carry <command> --help` for the rest.
+Inside the notes folder every command finds Carry's files by itself; elsewhere, name them with `carry --workspace <notes folder>/.carry/state …` or `export CARRY_WORKSPACE=…`. Run `carry <command> --help` for the rest.
+
+</details>
+
+<details>
+<summary><b>Where Carry keeps its files</b></summary>
+
+Everything Carry keeps for a notes folder is in that folder's `.carry/`, the same on every device and for every member of a team:
+
+| | What | In git |
+|---|---|---|
+| `.carry/settings.json` | what every device must search the same way: the recaps' language, the folders search leaves out, the ranking settings, the embedding model | committed |
+| `.carry/vault.json` | the template stamp (which files Carry wrote) | committed |
+| `.carry/.gitignore` | written by Carry: only the files above are committed | committed |
+| `.carry/state/` | this device's: the search index, locks, status, recap state, GitHub snapshots, meeting files, your owner id | never |
+| `.carry/local.json` | this device's pointer to its state | never |
+
+A change made on one device (say `carry search --semantic off`) is written to `settings.json`; once the folder syncs, the other devices search with it too. The provider (Ollama or the model built into Carry), its address and every path stay per device. There is no vector pack in the standard: each device builds its own index from the notes, a few minutes once.
+
+If the notes folder is in iCloud Drive, a cloud-storage folder (OneDrive, Dropbox, Google Drive) or `~/Dropbox`, `state/` stays outside it, in `~/CarryState`: a database written all the time does not survive file sync. `settings.json` still goes in the folder.
+
+An older setup keeps its state in `~/CarryState`. `carry state move --vault <notes folder>` writes `.carry/.gitignore` first (and in a git folder checks that git really ignores the device files), moves the state into `.carry/state` while no index build runs, leaves a symlink at the old path so every hook, MCP config and scheduled job that names it keeps working, writes `settings.json` (or adopts it, when another device moved first), and points Carry's own wiring at the new place. `--shared-only` writes just `.gitignore` and `settings.json`, to commit them before the devices move.
 
 </details>
 

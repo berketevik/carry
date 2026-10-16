@@ -2,6 +2,7 @@
 .obsidian/workspace*.json
 .trash/
 .carry/journal/
+.carry/state/
 .mcp.json
 .codex/config.toml
 .codex/hooks.json
