@@ -9,7 +9,7 @@ Carry gives Claude Code and Codex a searchable memory made of the owner's own Ma
 - It indexes a folder of `.md` files (a new notes folder Carry sets up, or an existing one) into a local SQLite index in Carry's own folder (default `~/CarryState`). The notes stay the original; the index can always be rebuilt.
 - It runs a local MCP server, `carry.mcp_server`, that the assistant starts in the notes folder. Tools: `carry_recall` (search with citations), `carry_catalog` (list every file with its description), `carry_status` (index health and OKF conformance), and optionally `carry_propose` (draft a correction that only the owner can accept).
 - Notes follow the [Open Knowledge Format v0.2](https://github.com/GoogleCloudPlatform/open-knowledge-format) (`src/carry/okf.py`): Carry reads `description`, `status` (draft, stable, deprecated), `generated`, `verified`, `sources` and `stale_after`, still accepts the keys notes used before (`summary`, `draft: true`, `valid_until`, plain-string `sources`), and writes OKF only. Every passage carries the trust tier and whether it is stale; a `deprecated` note is history. Approving a draft writes `verified: {by: human:<owner id>}` (`carry owner --set <id>`).
-- When a chat ends, Carry drafts its decisions, facts and open work into the notes folder's `+/` inbox, using the owner's own Claude or Codex, and compares them with existing notes.
+- Each chat is a session: it opens with Carry's state pack (`carry session start`, the SessionStart hook), and when it ends Carry recaps its decisions, facts and open work into the notes folder's `+/` inbox (`carry session end`, the SessionEnd hook), using the owner's own Claude or Codex, and compares them with existing notes. `carry session sweep` recaps idle chats a hook missed; before 0.14 these were `carry context` and `carry harvest`, which still work.
 - A macOS app reviews those drafts and shows the settings. On Windows and Linux there is no app yet; everything works from the command line and the assistant.
 
 Carry does not upload notes anywhere and uses no online service of its own. Passages go only to the assistant that asked for them.
@@ -46,7 +46,7 @@ Assume the person who asked for Carry is not technical. They should understand e
 | repo, repository | GitHub'daki ortak klasör | a shared folder on GitHub |
 | Xcode Command Line Tools | Apple'ın ücretsiz ek paketi | Apple's free add-on |
 | CLI, terminal command | komut | command |
-| harvest | sohbet taslakları | chat drafts |
+| session recap (`carry session`, formerly harvest) | oturum özeti | session recap |
 
 **First message.** Say what Carry is and warn about the permission prompts, which are in English:
 
@@ -127,11 +127,11 @@ For Codex use `connect codex`. `connect` writes the MCP settings (`.mcp.json`, o
 ### Only if the owner asks
 
 ```sh
-carry --workspace WS harvest --install-schedule --vault /path/to/vault
+carry --workspace WS session schedule --install --vault /path/to/vault
 carry --workspace WS github pack --id team --out <team copy>/.carry/index.db
 ```
 
-The first makes chat drafts every evening at 21:30; chat drafts are also made when each chat ends. The second is for whoever maintains the team's knowledge base: it writes the team notes' search index into the repository, so teammates on the default setup search without scanning the notes (commit and push it; a stale one still helps).
+The first recaps every finished chat each evening at 21:30 (`carry session sweep`); each chat is also recapped when it ends. The second is for whoever maintains the team's knowledge base: it writes the team notes' search index into the repository, so teammates on the default setup search without scanning the notes (commit and push it; a stale one still helps).
 
 ### Check the result
 
@@ -161,7 +161,7 @@ Adapt it: Codex instead of Claude (`codex` instead of `claude`). If they use the
 
 ### Windows
 
-The CLI, MCP server, hooks, chat drafts and the evening job work on Windows (Task Scheduler instead of launchd, winget instead of Homebrew). There is no app, and no built-in meaning model (llama.cpp would need a C++ compiler at install): Carry searches by meaning through Ollama when it is installed, otherwise by words.
+The CLI, MCP server, hooks, session recaps and the evening job work on Windows (Task Scheduler instead of launchd, winget instead of Homebrew). There is no app, and no built-in meaning model (llama.cpp would need a C++ compiler at install): Carry searches by meaning through Ollama when it is installed, otherwise by words.
 
 ## Keeping Carry up to date
 

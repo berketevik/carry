@@ -24,7 +24,7 @@ from .errors import CarryError
 from .paths import is_contained, resolve_root
 from .persistence import atomic_text, writer_lock
 
-TEMPLATE_VERSION = '4'     # 4: notes follow Open Knowledge Format v0.2
+TEMPLATE_VERSION = '5'     # 4: notes follow Open Knowledge Format v0.2; 5: carry session commands and recap names
 GUIDE_BASE = '3.12'
 RECALL_TOOL = 'carry_recall'
 STAMP = '.carry/vault.json'

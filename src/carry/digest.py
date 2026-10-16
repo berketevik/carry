@@ -1,4 +1,5 @@
-"""A harvest digest, item by item: the owner accepts, fixes or skips each item.
+"""A session recap (a harvest digest before 0.14) or meeting digest, item by item: the owner
+accepts, fixes or skips each item.
 
 An accepted item goes to the day's log (`log/<chat date>.md`) with its quote and a link to the
 raw chat, so recall finds it under the day it was said. Accepting a conflict never edits the

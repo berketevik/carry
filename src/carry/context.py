@@ -1,7 +1,7 @@
-"""`carry context`: the state pack a new thread starts from (Continuity 1c).
+"""`carry session start` (`carry context` before 0.14): the state pack a new thread starts from (Continuity 1c).
 
 At most about 2k tokens: recent commits, open items and decisions from recent
-harvest drafts (items shown as done are left out), what waits for review, and
+session recaps (items shown as done are left out), what waits for review, and
 index health. Claude Code runs it as a SessionStart hook in a Carry vault; Codex
 is told to run it first. Read-only: it writes nothing.
 """
