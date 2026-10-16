@@ -76,7 +76,16 @@ def _status(workspace, probe_provider=False):
     degradation += settings_flags(team_settings)
     team_packs = pack_report(workspace)
     degradation += pack_flags(team_packs)
+    # Where the files are (the standard is <vault>/.carry/) and the vault's shared settings.
+    from .statedir import describe
+    try:
+        state_info = describe(workspace)
+    except Exception:
+        state_info = {}
+    if state_info.get("warnings"):
+        degradation.append("shared_settings_invalid")
     return dict(
+        state=state_info,
         maintenance=job_status(workspace), github_sync=syncs,
         team_settings=team_settings, team_packs=team_packs,
         review=review_info,

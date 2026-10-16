@@ -330,7 +330,14 @@ def _sync(workspace, source_id, config, adding=False, progress=None):
             updated = current.with_sources([replace(s, root=destination, github=updated_config)
                                             if s.source_id == source_id else s for s in current.sources])
         updated.save()
-    return dict(status='synced', source_id=source_id, commit=commit, files=count, commit_dates=dated)
+    # Every sync used to leave its snapshot behind; keep the current one and the one before it.
+    from .statedir import prune_snapshots
+    try:
+        pruned = prune_snapshots(updated)
+    except OSError:
+        pruned = []
+    return dict(status='synced', source_id=source_id, commit=commit, files=count, commit_dates=dated,
+                pruned=len(pruned))
 
 
 def citation_url(source, path):

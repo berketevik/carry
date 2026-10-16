@@ -98,7 +98,7 @@ struct UIError: LocalizedError {
         case "duplicate_source_id": return L("That source ID is already in use. Choose a different ID.")
         case "invalid_source_id": return L("Use lowercase letters, numbers, hyphens or underscores for the source ID.")
         case "nested_source_roots": return L("This folder overlaps an existing source. Choose a separate folder.")
-        case "state_dir_inside_source_root": return L("Keep Carry’s workspace folder outside your Markdown source folders.")
+        case "state_dir_inside_source_root": return L("Keep Carry’s workspace folder at <notes folder>/.carry/state or outside your Markdown source folders.")
         case "settings_changed_since_preview", "settings_changed_during_apply": return L("Settings changed after the preview. Refresh and review a new preview. If setup was interrupted, use its rollback entry.")
         case "settings_changed_since_install", "settings_changed_during_rollback": return L("Settings changed after setup. Rollback stopped to preserve those edits. Review the changed files before disconnecting.")
         case "existing_carry_connection_conflict", "existing_carry_hook_conflict": return L("This project already has a different Carry connection. Review or roll back that setup before replacing it.")
@@ -4878,7 +4878,7 @@ let TR: [String: String] = [
     "That source ID is already in use. Choose a different ID.": "Bu kaynak kimliği zaten kullanılıyor. Başka bir kimlik seçin.",
     "Use lowercase letters, numbers, hyphens or underscores for the source ID.": "Kaynak kimliğinde küçük harf, rakam, tire ya da alt çizgi kullanın.",
     "This folder overlaps an existing source. Choose a separate folder.": "Bu klasör mevcut bir kaynakla çakışıyor. Ayrı bir klasör seçin.",
-    "Keep Carry’s workspace folder outside your Markdown source folders.": "Carry'nin çalışma alanı klasörünü Markdown kaynak klasörlerinizin dışında tutun.",
+    "Keep Carry’s workspace folder at <notes folder>/.carry/state or outside your Markdown source folders.": "Carry'nin çalışma alanı klasörünü <not klasörü>/.carry/state içinde ya da Markdown kaynak klasörlerinizin dışında tutun.",
     "Settings changed after the preview. Refresh and review a new preview. If setup was interrupted, use its rollback entry.": "Önizlemeden sonra ayarlar değişti. Yenileyip yeni önizlemeyi inceleyin. Kurulum yarıda kaldıysa geri alma kaydını kullanın.",
     "Settings changed after setup. Rollback stopped to preserve those edits. Review the changed files before disconnecting.": "Kurulumdan sonra ayarlar değişti. O düzenlemeleri korumak için geri alma durduruldu. Bağlantıyı kesmeden önce değişen dosyaları inceleyin.",
     "This project already has a different Carry connection. Review or roll back that setup before replacing it.": "Bu projenin zaten farklı bir Carry bağlantısı var. Değiştirmeden önce o kurulumu inceleyin ya da geri alın.",

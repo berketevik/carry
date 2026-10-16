@@ -93,6 +93,11 @@ def cmd_status(args):
                                                             "invalid_status", "legacy_keys") if c.get(k)]
         lines.append(f"okf {sid}: {'conformant' if c['conformant'] else 'not conformant'} "
                      f"({c['files']} files{', ' + ', '.join(gaps) if gaps else ''})")
+    st = payload.get("state") or {}
+    if st:
+        where = 'in the vault' if st.get('in_vault') else 'outside the vault'
+        lines.append(f"state: {where}; shared settings: {'yes' if st.get('shared') else 'no'}"
+                     + (f" ({len(st['differ'])} differ on this device)" if st.get('differ') else ''))
     _print(payload, args.json, lines)
     return EXIT_OK if payload["ok"] else EXIT_FAILED
 
@@ -313,14 +318,69 @@ def cmd_model(args):
     return EXIT_FAILED if result.get('status') == 'failed' else EXIT_OK
 
 
+def _vault_workspace(args):
+    """(workspace, note) for `vault init`: the one given; else the vault's own `.carry/state` when it
+    has one, or when the folder is new (the standard place); else none (template only)."""
+    if args.workspace or getattr(args, 'no_workspace', False):
+        return args.workspace, None
+    from . import statedir
+    target = Path(args.path).expanduser().resolve()
+    own = target / '.carry' / 'state'
+    if (own / 'workspace.json').is_file():
+        return str(own), None
+    fresh = not (target / vault_module.STAMP).exists() and (not target.exists() or not any(
+        p for p in target.iterdir() if p.name not in vault_module.IGNORED_WHEN_EMPTY))
+    if not fresh:
+        return None, None
+    cloud = statedir.cloud_service(target)
+    if cloud:
+        return None, (f"note\t{cloud} syncs {target}: Carry's state stays out of it; "
+                      "create one with --workspace <folder outside the cloud>")
+    return str(own), None
+
+
+def cmd_state(args):
+    from . import statedir
+    if args.state_command == 'show':
+        ws = open_workspace(args.workspace)
+        info = statedir.describe(ws)
+        lines = [f"state: {info['state_dir']} ({'in the vault' if info['in_vault'] else 'outside the vault'})",
+                 f"shared settings: {info['settings'] or 'none'}"]
+        lines += [f"  differs on this device: {k} = {v['device']} (shared: {v['shared']})" for k, v in info['differ'].items()]
+        lines += [f"  warning: {w}" for w in info['warnings']]
+        if not info['in_vault'] and info.get('vault'):
+            lines.append(f"move it into the vault: carry state move --vault \"{info['vault']}\"")
+        _print(info, args.json, lines)
+        return EXIT_OK
+    ws = open_workspace(args.workspace)
+    printed = []
+    report = statedir.move(ws, args.vault, dry_run=args.dry_run, shared_only=args.shared_only, wait=args.wait,
+                           out=None if args.json else printed.append, language=args.language)
+    lines = list(printed)
+    if args.dry_run:
+        lines += ['', '.carry/settings.json:', shared_render(report['settings']).rstrip()]
+    elif report.get('moved'):
+        lines += [f"state is now {report['state_dir']}; restart Claude Code, Codex and the app to use the new path "
+                  "(the old one still works through the symlink)"]
+    _print(report, args.json, lines)
+    return EXIT_OK
+
+
+def shared_render(settings):
+    from . import shared
+    return shared.render(settings)
+
+
 def cmd_vault(args):
     if args.vault_command == 'rollback':
         result = vault_module.rollback(Path(args.path).expanduser().resolve(), args.id)
         _print(result, args.json, [f"rolled back {args.id}"])
         return EXIT_OK
-    plan = vault_module.plan(args.path, language=args.language, workspace=args.workspace,
+    workspace, note = _vault_workspace(args)
+    plan = vault_module.plan(args.path, language=args.language, workspace=workspace,
                              capture=args.capture)
     lines = [f"{c['status']}\t{c['rel']}" for c in plan['changes']] + [f"conflict\t{r}" for r in plan['conflicts']]
+    lines += [note] if note else []
     # Conflicting files are never written; the rest still applies, and the exit code reports them.
     status = EXIT_FAILED if plan['conflicts'] else EXIT_OK
     if args.dry_run or not (plan['changes'] or plan['capture']):
@@ -775,11 +835,28 @@ def build_parser():
     vinit.add_argument('--language', default='Turkish', help='language of human-facing notes')
     vinit.add_argument('--no-git', action='store_true', help='do not run git init')
     vinit.add_argument('--capture', action='store_true',
-                       help='opt in to whole-prompt capture into sources/carry (needs --workspace)')
+                       help='opt in to whole-prompt capture into sources/carry (needs a workspace)')
+    vinit.add_argument('--no-workspace', action='store_true',
+                       help="template only: a new folder otherwise gets Carry's state in <vault>/.carry/state")
     vrb = vsub.add_parser('rollback', help='undo one init by its journal id')
     vrb.add_argument('path')
     vrb.add_argument('--id', required=True)
     vlt.set_defaults(func=cmd_vault)
+
+    sta = sub.add_parser("state", help="where this workspace's files are: <vault>/.carry/ (shared settings.json, "
+                                       "this device's state/)")
+    stasub = sta.add_subparsers(dest="state_command", required=True)
+    stasub.add_parser("show", help="where the state is, the shared settings file, and what differs on this device")
+    mv = stasub.add_parser("move", help="move this workspace's state into <vault>/.carry/state, leave a symlink at "
+                                        "the old path, write or adopt .carry/settings.json")
+    mv.add_argument("--vault", required=True, help="the vault (a personal source of this workspace)")
+    mv.add_argument("--dry-run", action="store_true", help="print every step and the settings.json, change nothing")
+    mv.add_argument("--shared-only", action="store_true",
+                    help="write only .carry/.gitignore and .carry/settings.json; the state stays where it is")
+    mv.add_argument("--wait", type=float, default=10.0, help="seconds to wait for a running index build")
+    mv.add_argument("--language", choices=("Turkish", "English"),
+                    help="the recaps' language in settings.json (default: the one this device recorded, else none)")
+    sta.set_defaults(func=cmd_state)
 
     cn = sub.add_parser("connect", help="connect Claude Code or Codex in a project folder to this workspace")
     cnsub = cn.add_subparsers(dest="connect_command", required=True)

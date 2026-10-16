@@ -32,6 +32,7 @@ vault/
 ├── Home.md      ← human dashboard; IMPLICIT LOCK
 ├── LLM-GUIDE.md, SETUP-GUIDE.md ← IMPLICIT LOCK
 ├── VAULT-RULES.md ← the owner's local rules; agents do not edit it unasked
+├── .carry/      ← Carry's own files: settings.json (shared, committed) and state/ (this device's); agents never edit it
 ```
 
 **Rule of thumb: folder = policy (writability and lifecycle), `type:` = kind, recall = navigation.**

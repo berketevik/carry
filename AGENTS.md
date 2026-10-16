@@ -6,7 +6,7 @@ This file is for an assistant (Claude Code, Codex or another agent) that has bee
 
 Carry gives Claude Code and Codex a searchable memory made of the owner's own Markdown notes.
 
-- It indexes a folder of `.md` files (a new notes folder Carry sets up, or an existing one) into a local SQLite index in Carry's own folder (default `~/CarryState`). The notes stay the original; the index can always be rebuilt.
+- It indexes a folder of `.md` files (a new notes folder Carry sets up, or an existing one) into a local SQLite index. Everything Carry keeps for that folder lives in its `.carry/`: `settings.json` (the search settings every device shares, committed), `vault.json` (the template stamp) and `.gitignore` are committed; `state/` (this device's index, locks, recap state, GitHub snapshots) and `local.json` never are (`src/carry/shared.py`, `src/carry/statedir.py`). A folder in iCloud Drive or a cloud-storage folder keeps `state/` in `~/CarryState`. Inside the folder every command finds the state without `--workspace`. The notes stay the original; the index can always be rebuilt.
 - It runs a local MCP server, `carry.mcp_server`, that the assistant starts in the notes folder. Tools: `carry_recall` (search with citations), `carry_catalog` (list every file with its description), `carry_status` (index health and OKF conformance), and optionally `carry_propose` (draft a correction that only the owner can accept).
 - Notes follow the [Open Knowledge Format v0.2](https://github.com/GoogleCloudPlatform/open-knowledge-format) (`src/carry/okf.py`): Carry reads `description`, `status` (draft, stable, deprecated), `generated`, `verified`, `sources` and `stale_after`, still accepts the keys notes used before (`summary`, `draft: true`, `valid_until`, plain-string `sources`), and writes OKF only. Every passage carries the trust tier and whether it is stale; a `deprecated` note is history. Approving a draft writes `verified: {by: human:<owner id>}` (`carry owner --set <id>`).
 - Each chat is a session: it opens with Carry's state pack (`carry session start`, the SessionStart hook), and when it ends Carry recaps its decisions, facts and open work into the notes folder's `+/` inbox (`carry session end`, the SessionEnd hook), using the owner's own Claude or Codex, and compares them with existing notes. Before the client compacts a long chat, `carry session checkpoint` (the PreCompact hook) recaps it so far and leaves the newest exchange for later; one lock per thread keeps runs from recapping an exchange twice. `carry session hooks --install|--remove` turns the three hooks on or off for an existing vault on one device (never in a committed file). `carry session sweep` recaps idle chats a hook missed; before 0.14 these were `carry context` and `carry harvest`, which still work.
@@ -29,7 +29,7 @@ Assume the person who asked for Carry is not technical. They should understand e
 
 - Speak their language (Turkish if they write Turkish). The ready-made Turkish texts below can be used word for word.
 - Ask **one question at a time**, say which answer you recommend, and treat "bilmiyorum", "sen seç", "sen bilirsin" or "I don't know" as the recommended answer.
-- Ask only the questions below. Everything else has a default: Carry's own folder is `~/CarryState`, the app is installed on macOS, prompt capture, team notes and evening drafts stay off. Mention them only if the owner asks or something is wrong (for example the home folder is synced by iCloud or OneDrive).
+- Ask only the questions below. Everything else has a default: Carry's files go in the notes folder's `.carry/` (`~/CarryState` only for a cloud-synced folder or the team's knowledge base alone), the app is installed on macOS, prompt capture, team notes and evening drafts stay off. Mention them only if the owner asks or something is wrong (for example the home folder is synced by iCloud or OneDrive).
 - Before each command, say in one sentence what it does and why. Ask before installing any program or changing anything outside the notes folder.
 - If something fails, explain it in plain words and say what you will try next. Do not paste error output at them.
 - Never ask them to type a command in a terminal if you can run it yourself. When they must do something (a system window, a sign-in), say exactly which button to press.
@@ -101,7 +101,7 @@ The repository is public: no GitHub account is needed to install Carry. After th
 ~/.local/bin/uv tool install "git+https://github.com/berketevik/carry"
 ```
 
-Below, `carry` means `~/.local/bin/carry` until a new shell finds it, and `WS` is Carry's own folder written out in full, normally `/Users/<name>/CarryState` (`$HOME/CarryState`). Every command needs `--workspace WS` (or the `CARRY_WORKSPACE` environment variable).
+Below, `carry` means `~/.local/bin/carry` until a new shell finds it, and `WS` is Carry's state folder written out in full. Setup starts it at `/Users/<name>/CarryState` and, for the owner's own notes folder, moves it into `<notes folder>/.carry/state`, leaving `~/CarryState` as a link to it; so `--workspace WS` with `$HOME/CarryState` keeps working. Inside the notes folder no `--workspace` is needed.
 
 Then run the one line that matches the answers. `--team` is the repository the team lead gave.
 
@@ -117,10 +117,13 @@ Each creates Carry's folder, sets up search by meaning (Ollama if installed, oth
 
 ```sh
 carry --workspace WS init --embedding hashing --source notes=/path/to/notes
+carry --workspace WS state move --vault /path/to/notes
 carry --workspace WS search --semantic on
 carry --workspace WS connect claude /path/to/notes --language Turkish
 carry --workspace WS app install
 ```
+
+`state move` puts Carry's files in the folder's `.carry/` (see "What Carry is"); in a git folder it first checks that git ignores the device files. An older setup that keeps its state in `~/CarryState` moves the same way; `--dry-run` shows each step.
 
 For Codex use `connect codex`. `connect` writes the MCP settings (`.mcp.json`, or `.codex/config.toml` for Codex) and the `carry-recall` subagent (`.claude/agents/carry-recall.md`, or `.codex/agents/carry-recall.toml`), journaled; `carry connect undo <id>` reverts both, and `--dry-run` only shows the change. An existing `carry-recall` file is left as it is. It does not edit the folder's `CLAUDE.md` / `AGENTS.md`; the subagent's description and the Carry server's instructions already tell the assistant when to search.
 
@@ -131,7 +134,7 @@ carry --workspace WS session schedule --install --vault /path/to/vault
 carry --workspace WS github pack --id team --out <team copy>/.carry/index.db
 ```
 
-The first recaps every finished chat each evening at 21:30 (`carry session sweep`); each chat is also recapped when it ends. The second is for whoever maintains the team's knowledge base: it writes the team notes' search index into the repository, so teammates on the default setup search without scanning the notes (commit and push it; a stale one still helps).
+The first recaps every finished chat each evening at 21:30 (`carry session sweep`); each chat is also recapped when it ends. The second is optional and not part of the standard: for a large team knowledge base it writes the team notes' vectors into the repository, so teammates skip embedding them (commit and push it; a stale one still helps). Without it each device embeds the notes itself once.
 
 ### Check the result
 

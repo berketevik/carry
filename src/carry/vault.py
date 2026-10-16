@@ -25,7 +25,7 @@ from .errors import CarryError
 from .paths import is_contained, resolve_root
 from .persistence import atomic_text, writer_lock
 
-TEMPLATE_VERSION = '6'     # 4: notes follow Open Knowledge Format v0.2; 5: carry session commands and recap names; 6: session checkpoint
+TEMPLATE_VERSION = '7'     # 4: notes follow Open Knowledge Format v0.2; 5: carry session commands and recap names; 6: session checkpoint; 7: Carry's files in .carry/
 GUIDE_BASE = '3.12'
 RECALL_TOOL = 'carry_recall'
 STAMP = '.carry/vault.json'
@@ -294,8 +294,13 @@ def _has_user_files(target):
                and p.name != '.gitkeep' for p in target.rglob('*'))
 
 
+def in_vault_state(target, workspace):
+    """True when the workspace is the vault's own `.carry/state`, the standard place."""
+    return Path(workspace).expanduser().resolve() == Path(target).expanduser().resolve() / '.carry' / 'state'
+
+
 def _check_workspace(target, workspace, capture, attach=False):
-    if is_contained(target, workspace):
+    if is_contained(target, workspace) and not in_vault_state(target, workspace):
         raise CarryError('state_dir_inside_source_root')
     if (workspace / CONFIG_NAME).exists():
         ws = Workspace.load(workspace)
@@ -339,6 +344,10 @@ def plan(target, language='Turkish', workspace=None, today=None, capture=False, 
         files.update(_wiring(workspace))
         if capture:
             files.update(_hooks(workspace))
+        if in_vault_state(target, workspace):
+            # Before the state exists: git must never see this device's files.
+            from .statedir import GITIGNORE
+            files['.carry/.gitignore'] = GITIGNORE
     known = (stamp or {}).get('files', {})
     changes, conflicts = [], []
     for rel, after in sorted(files.items()):
@@ -361,7 +370,7 @@ def plan(target, language='Turkish', workspace=None, today=None, capture=False, 
         changes.append(dict(rel=STAMP, path=str(target / STAMP), before=stamp_text, after=new_stamp,
                             status='create' if stamp_text is None else 'update'))
     return dict(id=uuid.uuid4().hex, target=str(target), template_version=TEMPLATE_VERSION,
-                workspace=str(workspace) if workspace else None, capture=capture, attach=attach,
+                workspace=str(workspace) if workspace else None, capture=capture, attach=attach, language=language,
                 changes=changes, conflicts=conflicts,
                 summary=''.join(''.join(difflib.unified_diff(
                     (c['before'] or '').splitlines(True), c['after'].splitlines(True),
@@ -442,6 +451,10 @@ def apply(plan, git=True):
         created_workspace = True
     elif plan.get('attach'):
         attach_source(plan['workspace'], target, plan)
+    if plan['workspace'] and in_vault_state(target, plan['workspace']):
+        # The shared settings start from this device; the drafts' language from the template.
+        from . import shared
+        shared.set_language(Workspace.load(plan['workspace']), plan.get('language') or 'English')
     capture = _configure_capture(Workspace.load(plan['workspace'])) if plan.get('capture') else {}
     proposals = _configure_proposals(Workspace.load(plan['workspace'])) if plan.get('capture') else {}
     initialised_git = False
