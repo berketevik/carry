@@ -781,8 +781,16 @@ struct Tile: View {
 
 /// Inline two-language text for the explanatory copy (short labels go through L()).
 func T(_ en: String, _ tr: String) -> String { Lang.code == "tr" ? tr : en }
-/// The version `carry app install` writes into Info.plist, so the sidebar shows which build is running.
-let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+/// The version `carry app install` writes into Info.plist, without a local build's commit (0.12.0+abc1234).
+let appVersion = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String)?.split(separator: "+").first.map(String.init)
+/// The day the app was built: `carry app install` compiles it at install time.
+let appBuilt = Bundle.main.executablePath.flatMap { (try? FileManager.default.attributesOfItem(atPath: $0))?[.modificationDate] as? Date }
+/// "Version 0.12.0 · Oct 15" under PILOT · LOCAL, so a window still running an older build shows it.
+var versionLabel: String? {
+    guard let version = appVersion else { return nil }
+    let out = DateFormatter(); out.locale = Lang.locale; out.setLocalizedDateFormatFromTemplate("d MMM")
+    return T("Version ", "Sürüm ") + version + (appBuilt.map { " · " + out.string(from: $0) } ?? "")
+}
 
 func pageName(_ key: String) -> String {
     switch key {
@@ -4804,7 +4812,10 @@ struct ContentView: View {
                 }.listStyle(.sidebar)
                 Button { model.showGuide = true } label: { Label(T("How Carry works", "Carry nasıl çalışır?"), systemImage: "questionmark.circle") }
                     .buttonStyle(.borderless).padding(.horizontal, 20).padding(.top, 8)
-                Text(T("PILOT · LOCAL", "PİLOT · YEREL") + (appVersion.map { " · " + $0 } ?? "")).font(.caption2.weight(.semibold)).foregroundStyle(.secondary).padding(.horizontal, 20).padding(.bottom, 20).padding(.top, 4)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(T("PILOT · LOCAL", "PİLOT · YEREL")).fontWeight(.semibold)
+                    if let version = versionLabel { Text(version) }
+                }.font(.caption2).foregroundStyle(.secondary).padding(.horizontal, 20).padding(.bottom, 20).padding(.top, 4)
             }.navigationSplitViewColumnWidth(min: 190, ideal: 205)
         } detail: {
             VStack(spacing: 0) {
