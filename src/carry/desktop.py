@@ -207,6 +207,10 @@ class Bridge:
         if action == 'trello':
             from . import trello
             return trello.view(ws.state_dir)
+        if action == 'trello_settings':
+            from . import trello
+            trello.save_settings(ws.state_dir, boards=request.get('boards'), since=request.get('since'))
+            return trello.view(ws.state_dir)
         if action == 'maintenance_status':
             maintenance.automatic(ws)
             return maintenance.job_status(ws)

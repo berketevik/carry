@@ -11,17 +11,26 @@ import _support  # noqa: F401
 from carry import trello
 from carry.errors import CarryError
 
-BOARDS = [dict(id='b1', name='Ekip'), dict(id='b2', name='Kişisel')]
+# Open boards come back with their open lists only.
+BOARDS = [dict(id='b1', name='Ekip', lists=[dict(id='l1', name='IN PROGRESS'), dict(id='l3', name='DONE')]),
+          dict(id='b2', name='Kişisel', lists=[dict(id='l2', name='Yapılacaklar'), dict(id='l4', name='Tamamlandı')])]
 CARDS = [
-    dict(id='c1', name='Son tarihsiz eski', idBoard='b1', due=None, dueComplete=False,
+    dict(id='c1', name='Son tarihsiz eski', idBoard='b1', idList='l1', due=None, dueComplete=False,
          shortUrl='https://trello.com/c/1', dateLastActivity='2026-10-01T10:00:00.000Z'),
-    dict(id='c2', name='Yarın teslim', idBoard='b2', due='2026-10-20T09:00:00.000Z', dueComplete=False,
+    dict(id='c2', name='Yarın teslim', idBoard='b2', idList='l2', due='2026-10-20T09:00:00.000Z', dueComplete=False,
          shortUrl='https://trello.com/c/2', dateLastActivity='2026-10-18T10:00:00.000Z'),
-    dict(id='c3', name='Son tarihsiz yeni', idBoard='b1', due=None, dueComplete=False,
+    dict(id='c3', name='Son tarihsiz yeni', idBoard='b1', idList='l1', due=None, dueComplete=False,
          shortUrl='https://trello.com/c/3', dateLastActivity='2026-10-19T10:00:00.000Z'),
-    dict(id='c4', name='Bugün teslim', idBoard='b1', due='2026-10-19T17:00:00.000Z', dueComplete=False,
+    dict(id='c4', name='Bugün teslim', idBoard='b1', idList='l1', due='2026-10-19T17:00:00.000Z', dueComplete=False,
          shortUrl='https://trello.com/c/4', dateLastActivity='2026-10-17T10:00:00.000Z'),
 ]
+# Finished by moving, on a closed board, and long past: never on the home page, or hidden by the day.
+DONE = dict(id='c5', name='Bitti', idBoard='b1', idList='l3', due=None, dueComplete=False,
+            shortUrl='https://trello.com/c/5', dateLastActivity='2026-10-19T10:00:00.000Z')
+DONE_TR = dict(DONE, id='c6', idBoard='b2', idList='l4')
+CLOSED = dict(DONE, id='c7', idBoard='b9', idList='l9')
+OLD = dict(id='c8', name='Eski teslim', idBoard='b2', idList='l2', due='2023-08-18T09:00:00.000Z', dueComplete=False,
+           shortUrl='https://trello.com/c/8', dateLastActivity='2026-02-01T10:00:00.000Z')
 
 
 def api(member=None, cards=CARDS, boards=BOARDS):
@@ -60,6 +69,7 @@ class TrelloTest(unittest.TestCase):
             result = trello.refresh(self.state)
         self.assertEqual([c['name'] for c in result['cards']], ['Bugün teslim', 'Yarın teslim', 'Son tarihsiz yeni', 'Son tarihsiz eski'])
         self.assertEqual(result['cards'][0]['board'], 'Ekip')
+        self.assertEqual(result['cards'][0]['list'], 'IN PROGRESS')
         self.assertEqual(result['cards'][0]['url'], 'https://trello.com/c/4')
         self.assertEqual(result['username'], 'ismail')
         self.assertTrue((self.state / trello.CACHE).is_file())
@@ -68,6 +78,31 @@ class TrelloTest(unittest.TestCase):
         done = [dict(CARDS[1], dueComplete=True)]
         with patch.object(trello, '_get', side_effect=api(cards=done)):
             self.assertEqual(trello.refresh(self.state)['cards'], [])
+
+    def test_cards_in_done_lists_or_on_closed_boards_are_left_out(self):
+        with patch.object(trello, '_get', side_effect=api(cards=CARDS + [DONE, DONE_TR, CLOSED])):
+            names = [c['name'] for c in trello.refresh(self.state)['cards']]
+        self.assertEqual(len(names), 4)
+        self.assertNotIn('Bitti', names)
+
+    def test_the_chosen_boards_and_day_apply_when_read_without_asking_trello(self):
+        with patch.object(trello, '_get', side_effect=api(cards=CARDS + [OLD])):
+            trello.refresh(self.state)
+        trello.save_settings(self.state, boards=['b2'], since='2026-01-01')
+        with patch.object(trello, '_get', side_effect=AssertionError('no request for a settings change')):
+            view = trello.view(self.state, start=lambda: None)
+        self.assertEqual([c['name'] for c in view['cards']], ['Yarın teslim'])
+        self.assertEqual(view['since'], '2026-01-01')
+        # Every board stays listed for the settings, with its cards from the chosen day.
+        self.assertEqual([(b['name'], b['cards'], b['shown']) for b in view['boards']], [('Ekip', 3, False), ('Kişisel', 1, True)])
+        trello.save_settings(self.state, boards=None, since=None)
+        self.assertEqual(len(trello.view(self.state, start=lambda: None)['cards']), 5)
+
+    def test_settings_are_checked_before_they_are_kept(self):
+        for boards, since in ((['b1'], '2026-13-01'), ('b1', None), ([1], None)):
+            with self.assertRaises(CarryError):
+                trello.save_settings(self.state, boards=boards, since=since)
+        self.assertEqual(trello.settings(self.state), dict(boards=None, since=None))
 
     def test_view_serves_the_cache_and_refreshes_only_when_stale(self):
         with patch.object(trello, '_get', side_effect=api()):

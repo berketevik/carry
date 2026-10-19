@@ -134,7 +134,9 @@ def cmd_trello(args):
     if not result.get("connected"):
         lines = ["not connected: run carry trello connect"]
     else:
-        lines = [f"{(c.get('due') or '')[:10]:10}  {c['board']}: {c['name']}" for c in result.get("cards", [])] or ["no open cards assigned to you"]
+        # The boards and the day chosen in the app's settings, as on the home page.
+        result = trello.shown(workspace.state_dir, result)
+        lines = [f"{(c.get('due') or '')[:10]:10}  {c['board']} · {c['list']}: {c['name']}" for c in result.get("cards", [])] or ["no open cards assigned to you"]
         if result.get("error"):
             lines.append("error: " + result["error"])
     _print(result, args.json, lines)

@@ -1752,18 +1752,70 @@ struct TrelloCards: View {
                             Image(systemName: "square.stack").foregroundStyle(.blue)
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(str(card, "name")).lineLimit(2)
-                                Text(str(card, "board")).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                Text([str(card, "board", ""), str(card, "list", "")].filter { !$0.isEmpty }.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                             }
                             Spacer()
                             if let due = trelloDue(str(card, "due")) { Text(due.text).font(.caption).foregroundStyle(due.late ? .red : .secondary) }
                         }.contentShape(Rectangle())
                     }.buttonStyle(.plain)
                 }
-                if cards.count > 8 { Text(T("\(cards.count - 8) more in Trello", "Trello'da \(cards.count - 8) kart daha")).font(.caption).foregroundStyle(.secondary) }
+                if model.trello["connected"] as? Bool == true {
+                    HStack {
+                        if cards.count > 8 { Text(T("\(cards.count - 8) more in Trello", "Trello'da \(cards.count - 8) kart daha")).font(.caption).foregroundStyle(.secondary) }
+                        Spacer()
+                        Button(T("Choose boards", "Panoları seç")) { model.page = "Settings"; model.settingsTab = "General" }.buttonStyle(.link).font(.caption)
+                    }
+                }
                 if let error = model.trello["error"] as? String, !error.isEmpty {
                     Text(T("Trello could not be reached; these are the cards seen last.", "Trello'ya ulaşılamadı; son görülen kartlar.")).font(.caption).foregroundStyle(.orange)
                 }
             }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+/// Which Trello boards Home shows and from which day. Saved at once; the cards are not fetched again.
+struct TrelloSettings: View {
+    @ObservedObject var model: Model
+    static let day: DateFormatter = { let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyyy-MM-dd"; return f }()
+    var boards: [[String: Any]] { model.trello["boards"] as? [[String: Any]] ?? [] }
+    var since: String { str(model.trello, "since", "") }
+    var shownIds: [String] { boards.filter { $0["shown"] as? Bool == true }.map { str($0, "id", "") } }
+    func save(boards ids: [String], since day: String) {
+        model.run("trello_settings", ["boards": ids, "since": day], quiet: true) { model.trello = $0 }
+    }
+    var body: some View {
+        GroupBox("Trello") {
+            VStack(alignment: .leading, spacing: 10) {
+                if model.trello["connected"] as? Bool != true {
+                    Text(T("Not connected. Run carry trello connect in Terminal; Carry asks Trello for a read-only token.",
+                           "Bağlı değil. Terminal'de carry trello connect çalıştırın; Carry Trello'dan yalnız okuma izni olan bir token ister.")).foregroundStyle(.secondary)
+                } else {
+                    Text(T("Home shows the open cards assigned to you on these boards. Cards in a Done list are left out.",
+                           "Ana sayfa bu panolarda size atanmış açık kartları gösterir. Done listesindeki kartlar gösterilmez.")).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    ForEach(boards.indices, id: \.self) { i in
+                        let board = boards[i], id = str(board, "id", "")
+                        Toggle(isOn: Binding(get: { board["shown"] as? Bool == true },
+                                             set: { on in save(boards: on ? shownIds + [id] : shownIds.filter { $0 != id }, since: since) })) {
+                            HStack(spacing: 6) {
+                                Text(str(board, "name", ""))
+                                Text(T("\(Int(num(board, "cards"))) cards", "\(Int(num(board, "cards"))) kart")).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    Divider()
+                    HStack {
+                        Toggle(T("Hide cards older than", "Şu tarihten eski kartları gizle"), isOn: Binding(get: { !since.isEmpty }, set: { on in
+                            let start = Calendar.current.date(from: Calendar.current.dateComponents([.year], from: Date())) ?? Date()
+                            save(boards: shownIds, since: on ? Self.day.string(from: start) : "") }))
+                        DatePicker(T("Day", "Gün"), selection: Binding(get: { Self.day.date(from: since) ?? Date() },
+                                                                      set: { save(boards: shownIds, since: Self.day.string(from: $0)) }),
+                                   displayedComponents: .date).labelsHidden().fixedSize().disabled(since.isEmpty)
+                    }
+                    Text(T("A card's day is its due date, or its latest change when it has none.",
+                           "Kartın günü son tarihidir; son tarihi yoksa son değiştiği gündür.")).font(.caption).foregroundStyle(.secondary)
+                }
+            }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
@@ -2579,13 +2631,14 @@ struct AdvancedSettings: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                PageIntro(icon: "gearshape", title: T("General", "Genel"), text: T("Language, help and troubleshooting.", "Dil, yardım ve sorun giderme."))
+                PageIntro(icon: "gearshape", title: T("General", "Genel"), text: T("Language, Trello, help and troubleshooting.", "Dil, Trello, yardım ve sorun giderme."))
                 GroupBox(L("Language")) {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack { Text(L("App language")); Picker(L("App language"), selection: $model.language) { Text("Türkçe").tag("tr"); Text("English").tag("en") }.pickerStyle(.segmented).labelsHidden().fixedSize() }
                         Text(T("Changes Carry's own screens. The language of session recaps is set on the Session recap tab.", "Carry'nin ekranlarını değiştirir. Oturum özetlerinin dili Oturum özeti sekmesinden ayarlanır.")).font(.caption).foregroundStyle(.secondary)
                     }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
                 }
+                TrelloSettings(model: model)
                 GroupBox(T("Help", "Yardım")) {
                     VStack(alignment: .leading, spacing: 10) {
                         Text(T("New here, or setting up another Mac? The setup guide walks you through notes and assistants again. Nothing you already have is removed.",
