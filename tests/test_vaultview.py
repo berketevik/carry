@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from carry import harvest, vaultview
+from carry import harvest, okf, vaultview
 from carry.config import EmbeddingConfig, SourceConfig, Workspace
 from carry.desktop import Bridge
 from carry.errors import CarryError
@@ -80,6 +80,53 @@ class VaultViewTest(unittest.TestCase):
             s = call('settings')
         self.assertEqual((s['preset'], s['default_vault']), ('keyword_assistant', 'notes'))
 
+
+
+class GitHubSourceReadOnlyTest(unittest.TestCase):
+    """The Notes page browses a GitHub source, but its copy is replaced on sync: no write may land there."""
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
+        base = Path(self.tmp.name)
+        self.team = base / 'team'
+        (self.team / '+').mkdir(parents=True)
+        self.draft = self.team / '+' / 'Draft.md'
+        self.draft.write_text('---\ntype: thing\ndraft: true\n---\nTeam draft.\n', encoding='utf-8')
+        team = SourceConfig('team', self.team, scope='team',
+                            github=dict(repository='acme/kb', branch='main', folder='', commit='', synced_at=0))
+        self.ws = Workspace.create(base / 'state', sources=[team], embedding=EmbeddingConfig(provider='hashing'))
+
+    def test_browse_and_read_work(self):
+        self.assertEqual([f['path'] for f in vaultview.browse(self.ws, 'team')['files']], ['+/Draft.md'])
+        self.assertEqual(vaultview.note(self.ws, 'team', '+/Draft.md')['body'].strip(), 'Team draft.')
+
+    def test_markdown_links_are_links_and_backlinks(self):
+        """GitHub knowledge bases link with [text](path.md), URL-encoded and relative to the note."""
+        (self.team / '00_Index').mkdir()
+        (self.team / '99_Admin').mkdir()
+        (self.team / '99_Admin' / 'Kişisel Vault Ayrımı.md').write_text('# Ayrım\n', encoding='utf-8')
+        (self.team / 'README.md').write_text(
+            '[Ayrım](99_Admin/Kişisel%20Vault%20Ayrımı.md) [Home](00_Index/Home.md#top) '
+            '[site](https://example.com/x.md) ![chart](chart.png)\n', encoding='utf-8')
+        (self.team / '00_Index' / 'Home.md').write_text('[up](../README.md) [x](<../99_Admin/Kişisel Vault Ayrımı.md>)\n', encoding='utf-8')
+        self.assertEqual(vaultview.note(self.ws, 'team', 'README.md')['links'], ['00_Index/Home', '99_Admin/Kişisel Vault Ayrımı'])
+        self.assertEqual(vaultview.note(self.ws, 'team', '00_Index/Home.md')['links'], ['99_Admin/Kişisel Vault Ayrımı', 'README'])
+        self.assertEqual(vaultview.backlinks(self.ws, 'team', '99_Admin/Kişisel Vault Ayrımı.md')['backlinks'], ['00_Index/Home.md', 'README.md'])
+        self.assertEqual(vaultview.backlinks(self.ws, 'team', 'README.md')['backlinks'], ['00_Index/Home.md'])
+        # The app sends a link as written in the note, relative to it.
+        self.assertEqual(vaultview.resolve_link(self.ws, 'team', '../README.md', '00_Index/Home.md')['path'], 'README.md')
+
+    def test_writes_are_refused_and_files_stay_unchanged(self):
+        from carry import digest
+        before = self.draft.read_text(encoding='utf-8')
+        for write in (lambda: vaultview.create_note(self.ws, 'team', 'New'),
+                      lambda: vaultview.approve_note(self.ws, 'team', '+/Draft.md'),
+                      lambda: vaultview.approve_many(self.ws, 'team', ['+/Draft.md']),
+                      lambda: digest.decide(self.ws, 'team', '+/Draft.md', 'i1', 'skip')):
+            with self.assertRaises(CarryError) as caught:
+                write()
+            self.assertEqual(str(caught.exception), 'source_read_only')
+        self.assertEqual(self.draft.read_text(encoding='utf-8'), before)
+        self.assertEqual(sorted(p.name for p in self.team.rglob('*.md')), ['Draft.md'])
 
 class ScheduleTest(unittest.TestCase):
     def setUp(self):
@@ -294,10 +341,13 @@ class LinksAndWorkspaceTest(unittest.TestCase):
         self.assertEqual(vaultview.create_note(self.ws, 'notes', 'Plan: Q4/launch')['path'], 'notes/Plan Q4 launch (2).md')
 
     def test_approve_drops_only_the_draft_flag_and_respects_locks(self):
+        # A legacy `draft: true` becomes OKF `status: stable` with the owner's check; the body stays.
         (self.vault / 'notes/D.md').write_text('---\ntype: thing\ndraft: true\nsummary: s\n---\nbody\ndraft: true stays in body\n', encoding='utf-8')
-        self.assertTrue(vaultview.approve_note(self.ws, 'notes', 'notes/D.md')['changed'])
+        with mock.patch.object(okf, 'now_iso', return_value='2026-10-16T10:00:00+03:00'):
+            self.assertTrue(vaultview.approve_note(self.ws, 'notes', 'notes/D.md')['changed'])
         text = (self.vault / 'notes/D.md').read_text(encoding='utf-8')
-        self.assertEqual(text, '---\ntype: thing\nsummary: s\n---\nbody\ndraft: true stays in body\n')
+        self.assertEqual(text, '---\ntype: thing\nstatus: stable\nsummary: s\n'
+                               'verified: {"by": "human:owner", "at": "2026-10-16T10:00:00+03:00"}\n---\nbody\ndraft: true stays in body\n')
         (self.vault / 'notes/L.md').write_text('---\nlock: true\ndraft: true\n---\nx\n', encoding='utf-8')
         with self.assertRaisesRegex(CarryError, 'note_locked'):
             vaultview.approve_note(self.ws, 'notes', 'notes/L.md')

@@ -6,6 +6,7 @@ changed, since new dependencies or entry points need one; the extras installed b
 with nothing changed. Running MCP servers keep the old code until their client restarts them.
 """
 import json
+import os
 from importlib import metadata
 from pathlib import Path
 import re
@@ -55,8 +56,9 @@ def installed_extras():
 
 
 def _git(checkout, *args):
+    # Never wait for a credential prompt: this also runs in background maintenance without a terminal.
     proc = subprocess.run(['git', '-C', str(checkout), *args], capture_output=True, text=True,
-                          encoding='utf-8', timeout=120)
+                          encoding='utf-8', timeout=120, env=dict(os.environ, GIT_TERMINAL_PROMPT='0'))
     if proc.returncode:
         raise CarryError('update_git_failed: ' + (proc.stderr or proc.stdout).strip()[-300:])
     return proc.stdout.strip()

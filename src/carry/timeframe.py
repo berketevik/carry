@@ -180,13 +180,16 @@ def file_dates(path, metadata):
     return dates
 
 
-def row_date(heading, path, metadata, frame=None):
+def row_date(heading, path, metadata, frame=None, committed=None):
     """The date a passage belongs to. A dated section speaks for itself; otherwise the
-    file's dates count, and with a frame the one inside it is preferred."""
+    file's dates count, and with a frame the one inside it is preferred. A repository file
+    that records no date of its own belongs to the day of its last commit (`committed`)."""
     d = heading_date(heading)
     if d:
         return d
     dates = file_dates(path, metadata)
+    if not dates and _date(committed):
+        dates = [_date(committed)]
     if frame is not None:
         inside = [x for x in dates if frame.contains(x)]
         if inside:

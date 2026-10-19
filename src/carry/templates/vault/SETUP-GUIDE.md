@@ -1,6 +1,6 @@
 ---
 type: topic-index
-summary: "How this vault was created by Carry and how to use it day to day."
+description: "How this vault was created by Carry and how to use it day to day."
 created: {{CREATED}}
 ---
 
@@ -18,8 +18,12 @@ This vault was created by `carry vault init` (template {{TEMPLATE_VERSION}}). Th
 ## Recall and capture
 
 - Recall runs through the Carry MCP server. The client asks you to approve the server on first use.
-- Prompt capture is opt-in: `carry --workspace <state> capture configure --client claude|codex`, then connect the hook from the Carry app.
-- `.mcp.json` and `.codex/config.toml` contain paths for this machine and are not committed. On another machine run `carry --workspace <state> vault init <this folder>` again.
+- Prompt capture is opt-in: `carry capture configure --client claude|codex` (run inside this folder), then connect the hook from the Carry app.
+- `.mcp.json` and `.codex/config.toml` contain paths for this machine and are not committed. On another machine run `carry vault init <this folder>` again.
+
+## Carry's files
+
+Carry keeps everything for this vault in `.carry/`. `settings.json` (the search settings every device shares), `vault.json` (this stamp) and `.gitignore` are committed; `state/` (this device's search index and state) and `local.json` never are. Commands run inside the folder find them by themselves. If the folder is in iCloud Drive or a cloud-storage folder, `state/` stays outside it, in `~/CarryState`.
 
 ## Upgrading
 

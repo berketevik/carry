@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 from .errors import CarryError
 
@@ -20,6 +21,13 @@ BUNDLE_ID = 'local.carry.alpha'
 DEFAULT_PATH = Path.home() / 'Applications' / 'Carry.app'
 LSREGISTER = ('/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/'
               'LaunchServices.framework/Versions/A/Support/lsregister')
+# What macOS shows when Carry Meet first asks for the microphone, speech recognition and
+# the system audio of a call; without these keys macOS refuses the access outright.
+USAGE = dict(
+    NSMicrophoneUsageDescription='Carry transcribes the meetings you record on this Mac. The audio stays on this Mac until it is transcribed, then it is deleted.',
+    NSSpeechRecognitionUsageDescription="Carry turns a meeting into text with this Mac's on-device recognizer. Nothing leaves this Mac.",
+    NSAudioCaptureUsageDescription='Carry hears the other side of a call to transcribe the meeting you record. The audio stays on this Mac until it is transcribed, then it is deleted.',
+)
 
 
 def swiftc():
@@ -70,17 +78,28 @@ def install(target=DEFAULT_PATH, workspace=None, python=None):
         (app / 'Contents' / 'Resources').mkdir()
         swift = Path(tmp) / 'CarryApp.swift'
         swift.write_text(source.read_text(encoding='utf-8'), encoding='utf-8', newline='\n')
-        build = subprocess.run([compiler, '-O', '-parse-as-library', '-swift-version', '5',
-                                '-target', f'{arch}-apple-macosx14.0', '-module-cache-path', str(Path(tmp) / 'cache'),
-                                str(swift), '-o', str(app / 'Contents' / 'MacOS' / 'Carry')],
+        flags = ['-O', '-parse-as-library', '-swift-version', '5', '-target', f'{arch}-apple-macosx14.0',
+                 '-module-cache-path', str(Path(tmp) / 'cache')]
+        build = subprocess.run([compiler] + flags + [str(swift), '-o', str(app / 'Contents' / 'MacOS' / 'Carry')],
                                capture_output=True, text=True)
         if build.returncode != 0:
             raise CarryError('app_build_failed: ' + build_error(build.stderr or build.stdout))
+        # Apple's on-device model, the meeting summary's fallback when no assistant answers. If it
+        # does not build, the app is the same without that fallback.
+        model = Path(tmp) / 'CarryModel.swift'
+        model.write_text((resources.files('carry') / 'app' / 'CarryModel.swift').read_text(encoding='utf-8'), encoding='utf-8', newline='\n')
+        helper = app / 'Contents' / 'MacOS' / 'carry-model'
+        subprocess.run([compiler] + flags + [str(model), '-o', str(helper)], capture_output=True, text=True)
+        if helper.exists():
+            subprocess.run(['/usr/bin/codesign', '--force', '--sign', '-', str(helper)], capture_output=True)
+        # Launch Services opens the highest CFBundleVersion among every bundle with this ID, so an
+        # older build left in a folder (a pilot package, a test build) would open instead of this
+        # one. The install time only grows, so the app just installed is the one that opens.
         with open(app / 'Contents' / 'Info.plist', 'wb') as f:
             plistlib.dump(dict(CFBundleExecutable='Carry', CFBundleIdentifier=BUNDLE_ID, CFBundleName='Carry',
                                CFBundleDisplayName='Carry', CFBundlePackageType='APPL', CFBundleShortVersionString=_version(),
-                               CFBundleVersion='1', LSMinimumSystemVersion='14.0', NSHighResolutionCapable=True,
-                               CFBundleIconFile='Carry'), f)
+                               CFBundleVersion=str(int(time.time())), LSMinimumSystemVersion='14.0', NSHighResolutionCapable=True,
+                               CFBundleIconFile='Carry', **USAGE), f)
         (app / 'Contents' / 'Resources' / 'python-path.txt').write_text((python or sys.executable) + '\n', encoding='utf-8', newline='\n')
         icon = resources.files('carry') / 'app' / 'Carry.icns'
         if icon.is_file():

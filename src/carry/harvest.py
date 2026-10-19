@@ -1,4 +1,5 @@
-"""`carry harvest`: durable items from finished Claude Code / Codex threads of a vault.
+"""`carry session end | sweep` (`carry harvest` before 0.14): the session recap, durable items
+from finished Claude Code / Codex threads of a vault.
 
 Measured design (2026-09-27, 7 real threads against a 142-item reference): Sonnet
 extracts items with a verbatim quote; code checks type, quote and speaker. When Jev is
@@ -6,11 +7,18 @@ the chosen checker it also checks support, owner attribution, durability and lat
 withdrawal (both speakers), then compares each item with the vault through recall:
 already recorded, a real conflict, or an open item done or dropped since. Without Jev
 the owner's assistant compares (known or real conflict only; it never closes an item).
-Output is one immutable raw per thread under sources/carry/harvest/ and one draft digest
-in the +/ inbox, which the owner decides item by item (carry.digest). Nothing edits,
+Output is one immutable raw per thread under sources/carry/session/ and one draft recap
+(`+/<day> — session <client> <id>.md`) in the inbox, which the owner decides item by item
+(carry.digest); recaps and raws written before 0.14 keep their `harvest` names. Nothing edits,
 merges or deletes an existing note; nothing is accepted automatically. An extraction or
 judge failure leaves the thread pending for the next run.
+
+A thread is recapped in parts: a checkpoint (`session checkpoint`, run before the client
+compacts the chat) recaps the finished exchanges so far and leaves the running one for later;
+the chat end or the nightly sweep recaps only what came after. One lock per thread keeps two
+runs from recapping the same exchanges.
 """
+from contextlib import contextmanager
 import datetime
 import hashlib
 import json
@@ -23,13 +31,20 @@ import sys
 import tempfile
 import time
 
-from . import jev, taskscheduler
+from . import jev, okf, taskscheduler
 from .background import detached
 from .errors import CarryError
+from .filelock import try_lock, unlock
 from .mask import mask
 from .persistence import atomic_text
 
 STATE_NAME = 'harvest.json'
+LOCK_DIR = 'session-locks'
+# How long a run waits for another run of the same thread: the chat end waits for a checkpoint
+# still recapping (it holds the newest exchanges); a checkpoint or a sweep leaves a busy thread
+# to the run that holds it and to the next one.
+LOCK_WAIT = dict(checkpoint=0, end=900, sweep=0)
+TRIGGERS = tuple(LOCK_WAIT)
 MAX_TEXT = 6000
 WINDOW = 20000
 MIN_IDLE_MINUTES = 30
@@ -49,11 +64,11 @@ VERIFY = {
 }
 
 LABELS = {
-    'Turkish': dict(new='Yeni', conflict='Çelişki adayları (incele)', review='İncelenecek', known='Zaten kayıtlı', resolved='Yapılmış görünüyor',
+    'Turkish': dict(recap='Oturum özeti', new='Yeni', conflict='Çelişki adayları (incele)', review='İncelenecek', known='Zaten kayıtlı', resolved='Yapılmış görünüyor',
                     dropped='Vazgeçilmiş görünüyor',
                     assistant='asistanın önerisi/sonucu; sahibi onaylamadı', decision='karar', fact='olgu',
                     preference='tercih', open_item='açık iş', unchecked='vault ile karşılaştırılmadı (ne Jev ne asistanınız kontrol edebildi)'),
-    'English': dict(new='New', conflict='Conflict candidates (review)', review='To review', known='Already recorded', resolved='Apparently done',
+    'English': dict(recap='Session recap', new='New', conflict='Conflict candidates (review)', review='To review', known='Already recorded', resolved='Apparently done',
                     dropped='Apparently dropped',
                     assistant="assistant's suggestion or result; not confirmed by the owner", decision='decision',
                     fact='fact', preference='preference', open_item='open item',
@@ -125,7 +140,9 @@ def read_thread(client, path, root):
         except ValueError:
             continue
         if client == 'claude':
-            if d.get('isSidechain') or d.get('isMeta'):
+            # A compaction writes its summary of the chat as a user line: it is not a new exchange, and
+            # the reply after it still belongs to the exchange that was running when the chat compacted.
+            if d.get('isSidechain') or d.get('isMeta') or d.get('isCompactSummary'):
                 continue
             m = d.get('message') or {}
             if d.get('type') == 'user':
@@ -189,13 +206,30 @@ def _render(exchanges):
     return '\n\n'.join(f"### Exchange {e['i']}\nOWNER: {e['user']}\nASSISTANT: {e['assistant']}" for e in exchanges)
 
 
-def extractor():
-    """The owner's own client runs the extraction on their plan: Claude Sonnet, else Codex gpt-6-astra (both measured)."""
+def assistants():
+    """The owner's own clients on this Mac, in order: Claude Sonnet, Codex gpt-6-astra (both measured)."""
+    found = []
     if shutil.which('claude'):
-        return 'claude:sonnet'
+        found.append('claude:sonnet')
     if shutil.which('codex'):
-        return 'codex:gpt-6-astra'  # measured 64% recall, every quote verbatim; gpt-reserve reached 38%
-    raise CarryError('no_extraction_client')
+        found.append('codex:gpt-6-astra')  # measured 64% recall, every quote verbatim; gpt-reserve reached 38%
+    return found
+
+
+def extractor():
+    """The owner's own client runs the extraction on their plan."""
+    found = assistants()
+    if not found:
+        raise CarryError('no_extraction_client')
+    return found[0]
+
+
+def apple_model():
+    """The helper `carry app install` builds into the app for Apple's on-device model (the
+    meeting summary's fallback), or None when there is none."""
+    from .app_install import DEFAULT_PATH
+    helper = DEFAULT_PATH / 'Contents' / 'MacOS' / 'carry-model'
+    return helper if sys.platform == 'darwin' and helper.is_file() else None
 
 
 def _items_from(text, field='items'):
@@ -220,8 +254,9 @@ def _client(name):
 
 
 def ask_agent(system, body, which, field):
-    """One JSON answer from the owner's own client (Claude or Codex), two tries."""
+    """One JSON answer from the owner's own client (Claude or Codex) or Apple's on-device model, two tries."""
     piped = sys.platform == 'win32'
+    failure = ''
     for _ in range(2):
         with tempfile.TemporaryDirectory(prefix='carry-harvest-') as cwd:
             if which.startswith('claude'):
@@ -230,9 +265,18 @@ def ask_agent(system, body, which, field):
                                       input=body if piped else None,
                                       capture_output=True, text=True, encoding='utf-8', timeout=900, cwd=cwd)
                 try:
-                    text = json.loads(proc.stdout).get('result', '')
+                    reply = json.loads(proc.stdout)
                 except ValueError:
-                    text = ''
+                    reply = {}
+                reply = reply if isinstance(reply, dict) else {}
+                text = str(reply.get('result') or '')
+                # A signed-out or failing client puts its error where the answer goes.
+                if reply.get('is_error'):
+                    failure, text = text or str(reply.get('subtype') or 'error'), ''
+            elif which.startswith('apple'):
+                proc = subprocess.run([str(apple_model())], input=json.dumps(dict(instructions=system, prompt=body)),
+                                      capture_output=True, text=True, encoding='utf-8', timeout=900, cwd=cwd)
+                text = proc.stdout
             else:
                 prompt = system + '\n\n' + body
                 proc = subprocess.run(_client('codex') + ['exec', '--skip-git-repo-check', '-m', which.split(':')[1],
@@ -242,7 +286,11 @@ def ask_agent(system, body, which, field):
         items = _items_from(text, field)
         if items is not None:
             return items
-    raise CarryError('extraction_unparseable')
+        if not which.startswith('claude') and proc.returncode:
+            failure = ([line for line in (proc.stderr or '').splitlines() if line.strip()] or [f'exit {proc.returncode}'])[-1]
+            if which.startswith('apple') and proc.returncode in (69, 70):
+                break  # the model is off on this Mac, or the part is too long: a second try ends the same
+    raise CarryError(f'assistant_failed: {failure[:300]}' if failure else 'extraction_unparseable')
 
 
 AGENT_COMPARE = """You compare items taken from a chat with passages from the owner's notes. For each case give one verdict:
@@ -369,13 +417,14 @@ REAL_MIN = 0.6  # measured on 1 real and 7 false candidates (0.75 vs at most 0.5
 
 def evidence_for(item, workspace, limit=6):
     """Unjudged passages to compare an item with: recall's judge asks whether a passage answers a
-    question, and a statement is not one. Chat raws, digests and notes marked secret stay out."""
+    question, and a statement is not one. Chat raws, meetings, digests and notes marked secret stay out."""
     from dataclasses import replace
     from .recall import is_secret, recall
     unjudged = replace(workspace, retrieval=replace(workspace.retrieval, reranker='off', vector_min_score=-1.0))
     extra = [item['quote'][:200]] + [k for k in (item.get('keywords') or []) if isinstance(k, str)][:3]
     found = recall(unjudged, item['statement'], queries=extra)
     return [x for x in found.get('evidence', []) if 'chat-raw' not in x['path'] and '/harvest/' not in x['path']
+            and '/carry/session/' not in x['path'] and '/meet/' not in x['path']
             and not is_secret(x.get('metadata'))][:limit]
 
 
@@ -468,19 +517,32 @@ def _link(path, root):
 def write_outputs(root, client, thread_id, exchanges, groups, meta, language, today=None):
     today = (today or datetime.date.today()).isoformat()
     short = thread_id.replace('-', '')[:8]
-    raw_rel = f'sources/carry/harvest/{today} — {client} {short}.md'
+    raw_rel = f'sources/carry/session/{today} — {client} {short}.md'
     raw = Path(root) / raw_rel
+    made = okf.flow(okf.event(okf.carry_actor()))
+    section = lambda e: f"## Exchange {e['i']}\n\n**Owner:** {e['user']}\n\n**Assistant:** {e['assistant']}"
     if not raw.exists():
-        body = '\n\n'.join(f"## Exchange {e['i']}\n\n**Owner:** {e['user']}\n\n**Assistant:** {e['assistant']}" for e in exchanges)
-        atomic_text(raw, f'---\ntype: chat-raw\nsummary: "{client} thread {short}, owner prompts and final replies, secrets masked"\n'
-                         f'created: {today}\nsource_type: harvest\n---\n\n{body}\n')
+        body = '\n\n'.join(section(e) for e in exchanges)
+        atomic_text(raw, f'---\ntype: chat-raw\ndescription: "{client} thread {short}, owner prompts and final replies, secrets masked"\n'
+                         f'created: {today}\ngenerated: {made}\nsource_type: session\n---\n\n{body}\n')
+    else:
+        # A later recap of the same thread the same day (after a checkpoint, or a thread that grew):
+        # the raw keeps what it holds and gains the exchanges it does not have yet, so every quote
+        # of every recap is in it.
+        text = raw.read_text(encoding='utf-8')
+        held = max((int(n) for n in re.findall(r'(?m)^## Exchange (\d+)$', text)), default=0)
+        new = [section(e) for e in exchanges if e['i'] > held]
+        if new:
+            atomic_text(raw, text.rstrip('\n') + '\n\n' + '\n\n'.join(new) + '\n')
     L = LABELS.get(language, LABELS['English'])
     counts = {k: len(v) for k, v in groups.items()}
+    # OKF v0.2: a draft (it waits for the owner's decisions), generated by Carry, derived from the raw.
     lines = ['---', 'type: output',
-             f'summary: "{client} {short}: {counts.get("new", 0)} new, {counts.get("conflict", 0)} conflict, '
+             f'description: "{client} {short}: {counts.get("new", 0)} new, {counts.get("conflict", 0)} conflict, '
              f'{counts.get("known", 0)} already recorded"',
-             f'created: {today}', 'draft: true', 'provenance: chat', 'sources:', f'  - "{_link(raw, root)}"',
-             f'harvest: {json.dumps(meta, ensure_ascii=False)}', '---', '', f'# Harvest {client} {short}', '']
+             f'created: {today}', 'status: draft', f'generated: {made}', 'provenance: chat',
+             *okf.source_lines([okf.entry(raw_rel)]),
+             f'session: {json.dumps(meta, ensure_ascii=False)}', '---', '', f'# {L["recap"]} {client} {short}', '']
     def item_line(it):
         tag = L[it['type']] + (f' · {L["assistant"]}' if it.get('attribution') == 'assistant' else '')
         where = f' ↔ {_link(it["match"], root)}' if it.get('match') else ''
@@ -496,11 +558,11 @@ def write_outputs(root, client, thread_id, exchanges, groups, meta, language, to
             lines += [f'## {L[key]}', ''] + [f'- {it["statement"]} → {_link(it["match"], root)}' for it in groups[key]] + ['']
     if meta.get('compared') is False:
         lines += [f'*{L["unchecked"]}*', '']
-    # A thread that grows is harvested again the same day: its new items get their own digest, so
+    # A thread that grows is recapped again the same day: its new items get their own recap, so
     # the owner's decisions in the first one are never overwritten.
-    digest_rel, n = f'+/{today} — harvest {client} {short}.md', 2
+    digest_rel, n = f'+/{today} — session {client} {short}.md', 2
     while (Path(root) / digest_rel).exists():
-        digest_rel, n = f'+/{today} — harvest {client} {short} ({n}).md', n + 1
+        digest_rel, n = f'+/{today} — session {client} {short} ({n}).md', n + 1
     atomic_text(Path(root) / digest_rel, '\n'.join(lines))
     return raw_rel, digest_rel
 
@@ -509,9 +571,53 @@ def write_outputs(root, client, thread_id, exchanges, groups, meta, language, to
 
 def _state(workspace):
     try:
-        return json.loads((workspace.state_dir / STATE_NAME).read_text(encoding='utf-8'))
+        return json.loads((Path(workspace.state_dir) / STATE_NAME).read_text(encoding='utf-8'))
     except (OSError, ValueError):
         return {}
+
+
+@contextmanager
+def _locked(path, wait):
+    """An exclusive lock on `path`, waiting up to `wait` seconds; yields whether it was taken."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(path, 'a+')
+    deadline = time.monotonic() + wait
+    got = try_lock(handle)
+    while not got and time.monotonic() < deadline:
+        time.sleep(min(1.0, max(0.05, deadline - time.monotonic())))
+        got = try_lock(handle)
+    try:
+        yield got
+    finally:
+        if got:
+            unlock(handle)
+        handle.close()
+
+
+def thread_lock(state_dir, entry_key, wait=0):
+    """The lock one run of a thread holds from reading its state to saving it."""
+    name = re.sub(r'[^A-Za-z0-9._-]', '_', entry_key) + '.lock'
+    return _locked(Path(state_dir) / LOCK_DIR / name, wait)
+
+
+def _update_state(state_dir, change):
+    """Change harvest.json under its own short lock. Runs of different threads and the draft
+    language setting share the file: each writes only its own key, never a stale copy of the rest."""
+    path = Path(state_dir) / STATE_NAME
+    with _locked(path.with_name(STATE_NAME + '.lock'), 30) as got:
+        if not got:
+            raise CarryError('session_state_busy')
+        try:
+            state = json.loads(path.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            state = {}
+        change(state)
+        atomic_text(path, json.dumps(state, indent=1))
+
+
+def _save(state_dir, entry_key, entry):
+    _update_state(state_dir, lambda state: state.__setitem__(entry_key, entry))
 
 
 def vault_root(workspace, override=None):
@@ -536,98 +642,122 @@ def thread_from_path(path, root):
 
 
 def run(workspace, root=None, dry_run=False, include_filed=False, limit=None, min_idle=MIN_IDLE_MINUTES,
-        language=None, which=None, progress=print, thread=None, min_exchanges=None):
+        language=None, which=None, progress=print, thread=None, min_exchanges=None, trigger=None):
+    """Recap the vault's threads: every idle one (trigger `sweep`), or one transcript when its chat
+    ends (`end`) or before the client compacts it (`checkpoint`). A run reads only the exchanges no
+    earlier run recapped; a checkpoint also leaves the newest one, which may still be answering."""
     root = vault_root(workspace, root)
+    trigger = trigger or ('end' if thread is not None else 'sweep')
+    if trigger not in TRIGGERS:
+        raise CarryError('invalid_session_trigger')
+    checkpoint = trigger == 'checkpoint'
     min_exchanges = MIN_EXCHANGES if min_exchanges is None else min_exchanges
     if language is None:
         language = draft_language(workspace, root)
-    state = _state(workspace)
     # One rule for every Jev use: only when the owner chose Jev as the checker in search.
     key = jev.api_key() if workspace.retrieval.reranker == 'jev' else None
-    report = dict(threads=0, harvested=0, skipped_filed=0, skipped_active=0, pending=0, items=0, digests=[])
+    report = dict(threads=0, harvested=0, skipped_filed=0, skipped_active=0, pending=0, busy=0, items=0, digests=[])
     if thread is not None:
         one = thread_from_path(thread, root)
         threads = [one] if one else []
-        min_idle = 0  # the client just closed it
+        min_idle = 0  # the client just closed or compacts it
     else:
         threads = find_threads(root)
+
+    def save(entry_key, entry):
+        if not dry_run:
+            _save(workspace.state_dir, entry_key, entry)
+
     for client, thread_id, path in threads:
         report['threads'] += 1
         entry_key = f'{client}:{thread_id}'
-        mtime = path.stat().st_mtime
-        previous = state.get(entry_key, {})
-        if previous.get('mtime') == mtime and previous.get('status') in ('done', 'filed', 'empty'):
-            continue
-        if time.time() - mtime < min_idle * 60:
-            report['skipped_active'] += 1
-            continue
-        exchanges, filed = read_thread(client, path, root)
-        start = previous.get('exchanges_done', 0)
-        fresh = [e for e in exchanges if e['i'] > start]
-        if not fresh or len(exchanges) < min_exchanges:
-            # Too short so far: keep the start so the whole thread is read once it grows.
-            state[entry_key] = dict(mtime=mtime, status='empty', exchanges_done=start)
-            continue
-        if filed and not include_filed:
-            report['skipped_filed'] += 1
-            state[entry_key] = dict(mtime=mtime, status='filed', exchanges_done=len(exchanges))
-            continue
-        if limit is not None and report['harvested'] >= limit:
-            break
-        if dry_run:
-            progress(f'would harvest {client} {thread_id[:8]}: {len(fresh)} exchanges')
-            report['harvested'] += 1
-            continue
-        try:
-            chosen = which or extractor()
-            raw_items = []
-            context = [e for e in exchanges if start - 2 < e['i'] <= start]  # neighbours for pronouns
-            for window in _windows(context + fresh):
-                raw_items += extract_window(window, language, chosen)
-            items, dropped = provenance(raw_items, exchanges)
-            groups = dict(new=[], conflict=[], review=[], resolved=[], dropped=[], known=[])
-            said = {e['i']: e.get('at') for e in exchanges}
-            started = next((e.get('at') for e in exchanges if e.get('at')), None)
-            unchecked = []
-            for it in items:
-                it['at'] = said.get(it['exchange']) or started
-                scores = verify(it, exchanges, key) if key else None  # owner attribution stays Jev-only
-                verdict = classify(it, scores)
-                if verdict == 'drop':
-                    continue
-                if verdict == 'new' and key:
-                    verdict, it['match'] = compare(it, workspace, key, since=it['at'])
-                if verdict == 'new' and not key:
-                    unchecked.append(it)
-                    continue
-                groups[verdict].append(it)
-            agent_ran = False
-            if unchecked:
-                verdicts, agent_ran = agent_compare(unchecked, workspace, chosen, language)
-                for it, (verdict, it['match']) in zip(unchecked, verdicts):
-                    groups[verdict].append(it)
-            judge = 'jev' if key else 'agent' if agent_ran else None
-            meta = dict(extractor=chosen, judge=judge, compared=judge is not None,
-                        dropped_without_quote=dropped, thread=entry_key, exchanges=[fresh[0]['i'], fresh[-1]['i']])
-            if not any(groups.values()):
-                # Nothing worth reviewing: no empty draft in the inbox.
-                state[entry_key] = dict(mtime=mtime, status='done', exchanges_done=len(exchanges), digest=None)
-                report['harvested'] += 1
-                progress(f'harvested {client} {thread_id[:8]}: nothing to file')
+        with thread_lock(workspace.state_dir, entry_key, 0 if dry_run else LOCK_WAIT[trigger]) as got:
+            if not got:
+                report['busy'] += 1
+                progress(f'busy {client} {thread_id[:8]}: another recap of this chat is running')
                 continue
-            raw_rel, digest_rel = write_outputs(root, client, thread_id, exchanges, groups, meta, language)
-        except (CarryError, jev.JevUnavailable, subprocess.SubprocessError, OSError) as exc:
-            report['pending'] += 1
-            state[entry_key] = dict(previous, status='pending', error=str(exc))
-            progress(f'pending {client} {thread_id[:8]}: {exc}')
-            continue
-        state[entry_key] = dict(mtime=mtime, status='done', exchanges_done=len(exchanges), digest=digest_rel)
-        report['harvested'] += 1
-        report['items'] += sum(len(v) for v in groups.values())
-        report['digests'].append(digest_rel)
-        progress(f'harvested {client} {thread_id[:8]}: ' + ', '.join(f'{k} {len(v)}' for k, v in groups.items()))
-    if not dry_run:
-        atomic_text(workspace.state_dir / STATE_NAME, json.dumps(state, indent=1))
+            mtime = path.stat().st_mtime
+            previous = _state(workspace).get(entry_key, {})  # read under the lock: a run just before may have moved it on
+            if previous.get('mtime') == mtime and previous.get('status') in ('done', 'filed', 'empty'):
+                continue
+            if time.time() - mtime < min_idle * 60:
+                report['skipped_active'] += 1
+                continue
+            exchanges, filed = read_thread(client, path, root)
+            start = previous.get('exchanges_done', 0)
+            ready = exchanges[:-1] if checkpoint else exchanges
+            fresh = [e for e in ready if e['i'] > start]
+            if checkpoint and len(fresh) < min_exchanges:
+                continue  # too little new to recap mid-chat: a later checkpoint or the chat end takes it
+            if not fresh or len(exchanges) < min_exchanges:
+                # Too short so far: keep the start so the whole thread is read once it grows.
+                save(entry_key, dict(mtime=mtime, status='empty', exchanges_done=start))
+                continue
+            if filed and not include_filed:
+                report['skipped_filed'] += 1
+                save(entry_key, dict(mtime=mtime, status='filed', exchanges_done=exchanges[-1]['i']))
+                continue
+            if limit is not None and report['harvested'] >= limit:
+                break
+            if dry_run:
+                progress(f'would harvest {client} {thread_id[:8]}: {len(fresh)} exchanges')
+                report['harvested'] += 1
+                continue
+            done = fresh[-1]['i']  # exchange numbers can skip (an image-only prompt): never a count
+            status = 'checkpoint' if checkpoint else 'done'
+            try:
+                chosen = which or extractor()
+                raw_items = []
+                context = [e for e in exchanges if start - 2 < e['i'] <= start]  # neighbours for pronouns
+                for window in _windows(context + fresh):
+                    raw_items += extract_window(window, language, chosen)
+                items, dropped = provenance(raw_items, exchanges)
+                # The neighbours and a held-back exchange are only read: an item quoting them belongs
+                # to the run that recaps them, so no exchange is recapped twice.
+                kept = [it for it in items if start < it['exchange'] <= done]
+                dropped += len(items) - len(kept)
+                items = kept
+                groups = dict(new=[], conflict=[], review=[], resolved=[], dropped=[], known=[])
+                said = {e['i']: e.get('at') for e in exchanges}
+                started = next((e.get('at') for e in exchanges if e.get('at')), None)
+                unchecked = []
+                for it in items:
+                    it['at'] = said.get(it['exchange']) or started
+                    scores = verify(it, exchanges, key) if key else None  # owner attribution stays Jev-only
+                    verdict = classify(it, scores)
+                    if verdict == 'drop':
+                        continue
+                    if verdict == 'new' and key:
+                        verdict, it['match'] = compare(it, workspace, key, since=it['at'])
+                    if verdict == 'new' and not key:
+                        unchecked.append(it)
+                        continue
+                    groups[verdict].append(it)
+                agent_ran = False
+                if unchecked:
+                    verdicts, agent_ran = agent_compare(unchecked, workspace, chosen, language)
+                    for it, (verdict, it['match']) in zip(unchecked, verdicts):
+                        groups[verdict].append(it)
+                judge = 'jev' if key else 'agent' if agent_ran else None
+                meta = dict(extractor=chosen, judge=judge, compared=judge is not None, trigger=trigger,
+                            dropped_without_quote=dropped, thread=entry_key, exchanges=[fresh[0]['i'], done])
+                if not any(groups.values()):
+                    # Nothing worth reviewing: no empty draft in the inbox.
+                    save(entry_key, dict(mtime=mtime, status=status, exchanges_done=done, digest=None))
+                    report['harvested'] += 1
+                    progress(f'harvested {client} {thread_id[:8]}: nothing to file')
+                    continue
+                raw_rel, digest_rel = write_outputs(root, client, thread_id, exchanges, groups, meta, language)
+            except (CarryError, jev.JevUnavailable, subprocess.SubprocessError, OSError) as exc:
+                report['pending'] += 1
+                save(entry_key, dict(previous, status='pending', error=str(exc)))
+                progress(f'pending {client} {thread_id[:8]}: {exc}')
+                continue
+            save(entry_key, dict(mtime=mtime, status=status, exchanges_done=done, digest=digest_rel))
+            report['harvested'] += 1
+            report['items'] += sum(len(v) for v in groups.values())
+            report['digests'].append(digest_rel)
+            progress(f'harvested {client} {thread_id[:8]}: ' + ', '.join(f'{k} {len(v)}' for k, v in groups.items()))
     return report
 
 
@@ -648,9 +778,12 @@ def in_vault(cwd, root):
     return cwd == root or root in cwd.parents
 
 
-def spawn_from_hook(state_dir, payload, root, language=None, python=None):
-    """SessionEnd: start the harvest of the closed thread in the background and return at once
-    (Codex allows a SessionEnd hook three seconds at most)."""
+def spawn_from_hook(state_dir, payload, root, language=None, python=None, command='end'):
+    """SessionEnd (`command` end) or PreCompact (`command` checkpoint): start the recap of that
+    thread in the background and return at once (Codex allows a SessionEnd hook three seconds at
+    most; a PreCompact hook holds the compaction while it runs)."""
+    if command not in ('end', 'checkpoint'):
+        raise CarryError('invalid_session_hook')
     transcript = payload.get('transcript_path')
     if not transcript or not in_vault(payload.get('cwd') or '', root):
         return False
@@ -659,14 +792,17 @@ def spawn_from_hook(state_dir, payload, root, language=None, python=None):
         language = json.loads((Path(state_dir) / LANGUAGE_NAME).read_text(encoding='utf-8')).get('language') or language
     except (OSError, ValueError):
         pass
-    args = [python or sys.executable, '-I', '-m', 'carry.cli', '--workspace', str(state_dir), 'harvest',
+    args = [python or sys.executable, '-I', '-m', 'carry.cli', '--workspace', str(state_dir), 'session', command,
             '--thread', str(transcript), '--vault', str(root)] + (['--language', language] if language else [])
     with open(Path(state_dir) / 'harvest.log', 'a') as log:  # the child keeps its own handle
         detached(args, stdin=subprocess.DEVNULL, stdout=log, stderr=log)
     return True
 
 
+# The nightly sweep keeps the launchd label of the job it was before 0.14: installing replaces
+# that one job in place, so a Mac never runs two nightly sweeps and older Carry still finds it.
 LAUNCH_LABEL = 'local.carry.harvest'
+SWEEP_ARGS = ('session', 'sweep')
 
 
 def schedule_path_env():
@@ -687,7 +823,7 @@ def schedule_plist(carry_bin, state_dir, hour=21, minute=30, extra=()):
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>{LAUNCH_LABEL}</string>
-  <key>ProgramArguments</key><array><string>{carry_bin}</string><string>--workspace</string><string>{state_dir}</string><string>harvest</string>{''.join(f'<string>{a}</string>' for a in extra)}</array>
+  <key>ProgramArguments</key><array><string>{carry_bin}</string><string>--workspace</string><string>{state_dir}</string>{''.join(f'<string>{a}</string>' for a in SWEEP_ARGS)}{''.join(f'<string>{a}</string>' for a in extra)}</array>
   <key>EnvironmentVariables</key><dict><key>PATH</key><string>{path}</string></dict>
   <key>StartCalendarInterval</key><dict><key>Hour</key><integer>{hour}</integer><key>Minute</key><integer>{minute}</integer></dict>
   <key>StandardOutPath</key><string>{state_dir}/harvest.log</string>
@@ -706,7 +842,12 @@ LANGUAGE_NAME = 'harvest.json'
 
 
 def draft_language(workspace, root=None):
-    """Language of harvest drafts: the app's setting, else the vault's, else the nightly job's, else English."""
+    """Language of recaps: the vault's shared settings, else this device's setting, else the
+    template stamp, else the nightly job's, else English."""
+    from . import shared
+    chosen = shared.language(workspace, root)
+    if chosen:
+        return chosen
     try:
         chosen = json.loads((Path(workspace.state_dir) / LANGUAGE_NAME).read_text(encoding='utf-8')).get('language')
         if chosen:
@@ -731,7 +872,12 @@ def draft_language(workspace, root=None):
 def set_draft_language(workspace, language):
     if language not in ('Turkish', 'English'):
         raise CarryError('invalid_harvest_language')
-    atomic_text(Path(workspace.state_dir) / LANGUAGE_NAME, json.dumps(dict(language=language)) + '\n')
+    # The setting shares harvest.json with the threads' recap state: change only its key, or the
+    # next sweep would recap every chat again.
+    _update_state(workspace.state_dir, lambda state: state.__setitem__('language', language))
+    # A vault in the standard layout shares it with its other devices.
+    from . import shared
+    shared.set_language(workspace, language)
     return language
 
 

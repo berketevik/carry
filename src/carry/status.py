@@ -8,10 +8,35 @@ from .lifecycle import catalog
 from .embedding import build_provider
 from .errors import ProviderUnavailable
 from .index import db_is_usable, health
+from .okf import conformance
 from . import sidecar as sidecar_map
 
 
-def status(workspace, probe_provider=False):
+SCOPED_DEGRADATIONS = ("records_need_reconciliation", "correction_target_conflict")
+
+
+def status(workspace, probe_provider=False, visible=None):
+    """With `visible` (the source ids a scoped caller may read), only those sources are
+    described: no state directory, no other source's root, sync state or counts, and
+    nothing about the owner's records, review queue or prompt capture."""
+    payload = _status(workspace, probe_provider)
+    if visible is None:
+        return payload
+    visible = set(visible)
+    sources = [s for s in payload["workspace"]["sources"] if s["source_id"] in visible]
+    return dict(
+        github_sync={k: v for k, v in payload["github_sync"].items() if k in visible},
+        workspace=dict(sources=sources),
+        team_settings=payload["team_settings"],
+        team_packs={k: v for k, v in payload["team_packs"].items() if k in visible},
+        index=dict(usable=payload["index"]["usable"], state=payload["index"]["state"]),
+        okf={k: v for k, v in payload["okf"].items() if k in visible},
+        embedding=payload["embedding"],
+        degradation=[d for d in payload["degradation"] if d not in SCOPED_DEGRADATIONS],
+        ok=payload["ok"])
+
+
+def _status(workspace, probe_provider=False):
     workspace.validate()
     index_health = health(workspace)
     try:
@@ -44,8 +69,25 @@ def status(workspace, probe_provider=False):
     if review_info['target_conflicts']:
         degradation.append('correction_target_conflict')
     from .maintenance import job_status, sync_status
+    from .team import clone_degradations, pack_flags, pack_report, settings_flags, settings_report
+    syncs = sync_status(workspace)
+    degradation += clone_degradations(syncs, [s.source_id for s in workspace.sources])
+    team_settings = settings_report(workspace)
+    degradation += settings_flags(team_settings)
+    team_packs = pack_report(workspace)
+    degradation += pack_flags(team_packs)
+    # Where the files are (the standard is <vault>/.carry/) and the vault's shared settings.
+    from .statedir import describe
+    try:
+        state_info = describe(workspace)
+    except Exception:
+        state_info = {}
+    if state_info.get("warnings"):
+        degradation.append("shared_settings_invalid")
     return dict(
-        maintenance=job_status(workspace), github_sync=sync_status(workspace),
+        state=state_info,
+        maintenance=job_status(workspace), github_sync=syncs,
+        team_settings=team_settings, team_packs=team_packs,
         review=review_info,
         workspace=dict(state_dir=str(workspace.state_dir),
                        sources=[dict(source_id=s.source_id, scope=s.scope,
@@ -53,6 +95,8 @@ def status(workspace, probe_provider=False):
                                      root_available=s.root.expanduser().exists())
                                 for s in workspace.sources]),
         index=dict(usable=db_is_usable(workspace.db_path), **index_health),
+        # OKF v0.2 conformance (§11) of each source's whole tree, counts only.
+        okf={s.source_id: conformance(s.root, s.extensions) for s in workspace.sources},
         embedding=provider_info,
         records=dict(tracked=len(sidecar.get("entries", {})),
                      needs_reconciliation=len(sidecar.get("reconcile", []))),

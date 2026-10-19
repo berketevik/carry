@@ -32,6 +32,7 @@ vault/
 ├── Home.md      ← human dashboard; IMPLICIT LOCK
 ├── LLM-GUIDE.md, SETUP-GUIDE.md ← IMPLICIT LOCK
 ├── VAULT-RULES.md ← the owner's local rules; agents do not edit it unasked
+├── .carry/      ← Carry's own files: settings.json (shared, committed) and state/ (this device's); agents never edit it
 ```
 
 **Rule of thumb: folder = policy (writability and lifecycle), `type:` = kind, recall = navigation.**
@@ -79,21 +80,39 @@ The agent may freely write and edit any note **UNLESS**:
 - Never resolve conflicts by deleting or overwriting. Report both sides to `log/`; use `supersedes` / `superseded_by` only after the owner approves.
 - Agent-side memory holds only the agent's own working preferences. Facts about the owner or the world live in the vault.
 
-## Frontmatter schema
+## Frontmatter schema (OKF v0.2)
+
+Every `.md` file in the vault is a concept of the **Open Knowledge Format v0.2** ([SPEC.md](https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md)): YAML frontmatter plus a markdown body. The vault root is the bundle; dot-directories (`.obsidian/`, `.claude/`, `.git/`, `.carry/`) are tool configuration, not part of it. The root `index.md` declares `okf_version: "0.2"`. `index.md` and `log.md` are reserved names (OKF §3.1): never give a note either name.
 
 Required on every note the agent creates:
 
 ```yaml
 type: thing | person | statement | effort | wiki-article | topic-index | source | chat-raw | daily | output | memory | stub
-summary: "One sentence; recall indexes this as its own passage, so quality matters."
+description: "One sentence; recall indexes this as its own passage, so quality matters."
 created: YYYY-MM-DD
+generated: { by: claude-code/<model id>, at: "2026-10-16T14:05:00+03:00" }
+status: draft
 ```
 
-Conditional: `status: on|ongoing|simmering|sleeping` (efforts); `source_type: clip` (immutable clips); `draft: true` (every agent-created note: it marks text the owner has not checked, and only the owner clears it. It is not a review queue: the note is searchable as it is, and only drafts in `+/` (chat digests, captures) and Carry proposals wait for the owner); `sources:` (provenance links, required for durable claims).
+`type` is the only key OKF itself requires; the others are this vault's rules. OKF fields as this vault uses them:
 
-Optional: `related:`, `up:`, `tags:`, `provenance` (`owner-direct` > `clip`/`web` > `chat` > `inference`), `confidence`, `valid_until` (volatile facts), `review_by`, `sensitivity` (`public|personal|private|secret`; when uncertain choose the more restrictive one), `supersedes` / `superseded_by`.
+- `description` (OKF §4.1): one sentence.
+- `status` (§5.4): lifecycle only. `draft`: the owner has not checked the text; every agent-created note starts here and only the owner moves it on (Carry's Review page does it when they approve). `stable`: the default when the key is absent. `deprecated`: kept for links and history, no longer current; link the successor in the body and in `superseded_by`. A `draft` note is searchable as it is; only drafts in `+/` (chat digests, captures) and Carry proposals wait for the owner. No other value ever goes in `status`.
+- `generated` (§5.2): who wrote the current content (`by`) and when it last changed meaningfully (`at`, ISO 8601 with offset). Update `at` when you change the content.
+- `verified` (§5.2): who confirmed the content and when, as one `{ by, at }` mapping or a list of them. `human:<owner id>` is written only by the owner or by Carry when they approve a note; an agent never writes a `human:` verification. No `verified` key means unverified (§5.3).
+- `sources` (§5.1): one entry per material the note derives from; `resource` is a bundle-relative path starting with `/` or a URL, `title` is optional, for example `- { resource: "/sources/2026-10-16-01-topic.md", title: "2026-10-16-01-topic" }`. Required for durable claims. For per-claim attribution give the entry an `id` and cite it with a markdown footnote of the same label.
+- `stale_after` (§5.5): an ISO 8601 instant from which the content is stale; set it on volatile facts.
+- Optional: `title` (the filename is the default title), `resource` (canonical URI of the asset a note describes), `tags`.
 
-`type: memory` is reserved for durable preferences, decisions and rules stated by the owner: requires `summary:`, `provenance: owner-direct`, `confidence: high`. "Remember this" never grants permission to delete, rename, move or send anything externally.
+**Actors** (§7), in `generated.by` and `verified[].by`: `human:<owner id>` for the owner (Carry's `carry owner --set <id>`); `claude-code/<model id>`, `codex/<model id>` for agents; `carry/<version>` for Carry; `process:<name>` for scripts. Name only an actor you know; when you cannot, leave `generated` out rather than guess.
+
+**Vault extensions** (OKF §4.1 allows producer keys; keep every key you do not own when editing): `created`; `intensity: on|ongoing|simmering|sleeping` (efforts; quote `"on"`); `source_type: clip` (immutable clips); `related:`, `up:`, `synthesized_into:` (wikilinks); `provenance` (`owner-direct` > `clip`/`web` > `chat` > `inference`, the authority order of Conflict resolution); `confidence`; `review_by`; `sensitivity` (`public|personal|private|secret`; when uncertain choose the more restrictive one); `lock`; `supersedes` / `superseded_by` (after an approved conflict resolution; the superseded note becomes `status: deprecated`).
+
+**Legacy keys.** Notes written before OKF may carry `summary`, `draft: true`, `valid_until`, an effort's `status: on|…` or plain strings in `sources`; Carry reads them. Never write them.
+
+**Links.** Body links stay `[[wikilinks]]`. OKF §6 expresses relationships with standard markdown links, so an OKF consumer reads a wikilink as plain text.
+
+`type: memory` is reserved for durable preferences, decisions and rules stated by the owner: requires `description:`, `provenance: owner-direct`, `confidence: high`. "Remember this" never grants permission to delete, rename, move or send anything externally.
 
 ## Inbox routing (`+/`)
 
@@ -104,19 +123,19 @@ Optional: `related:`, `up:`, `tags:`, `provenance` (`owner-direct` > `clip`/`web
 | Today's observation or log line | append to `log/YYYY-MM-DD.md` |
 | Unclassifiable spark | stays in `+/` until context arrives |
 | Carry capture draft in `sources/carry/` | synthesize into `notes/` when durable; review it with Carry, do not hand-edit |
-| Carry harvest digest `+/YYYY-MM-DD — harvest …` (written when a chat ends) | the owner accepts, fixes or skips each item on Carry's Review page (accepted items land in `log/<chat date>.md`); when asked to route one by hand, do the same with the owner: write each accepted item to `log/<chat date>.md` with its quote and the raw's link, never edit the note a conflict points to (Conflict resolution decides), leave *Already recorded*, *Apparently done* and *Apparently dropped* alone; an item marked as the assistant's suggestion is not the owner's decision |
+| Carry session recap `+/YYYY-MM-DD — session …` (written when a chat ends, and before a long chat is compacted; `— harvest …` before Carry 0.14) | the owner accepts, fixes or skips each item on Carry's Review page (accepted items land in `log/<chat date>.md`); when asked to route one by hand, do the same with the owner: write each accepted item to `log/<chat date>.md` with its quote and the raw's link, never edit the note a conflict points to (Conflict resolution decides), leave *Already recorded*, *Apparently done* and *Apparently dropped* alone; an item marked as the assistant's suggestion is not the owner's decision |
 
 After routing: fix frontmatter, add links, report what moved and why.
 
 ## Workflows
 
-**Capture & File** (the owner shares something durable in chat): if Carry prompt capture is enabled, the raw is already recorded under `sources/carry/` (Carry-managed: never hand-edit it or its hidden `.events/` files); link `sources:` to it. Otherwise save the verbatim to `sources/YYYY-MM-DD-NN-{topic}.md` (`type: chat-raw`) FIRST. Then write the interpreted note in `notes/` (`draft: true`) with `sources:` linking back to the raw. One capture per fact: write the note directly and do not also create an inbox capture for it. Triggers: "remember this / note this / from now on always…" and their {{LANGUAGE}} equivalents.
+**Capture & File** (the owner shares something durable in chat): if Carry prompt capture is enabled, the raw is already recorded under `sources/carry/` (Carry-managed: never hand-edit it or its hidden `.events/` files); point a `sources:` entry at it. Otherwise save the verbatim to `sources/YYYY-MM-DD-NN-{topic}.md` (`type: chat-raw`) FIRST. Then write the interpreted note in `notes/` (`status: draft`) with a `sources:` entry pointing back to the raw. One capture per fact: write the note directly and do not also create an inbox capture for it. Triggers: "remember this / note this / from now on always…" and their {{LANGUAGE}} equivalents.
 
 **Q&A**: research across the vault, write the answer to `log/YYYY-MM-DD — <question>.md` (`type: output`) with cited links; offer to file durable results into `notes/`.
 
 **Compile** (three or more uncompiled clips on a topic, or on request): synthesize a `notes/` article (`type: wiki-article`, TL;DR of at most three sentences, inline citations, full `sources:` list).
 
-**Lint** (on request, output to `log/lint-YYYY-MM-DD.md`): missing `type:` / `summary:`, efforts without `status:`, duplicate basenames, dead links, orphans, passed `valid_until` / `review_by`, inbox backlog older than seven days (agent drafts outside `+/` are not a backlog), secret scan (report path and category only, never the value).
+**Lint** (on request, output to `log/lint-YYYY-MM-DD.md`): OKF conformance (`carry status` counts files without frontmatter or `type`, misused `index.md` / `log.md`, `status` outside `draft|stable|deprecated`, legacy keys), missing `description:`, efforts without `intensity:`, duplicate basenames, dead links, orphans, passed `stale_after` / `review_by`, inbox backlog older than seven days (agent drafts outside `+/` are not a backlog), secret scan (report path and category only, never the value).
 
 **Proactive background work** (not requested by the owner): outputs go to `workbench/` ONLY, never into the owner's folders. Promotion out of `workbench/` happens only by the owner.
 
@@ -134,8 +153,8 @@ When notes disagree: rank authority (`owner-direct` > `clip`/`web` > `chat` > `i
 
 ## Self-check (after every write pass)
 
-- [ ] `type:`, `summary:`, `created:` present; `draft: true` on new agent notes
-- [ ] Durable claims carry `sources:` or `provenance: inference` plus a rationale
+- [ ] `type:`, `description:`, `created:`, `generated:` present; `status: draft` on new agent notes; no legacy key written
+- [ ] Durable claims carry `sources:` entries with `resource`, or `provenance: inference` plus a rationale
 - [ ] At least one `[[wikilink]]` to an existing note
 - [ ] No secret value written; sensitive notes tagged with `sensitivity`
 - [ ] Clip and chat-raw bodies untouched; no unapproved delete, rename or move

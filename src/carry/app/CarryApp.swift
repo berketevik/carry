@@ -1,5 +1,10 @@
 import SwiftUI
 import AppKit
+import AVFoundation
+import AudioToolbox
+import CoreAudio
+import Speech
+import UserNotifications
 
 // The bridge owns one child. Private pipes have no address to expose and close
 // on app exit. Failed writes are never replayed automatically.
@@ -8,6 +13,7 @@ final class Worker {
     private var process: Process?
     private var input: FileHandle?
     private var output: FileHandle?
+    private var pending = Data()   // bytes read past the last reply's newline
     func stop() { process?.terminate() }
     func call(_ request: [String: Any], completion: @escaping (Result<[String: Any], Error>) -> Void) {
         queue.async {
@@ -30,6 +36,7 @@ final class Worker {
                     p.currentDirectoryURL = Bundle.main.resourceURL
                     try p.run()
                     self.process = p; self.input = stdin.fileHandleForWriting; self.output = stdout.fileHandleForReading
+                    self.pending = Data()
                 }
                 let current = self.process!
                 let timer = DispatchSource.makeTimerSource(queue: .global())
@@ -40,18 +47,28 @@ final class Worker {
                 var data = try JSONSerialization.data(withJSONObject: request)
                 data.append(10)
                 try self.input!.write(contentsOf: data)
+                // Whatever the pipe holds, 64 KB at a time: a byte per read took a system call per
+                // byte, which made a large reply (the notes list) arrive noticeably late.
+                let fd = self.output!.fileDescriptor
+                var chunk = [UInt8](repeating: 0, count: 65_536)
                 var response = Data()
                 while true {
-                    guard let byte = try self.output!.read(upToCount: 1), !byte.isEmpty else { throw UIError(L("Core stopped. Refresh to reconnect; check the result before repeating a write.")) }
-                    if byte.first == 10 { break }
-                    response.append(byte)
-                    if response.count > 16_000_000 { throw UIError(L("Core response exceeded the app limit.")) }
+                    if let newline = self.pending.firstIndex(of: 10) {
+                        response = self.pending.subdata(in: self.pending.startIndex..<newline)
+                        self.pending = self.pending.subdata(in: (newline + 1)..<self.pending.endIndex)
+                        break
+                    }
+                    if self.pending.count > 16_000_000 { throw UIError(L("Core response exceeded the app limit.")) }
+                    let count = chunk.withUnsafeMutableBytes { Darwin.read(fd, $0.baseAddress, $0.count) }
+                    if count < 0 && errno == EINTR { continue }
+                    guard count > 0 else { throw UIError(L("Core stopped. Refresh to reconnect; check the result before repeating a write.")) }
+                    self.pending.append(contentsOf: chunk[0..<count])
                 }
                 guard let object = try JSONSerialization.jsonObject(with: response) as? [String: Any] else { throw UIError(L("Invalid core response.")) }
                 if object["ok"] as? Bool != true { throw UIError(object["error"] as? String ?? "Core request failed.") }
                 completion(.success(object["result"] as? [String: Any] ?? [:]))
             } catch {
-                self.process?.terminate(); self.process = nil
+                self.process?.terminate(); self.process = nil; self.pending = Data()
                 completion(.failure(error))
             }
         }
@@ -69,6 +86,10 @@ struct UIError: LocalizedError {
         case "invalid_github_repository": return L("Enter a GitHub repository URL or owner/repository.")
         case "github_no_markdown_in_folder": return L("No Markdown files were found in that folder. Check the repository, branch and folder.")
         case "model_download_failed", "model_download_incomplete": return L("The model download did not finish. Check your connection and try again.")
+        case "no_connected_assistant": return T("No assistant is connected to summarise it: connect Claude Code or Codex under Settings › Assistants, then retry.",
+                                                "Özetleyecek bağlı bir asistan yok: Ayarlar › Asistanlar bölümünden Claude Code ya da Codex'i bağlayın, sonra yeniden deneyin.")
+        case "meeting_summary_running": return T("This meeting is already being transcribed or summarised.", "Bu toplantı zaten yazıya dökülüyor ya da özetleniyor.")
+        case "whisper_runtime_missing": return T("This Mac cannot run Whisper (it needs Apple Silicon); the live transcript stays.", "Bu Mac Whisper'ı çalıştıramıyor (Apple Silicon gerekir); canlı transkript kalır.")
         case "reranker_install_failed": return L("The relevance model could not be installed. Try again; the embedding model may already be ready.")
         case "ollama_runtime_missing": return L("This build is missing its model runtime. Use the complete Carry pilot package or install Ollama.")
         case "ollama_start_failed": return L("The local model service could not start. Open Ollama and retry.")
@@ -77,7 +98,7 @@ struct UIError: LocalizedError {
         case "duplicate_source_id": return L("That source ID is already in use. Choose a different ID.")
         case "invalid_source_id": return L("Use lowercase letters, numbers, hyphens or underscores for the source ID.")
         case "nested_source_roots": return L("This folder overlaps an existing source. Choose a separate folder.")
-        case "state_dir_inside_source_root": return L("Keep Carry’s workspace folder outside your Markdown source folders.")
+        case "state_dir_inside_source_root": return L("Keep Carry’s workspace folder at <notes folder>/.carry/state or outside your Markdown source folders.")
         case "settings_changed_since_preview", "settings_changed_during_apply": return L("Settings changed after the preview. Refresh and review a new preview. If setup was interrupted, use its rollback entry.")
         case "settings_changed_since_install", "settings_changed_during_rollback": return L("Settings changed after setup. Rollback stopped to preserve those edits. Review the changed files before disconnecting.")
         case "existing_carry_connection_conflict", "existing_carry_hook_conflict": return L("This project already has a different Carry connection. Review or roll back that setup before replacing it.")
@@ -92,6 +113,7 @@ struct UIError: LocalizedError {
         case "workspace_vault_source_read_only": return L("This vault is connected read-only. Prompt capture needs a writable vault source.")
         case "invalid_vault_request": return L("Choose a language and whether to record prompts, then preview again.")
         case "typesafe_key_not_saved": return L("The key could not be saved in the Keychain. Paste it again; it must not be empty.")
+        case "source_read_only": return L("This is a read-only copy of a GitHub knowledge base. Change it on GitHub; Carry picks up the change at the next sync.")
         case "source_root_missing": return L("This source folder is not available. Reconnect the drive or check the folder in Settings › Sources.")
         case "source_file_missing", "note_not_found": return L("That note no longer exists at this path. Refresh the vault list.")
         case "note_too_large": return L("This file is too large to preview here. Open it in your editor.")
@@ -118,11 +140,11 @@ func metaValue(_ value: String) -> String { Lang.code == "tr" ? (TR["meta." + va
 func languageName(_ vaultLanguage: String) -> String { vaultLanguage == "Turkish" ? "Türkçe" : vaultLanguage == "English" ? "English" : vaultLanguage }
 func modeTitle(_ tag: String) -> String? {
     switch tag {
-    case "semantic_jev": return T("By meaning + TypeSafe Jev check · Ollama + Jev", "Anlamına göre + TypeSafe Jev kontrolü · Ollama + Jev")
-    case "semantic_assistant": return T("By meaning + my own assistant checks · Ollama + Claude/GPT", "Anlamına göre + kendi asistanım kontrol eder · Ollama + Claude/GPT")
-    case "keyword_jev": return T("By words + TypeSafe Jev check · Jev", "Kelimelerine göre + TypeSafe Jev kontrolü · Jev")
-    case "keyword_assistant": return T("By words + my own assistant checks · Claude/GPT", "Kelimelerine göre + kendi asistanım kontrol eder · Claude/GPT")
-    case "accurate_multilingual": return T("By meaning + large model on this Mac · Ollama + local model", "Anlamına göre + bu Mac'te büyük model · Ollama + yerel model")
+    case "semantic_jev": return T("By meaning, TypeSafe Jev checks the results", "Anlamına göre, sonuçları TypeSafe Jev kontrol eder")
+    case "semantic_assistant": return T("By meaning, my own assistant checks the results", "Anlamına göre, sonuçları kendi asistanım kontrol eder")
+    case "keyword_jev": return T("By words, TypeSafe Jev checks the results", "Kelimelerine göre, sonuçları TypeSafe Jev kontrol eder")
+    case "keyword_assistant": return T("By words, my own assistant checks the results", "Kelimelerine göre, sonuçları kendi asistanım kontrol eder")
+    case "accurate_multilingual": return T("By meaning, a large model on this Mac checks the results", "Anlamına göre, sonuçları bu Mac'teki büyük model kontrol eder")
     default: return nil
     }
 }
@@ -140,15 +162,52 @@ func presetLabel(_ preset: String) -> String {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     static let worker = Worker()
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    /// With Carry Meet in the menu bar, closing the window leaves Carry running there.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        MainActor.assumeIsolated { !meetingMenuBar && !MeetingRecorder.shared.recording }
+    }
     /// Set the icon ourselves: Dock and Stage Manager can keep a stale cached icon for an
     /// app rebuilt in place.
     func applicationDidFinishLaunching(_ notification: Notification) {
         if let icon = Bundle.main.image(forResource: "Carry") { NSApp.applicationIconImage = icon }
+        MeetingNotice.setUp(self)
+        MainActor.assumeIsolated { MeetingWatcher.shared.start(); MeetingRecorder.shared.recover() }
+    }
+    /// A meeting being recorded or saved is saved before Carry quits. A save that fails or takes
+    /// over 30 s leaves its journal, and the next launch offers it again.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        MainActor.assumeIsolated {
+            let recorder = MeetingRecorder.shared
+            guard recorder.recording || recorder.saving else { return .terminateNow }
+            var replied = false
+            let reply = { if !replied { replied = true; NSApp.reply(toApplicationShouldTerminate: true) } }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 30) { reply() }
+            if recorder.recording { recorder.stop { reply() } } else { recorder.whenSaved { reply() } }
+            return .terminateLater
+        }
     }
     func applicationWillTerminate(_ notification: Notification) { Self.worker.stop() }
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound])
+    }
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        let action = response.actionIdentifier
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                let recorder = MeetingRecorder.shared
+                switch action {
+                case "start": recorder.start(title: MeetingWatcher.shared.pendingTitle)
+                case "stop": recorder.stop()
+                default: MainWindow.show(); recorder.openMeetings += 1
+                }
+            }
+            completionHandler()
+        }
+    }
 }
 
 @MainActor final class Model: ObservableObject {
@@ -168,17 +227,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Navigation, settings and the vault browser.
     @Published var page = ProcessInfo.processInfo.environment["CARRY_START_PAGE"] ?? "Overview"
     @Published var language = Lang.code {
-        didSet { Lang.code = language; UserDefaults.standard.set(language, forKey: "language") }
+        didSet { Lang.code = language; UserDefaults.standard.set(language, forKey: "language"); parseFiles() }
     }
     @Published var settingsTab = "Search"
     @Published var connectionFormOpen = false
     @Published var settings: [String: Any] = [:]
     @Published var vault: [String: Any] = [:]
-    @Published var files: [[String: Any]] = []
+    @Published var files: [[String: Any]] = [] { didSet { parseFiles() } }
+    /// `files` parsed once per load: the Notes list filters, sorts and draws these, never the dictionaries.
+    private(set) var items: [NoteItem] = []
+    private(set) var itemAt: [String: Int] = [:]
+    private(set) var reviewFiles: [[String: Any]] = []
+    func item(_ path: String) -> NoteItem? { itemAt[path].map { items[$0] } }
+    private func parseFiles() {
+        items = files.map(NoteItem.init)
+        itemAt = Dictionary(items.indices.map { (items[$0].path, $0) }, uniquingKeysWith: { first, _ in first })
+        reviewFiles = reviewable(files)
+    }
     @Published var vaultSource = ""
     @Published var vaultFilter = "mine"
-    @Published var note: [String: Any] = [:]
+    /// The open note; its text is parsed once here, not on every redraw of the page.
+    @Published var note: [String: Any] = [:] { didSet { noteDoc = MarkdownDoc(bodyWithoutTitle(note)) } }
+    private(set) var noteDoc = MarkdownDoc("")
     @Published var backlinks: [String] = []
+    /// Maps already drawn this session, by source and folders, so coming back to the map is instant.
+    var maps: [String: (data: MapData, raw: NSDictionary, at: Date)] = [:]
+    @Published var graphSource = ""
     @Published var harvest: [String: Any] = [:]
     @Published var assistants: [String: Any] = [:]
     @Published var onboarding = false
@@ -189,7 +263,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @Published var history: [(String, String)] = []
     @Published var historyIndex = -1
     private var noteToken = 0
-    private var lastJobState = ""
+    private var lastJob = ""  // state and start time of the job last seen
     func tick() {
         guard !workspace.isEmpty, !busy else { return }
         if ["starting", "waiting_for_browser"].contains(str(githubLogin, "state")) {
@@ -199,7 +273,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         } else if harvest["running"] as? Bool == true {
             run("harvest_status", clearError: false, quiet: true) { value in
-                self.harvest = value
+                if !same(value, self.harvest) { self.harvest = value }
                 if value["running"] as? Bool != true {
                     let code = value["exit_code"] as? Int
                     let drafts = (value["drafts"] as? [String] ?? []).count
@@ -211,12 +285,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         } else {
             run("maintenance_status", clearError: false, quiet: true) { value in
-                self.job = value
-                let state = str(value, "state")
-                if self.lastJobState != state && state != "running" { self.refresh() }
-                self.lastJobState = state
+                // Every assignment redraws the whole window, so an unchanged status (nearly
+                // every tick) is not assigned: redrawing every two seconds made scrolling stutter.
+                let banner = Model.showsBanner(value)
+                if banner != self.bannerShown || !same(value, self.job) { self.job = value; self.bannerShown = banner }
+                let seen = str(value, "state") + str(value, "started_at", "")
+                if self.lastJob != seen && Model.reloads(after: value) { self.refresh() }
+                self.lastJob = seen
             }
         }
+    }
+    /// A job that ended reloads the window, except the automatic check that found the index
+    /// fresh: it runs every minute, and reloading after it made the page jump each time.
+    static func reloads(after job: [String: Any]) -> Bool {
+        str(job, "state") != "running"
+            && !(str(job, "action", "") == "maintain" && str(job["result"] as? [String: Any] ?? [:], "status", "") == "fresh")
+    }
+    /// The banner of a running job. The automatic check usually ends within a second, so its
+    /// banner waits three: shown at once it pushed the page down and back every minute.
+    var jobBanner: Bool { Model.showsBanner(job) }
+    private var bannerShown = false
+    static func showsBanner(_ job: [String: Any]) -> Bool {
+        str(job, "state") == "running"
+            && (str(job, "action", "") != "maintain" || Date().timeIntervalSince1970 - num(job, "started_at") >= 3)
     }
     func loadRepositories(page: Int = 1) {
         run("github_repositories", ["page": page]) { value in
@@ -228,6 +319,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     var sources: [[String: Any]] { snapshot["workspace"] as? [String: Any] == nil ? [] : (snapshot["workspace"] as! [String: Any])["sources"] as? [[String: Any]] ?? [] }
     var localSources: [[String: Any]] { sources.filter { ($0["github"] as? [String: Any])?.isEmpty != false } }
+    /// Sources the Notes page can show: local folders, and GitHub sources once their read-only copy exists.
+    var browsableSources: [[String: Any]] { sources.filter { ($0["github"] as? [String: Any])?.isEmpty != false || $0["root_available"] as? Bool != false } }
+    /// A GitHub source is a copy replaced on every sync, so the app only reads it.
+    func isReadOnly(_ sid: String) -> Bool { (sources.first { str($0, "source_id") == sid }?["github"] as? [String: Any])?.isEmpty == false }
+    func sourceLabel(_ source: [String: Any]) -> String {
+        (source["github"] as? [String: Any])?.isEmpty == false ? str(source, "source_id") + " (GitHub)" : URL(fileURLWithPath: str(source, "root")).lastPathComponent
+    }
+    func sourceLabel(id sid: String) -> String { sources.first { str($0, "source_id") == sid }.map { sourceLabel($0) } ?? sid }
+    /// The vault drafts are reviewed in: a GitHub source picked on the Notes page is left for the default one.
+    func leaveReadOnlyVault() {
+        guard isReadOnly(vaultSource) else { return }
+        let fallback = str(settings, "default_vault", "")
+        if !fallback.isEmpty && !isReadOnly(fallback) { switchVault(fallback) }
+    }
     var activity: [[String: Any]] { (snapshot["activity"] as? [[String: Any]] ?? []).sorted { str($0,"updated") > str($1,"updated") } }
     var adapters: [[String: Any]] { (snapshot["capture"] as? [String: Any])?["adapters"] as? [[String: Any]] ?? [] }
     var connections: [[String: Any]] { snapshot["connections"] as? [[String: Any]] ?? [] }
@@ -302,8 +407,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // A reply for a source the user has since left is dropped; before the default vault
         // is known (empty selection) any reply is the default's.
         let current: ([String: Any]) -> Bool = { self.vaultSource.isEmpty || self.vaultSource == str($0, "source_id", "") }
-        run("vault_overview", vaultFields, clearError: false, quiet: true) { value in if current(value) { self.vault = value } }
-        run("vault_browse", vaultFields, clearError: false, quiet: true) { value in if current(value) { self.files = value["files"] as? [[String: Any]] ?? [] } }
+        run("vault_overview", vaultFields, clearError: false, quiet: true) { value in if current(value) && !same(value, self.vault) { self.vault = value } }
+        run("vault_browse", vaultFields, clearError: false, quiet: true) { value in
+            let files = value["files"] as? [[String: Any]] ?? []
+            if current(value) && !NSArray(array: files).isEqual(to: self.files) { self.files = files }
+        }
     }
     /// Shows another source in Vault: the open note and its list belong to the old one.
     func switchVault(_ sid: String) {
@@ -315,7 +423,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// the user has moved on to another note or source are dropped.
     func openNote(_ path: String, source: String? = nil, record: Bool = true) {
         let sid = source ?? vaultSource
-        if page != "Review" { page = "Vault" }
+        if !["Review", "Meetings"].contains(page) { page = "Vault" }
         if !sid.isEmpty && sid != vaultSource { vaultSource = sid; files = []; vault = [:]; loadVault() }
         noteToken += 1
         let token = noteToken
@@ -360,7 +468,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if (e as? UIError)?.message == "source_file_missing" { self.closeNote(); self.notice = L("The open note was moved or deleted outside Carry, so it was closed.") }
             else { self.error = e.localizedDescription }
         }, then: { value in
-            guard token == self.noteToken else { return }
+            guard token == self.noteToken, !same(value, self.note) else { return }
             self.note = value
         })
     }
@@ -436,12 +544,17 @@ func num(_ value: [String: Any], _ key: String, _ fallback: Double = 0) -> Doubl
     if let n = value[key] as? NSNumber { return n.doubleValue }
     return Double(str(value, key, "")) ?? fallback
 }
+/// Core replies are JSON, so Foundation's equality compares them in full.
+func same(_ a: [String: Any], _ b: [String: Any]) -> Bool { NSDictionary(dictionary: a).isEqual(to: b) }
 func pretty(_ value: Any) -> String {
     guard JSONSerialization.isValidJSONObject(value), let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys]), let text = String(data: data, encoding: .utf8) else { return "—" }
     return text
 }
+private var agoFormatters: [String: RelativeDateTimeFormatter] = [:]
 func ago(_ timestamp: Double) -> String {
-    let f = RelativeDateTimeFormatter(); f.unitsStyle = .abbreviated; f.locale = Lang.locale
+    // One formatter per language: making one for every row of a long list was slow.
+    let key = Lang.locale.identifier
+    let f = agoFormatters[key] ?? { let f = RelativeDateTimeFormatter(); f.unitsStyle = .abbreviated; f.locale = Lang.locale; agoFormatters[key] = f; return f }()
     return f.localizedString(for: Date(timeIntervalSince1970: timestamp), relativeTo: Date())
 }
 @MainActor func folder(_ title: String) -> String? {
@@ -460,9 +573,10 @@ var obsidianInstalled: Bool { NSWorkspace.shared.urlForApplication(toOpen: URL(s
 // MARK: - Markdown
 
 /// Inline Markdown with Obsidian [[links]] turned into in-app links (carry-note:target).
+let wikiLinkPattern = try? NSRegularExpression(pattern: #"!?\[\[([^\]|#]+)(#[^\]|]*)?(?:\|([^\]]*))?\]\]"#)
 func inline(_ text: String) -> AttributedString {
     var s = text
-    if let re = try? NSRegularExpression(pattern: #"!?\[\[([^\]|#]+)(#[^\]|]*)?(?:\|([^\]]*))?\]\]"#) {
+    if text.contains("[["), let re = wikiLinkPattern {
         let ns = s as NSString
         var out = "", last = 0
         for m in re.matches(in: s, range: NSRange(location: 0, length: ns.length)) {
@@ -526,27 +640,52 @@ func markdownBlocks(_ text: String) -> [MDBlock] {
     return blocks
 }
 
-struct MarkdownText: View {
+/// A note's text split into blocks once, with each block's styled text made the first time it
+/// scrolls into view and kept: redrawing the page no longer parses the note again.
+final class MarkdownDoc {
     let blocks: [MDBlock]
+    private var styled: [Int: AttributedString] = [:]
     init(_ text: String) { blocks = markdownBlocks(text) }
+    func text(_ i: Int) -> AttributedString {
+        if let done = styled[i] { return done }
+        let made = inline(blocks[i].text)
+        styled[i] = made
+        return made
+    }
+}
+
+/// Most notes repeat their title as the first heading; the header already shows it.
+func bodyWithoutTitle(_ note: [String: Any]) -> String {
+    let body = str(note, "body", "")
+    let lines = body.components(separatedBy: "\n")
+    guard let first = lines.firstIndex(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }),
+          lines[first].trimmingCharacters(in: .whitespaces) == "# " + str(note, "title") else { return body }
+    return lines[(first + 1)...].joined(separator: "\n")
+}
+
+struct MarkdownText: View {
+    let doc: MarkdownDoc
+    init(_ text: String) { doc = MarkdownDoc(text) }
+    init(doc: MarkdownDoc) { self.doc = doc }
     var body: some View {
         LazyVStack(alignment: .leading, spacing: 8) {
-            ForEach(blocks.indices, id: \.self) { i in block(blocks[i]) }
+            ForEach(doc.blocks.indices, id: \.self) { i in block(i) }
         }.textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
     }
-    @ViewBuilder func block(_ b: MDBlock) -> some View {
+    @ViewBuilder func block(_ i: Int) -> some View {
+        let b = doc.blocks[i]
         switch b.kind {
         case .heading(let level):
-            Text(inline(b.text)).font(level == 1 ? .title2.bold() : level == 2 ? .title3.bold() : .headline).padding(.top, level <= 2 ? 10 : 4)
+            Text(doc.text(i)).font(level == 1 ? .title2.bold() : level == 2 ? .title3.bold() : .headline).padding(.top, level <= 2 ? 10 : 4)
         case .paragraph:
-            Text(inline(b.text)).fixedSize(horizontal: false, vertical: true)
+            Text(doc.text(i)).fixedSize(horizontal: false, vertical: true)
         case .bullet(let indent, let marker):
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(marker).foregroundStyle(.secondary)
-                Text(inline(b.text)).fixedSize(horizontal: false, vertical: true)
+                Text(doc.text(i)).fixedSize(horizontal: false, vertical: true)
             }.padding(.leading, CGFloat(indent) * 16)
         case .quote:
-            Text(inline(b.text)).italic().foregroundStyle(.secondary).padding(.leading, 12)
+            Text(doc.text(i)).italic().foregroundStyle(.secondary).padding(.leading, 12)
                 .overlay(alignment: .leading) { Rectangle().fill(Color.secondary.opacity(0.4)).frame(width: 3) }
         case .code:
             ScrollView(.horizontal, showsIndicators: false) {
@@ -642,6 +781,7 @@ func pageName(_ key: String) -> String {
     case "Graph": return T("Map", "Harita")
     case "Search": return T("Search notes", "Notlarda ara")
     case "Review": return T("Review", "İncele")
+    case "Meetings": return T("Meetings", "Toplantılar")
     case "Proposals": return T("Change proposals", "Değişiklik önerileri")
     default: return T("Settings", "Ayarlar")
     }
@@ -651,7 +791,7 @@ func tabName(_ key: String) -> String {
     case "Search": return T("Search", "Arama")
     case "Sources": return T("Note folders", "Not klasörleri")
     case "Index": return T("Index", "İndeks")
-    case "Harvest": return T("Capture", "Yakalama")
+    case "Harvest": return T("Session recap", "Oturum özeti")
     case "Clients": return T("Assistants", "Asistanlar")
     default: return T("General", "Genel")
     }
@@ -700,12 +840,15 @@ let glossary: [(String, String, String, String)] = [
     ("Chat notes", "Sohbet notları",
      "When a chat with your assistant ends, Carry picks out decisions, facts and unfinished work and saves them as drafts for you.",
      "Asistanınızla bir sohbet bittiğinde Carry kararları, bilgileri ve yarım kalan işleri seçip sizin için taslak olarak kaydeder."),
+    ("Meetings", "Toplantılar",
+     "Carry records a meeting on this Mac and writes down what is said, from your microphone and the sound of the call. When it ends the transcript is saved with your notes; Whisper then transcribes the audio again on this Mac and the audio is deleted. Your connected assistant summarises the meeting once; with none connected the transcript stays as it is. Its decisions, open items and facts wait for you on the Review page.",
+     "Carry toplantıyı bu Mac'te kaydeder ve konuşulanı yazıya döker: mikrofonunuzdan ve görüşmenin sesinden. Toplantı bitince transkript notlarınıza kaydedilir; ardından Whisper sesi bu Mac'te yeniden yazıya döker ve ses silinir. Bağlı asistanınız toplantıyı bir kez özetler; bağlı asistan yoksa transkript olduğu gibi kalır. Kararlar, açık işler ve bilgiler İncele sayfasında sizi bekler."),
     ("Inbox", "Gelen kutusu",
-     "The + folder, where new chat drafts and captures collect. What waits for you there is on the Review page.",
-     "Yeni sohbet taslaklarının ve kayıtların toplandığı + klasörü. Orada sizi bekleyenler İncele sayfasındadır."),
+     "The + folder, where new session recaps and captures collect. What waits for you there is on the Review page.",
+     "Yeni oturum özetlerinin ve kayıtların toplandığı + klasörü. Orada sizi bekleyenler İncele sayfasındadır."),
     ("Draft", "Taslak",
-     "A note you have not checked yet. Chat drafts in your Inbox wait for you on the Review page. Notes your assistants write elsewhere are marked as drafts too, but they are searchable and never wait for you; approve one when you have checked it.",
-     "Henüz kontrol etmediğiniz not. Gelen kutusundaki sohbet taslakları İncele sayfasında sizi bekler. Asistanlarınızın başka yerlere yazdığı notlar da taslak işaretlidir ama aranabilir ve sizi beklemez; kontrol ettiğinizde onaylayabilirsiniz."),
+     "A note you have not checked yet. Session recaps in your Inbox wait for you on the Review page. Notes your assistants write elsewhere are marked as drafts too, but they are searchable and never wait for you; approve one when you have checked it.",
+     "Henüz kontrol etmediğiniz not. Gelen kutusundaki oturum özetleri İncele sayfasında sizi bekler. Asistanlarınızın başka yerlere yazdığı notlar da taslak işaretlidir ama aranabilir ve sizi beklemez; kontrol ettiğinizde onaylayabilirsiniz."),
     ("Change proposals", "Değişiklik önerileri",
      "Corrections an assistant proposes to notes it may not change directly. You accept or reject each one.",
      "Asistanın doğrudan değiştiremediği notlar için önerdiği düzeltmeler. Her birini siz kabul eder ya da reddedersiniz."),
@@ -720,13 +863,14 @@ struct GuideSheet: View {
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    Text(T("Carry connects your AI assistant to your knowledge base: your own notes, your team's, or both. When you ask Claude Code or Codex something, it searches the knowledge base through Carry before answering and shows which note each part of the answer came from. Your notes stay on this Mac, where they are. Carry can also create a new notes folder and turn chats into drafts for you to check.",
-                           "Carry, yapay zekâ asistanınızı bilgi bankanıza bağlar: kendi notlarınıza, ekibinizin notlarına ya da ikisine. Claude Code veya Codex'e bir şey sorduğunuzda cevap vermeden önce Carry üzerinden bilgi bankasında arar ve cevabın her kısmının hangi nottan geldiğini gösterir. Notlarınız bu Mac'te, oldukları yerde kalır. Carry isterseniz yeni bir not klasörü de oluşturur ve sohbetleri kontrol etmeniz için taslağa çevirir."))
+                    Text(T("Carry connects your AI assistant to your knowledge base: your own notes, your team's, or both. When you ask Claude Code or Codex something, it searches the knowledge base through Carry before answering and shows which note each part of the answer came from. Your notes stay on this Mac, where they are. Carry can also create a new notes folder, and when a chat or a meeting ends it saves what was decided as drafts for you to check.",
+                           "Carry, yapay zekâ asistanınızı bilgi bankanıza bağlar: kendi notlarınıza, ekibinizin notlarına ya da ikisine. Claude Code veya Codex'e bir şey sorduğunuzda cevap vermeden önce Carry üzerinden bilgi bankasında arar ve cevabın her kısmının hangi nottan geldiğini gösterir. Notlarınız bu Mac'te, oldukları yerde kalır. Carry isterseniz yeni bir not klasörü de oluşturur; bir sohbet ya da toplantı bitince alınan kararları kontrol etmeniz için taslak olarak kaydeder."))
                         .fixedSize(horizontal: false, vertical: true)
                     FlowLayout {
                         Button(T("Use it with my assistant", "Asistanımla kullan")) { dismiss(); model.page = "Settings"; model.settingsTab = "Clients" }
                         Button(T("Write my first note", "İlk notumu yaz")) { dismiss(); model.showNewNote = true }
-                        Button(T("Review chat drafts", "Sohbet taslaklarını incele")) { dismiss(); model.page = "Review" }
+                        Button(T("Review session recaps", "Oturum özetlerini incele")) { dismiss(); model.page = "Review" }
+                        Button(T("Record a meeting", "Toplantı kaydet")) { dismiss(); model.page = "Meetings" }
                     }
                     Divider()
                     ForEach(glossary.indices, id: \.self) { i in
@@ -1158,7 +1302,7 @@ struct ReviewView: View {
     @State private var picked: Set<String> = []
     @State private var confirmAll = false
     func top(_ f: [String: Any]) -> String { str(f, "path").contains("/") ? String(str(f, "path").split(separator: "/")[0]) : "" }
-    var all: [[String: Any]] { reviewable(model.files) }
+    var all: [[String: Any]] { model.reviewFiles }
     var drafts: [[String: Any]] { folder.isEmpty ? all : all.filter { top($0) == folder } }
     /// What bulk approval may touch: chat digests are decided item by item, never approved wholesale.
     var bulk: [[String: Any]] { drafts.filter { $0["approvable"] as? Bool == true } }
@@ -1171,8 +1315,8 @@ struct ReviewView: View {
         HSplitView {
             VStack(alignment: .leading, spacing: 12) {
                 Text(pageName("Review")).font(.title.bold())
-                Text(T("What waits in your Inbox. Open a chat draft and accept, fix or skip each item; accepted items go to that day's log. Other captures you approve as a whole. Notes your assistants write elsewhere are searchable as they are and do not wait here; find them with the Drafts filter on the Notes page.",
-                       "Gelen kutunuzda bekleyenler. Bir sohbet taslağını açıp her maddeyi kabul edin, düzeltin ya da atlayın; kabul edilenler o günün log'una gider. Diğer kayıtları bütün olarak onaylarsınız. Asistanlarınızın başka klasörlere yazdığı notlar olduğu gibi aranabilir ve burada beklemez; Notlar sayfasındaki Taslaklar filtresiyle bulursunuz."))
+                Text(T("What waits in your Inbox. Open a session recap and accept, fix or skip each item; accepted items go to that day's daily note. Other captures you approve as a whole. Notes your assistants write elsewhere are searchable as they are and do not wait here; find them with the Drafts filter on the Notes page.",
+                       "Gelen kutunuzda bekleyenler. Bir sohbet taslağını açıp her maddeyi kabul edin, düzeltin ya da atlayın; kabul edilenler o günün günlük notuna gider. Diğer kayıtları bütün olarak onaylarsınız. Asistanlarınızın başka klasörlere yazdığı notlar olduğu gibi aranabilir ve burada beklemez; Notlar sayfasındaki Taslaklar filtresiyle bulursunuz."))
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 if model.pendingReview > 0 {
                     Button { model.page = "Proposals" } label: {
@@ -1214,7 +1358,7 @@ struct ReviewView: View {
                                 }
                                 Button { model.openNote(path) } label: {
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text(str(f, "title", str(f, "name"))).fontWeight(.medium).lineLimit(2)
+                                        Text(displayTitle(f)).fontWeight(.medium).lineLimit(2)
                                         HStack { Text(folderLabel(str(f, "folder", "(root)"))); Spacer(); Text(ago(num(f, "modified"))) }.font(.caption).foregroundStyle(.secondary)
                                     }.contentShape(Rectangle())
                                 }.buttonStyle(.plain)
@@ -1253,6 +1397,7 @@ struct ReviewView: View {
 struct DigestItemsView: View {
     @ObservedObject var model: Model
     let path: String
+    var meeting = false
     @State private var items: [[String: Any]] = []
     @State private var editing = ""
     @State private var fixed = ""
@@ -1273,8 +1418,8 @@ struct DigestItemsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label(open.isEmpty ? T("Every item is decided.", "Tüm maddeler karara bağlandı.")
-                               : T("\(open.count) item(s) from this chat wait for you. Accept what is right: it is saved to that day's log.",
-                                   "Bu sohbetten \(open.count) madde sizi bekliyor. Doğru olanı kabul edin: o günün log'una kaydedilir."),
+                               : (meeting ? T("\(open.count) item(s) from this meeting wait for you. Accept what is right: it is saved to that day's daily note.", "Bu toplantıdan \(open.count) madde sizi bekliyor. Doğru olanı kabul edin: o günün günlük notuna kaydedilir.")
+                                       : T("\(open.count) item(s) from this chat wait for you. Accept what is right: it is saved to that day's daily note.", "Bu sohbetten \(open.count) madde sizi bekliyor. Doğru olanı kabul edin: o günün günlük notuna kaydedilir.")),
                   systemImage: "checklist").foregroundStyle(.orange).fontWeight(.medium)
             ForEach(open.map { str($0, "id") }, id: \.self) { id in
                 card(open.first { str($0, "id") == id } ?? [:])
@@ -1307,7 +1452,8 @@ struct DigestItemsView: View {
         }
     }
     func quoteLine(_ it: [String: Any]) -> String {
-        let at: String = str(it, "exchange", "") != "" ? T("  · exchange ", "  · mesaj ") + str(it, "exchange") : ""
+        let unit = str(it, "unit", "exchange") == "segment" ? T("  · line ", "  · satır ") : T("  · exchange ", "  · mesaj ")
+        let at: String = str(it, "exchange", "") != "" ? unit + str(it, "exchange") : ""
         return "“" + str(it, "quote") + "”" + at
     }
     @ViewBuilder func buttons(_ it: [String: Any]) -> some View {
@@ -1346,8 +1492,8 @@ struct DigestItemsView: View {
                     .font(.caption).fixedSize(horizontal: false, vertical: true)
             }
             if conflict {
-                Text(T("Accepting saves the chat's version to the log and leaves the note as it is; you decide which one is right.",
-                       "Kabul ederseniz sohbetteki hâli log'a yazılır, not olduğu gibi kalır; hangisinin doğru olduğuna siz karar verin."))
+                Text(T("Accepting saves this version to the daily note and leaves the note as it is; you decide which one is right.",
+                       "Kabul ederseniz bu hâli günlük nota yazılır, not olduğu gibi kalır; hangisinin doğru olduğuna siz karar verin."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }.padding(8).background((conflict ? Color.red : Color.secondary).opacity(0.05)).clipShape(RoundedRectangle(cornerRadius: 6))
@@ -1356,7 +1502,7 @@ struct DigestItemsView: View {
         VStack(alignment: .leading, spacing: 6) {
             header(it)
             if str(it, "section") == "conflict" && editing != str(it, "id") {
-                Text(T("This chat says", "Bu sohbette geçen")).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Text(meeting ? T("This meeting says", "Bu toplantıda geçen") : T("This chat says", "Bu sohbette geçen")).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             }
             if editing == str(it, "id") {
                 TextField(T("Corrected text", "Düzeltilmiş metin"), text: $fixed, axis: .vertical).textFieldStyle(.roundedBorder)
@@ -1452,7 +1598,7 @@ struct Overview: View {
                 } else {
                     Text(pageName("Overview")).font(.largeTitle.bold())
                     StatusSummary(model: model)
-                    let toReview = reviewable(model.files).count
+                    let toReview = model.reviewFiles.count
                     HStack(spacing: 16) {
                         ActionCard(icon: "checkmark.circle", title: T("Review", "İncele"),
                                    detail: toReview > 0 ? T("\(toReview) draft(s) wait for you", "\(toReview) taslak sizi bekliyor") : T("Nothing waits for you", "Bekleyen bir şey yok"),
@@ -1472,7 +1618,7 @@ struct Overview: View {
                                     Button { model.openNote(str(f, "path")) } label: {
                                         HStack {
                                             VStack(alignment: .leading, spacing: 1) {
-                                                Text(str(f, "title", str(f, "name"))).lineLimit(2)
+                                                Text(displayTitle(f)).lineLimit(2)
                                                 Text(folderLabel(str(f, "folder", "(root)"))).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                                             }
                                             Spacer()
@@ -1489,6 +1635,54 @@ struct Overview: View {
             }.padding(30).frame(maxWidth: .infinity, alignment: .leading)
         }
     }
+}
+
+/// Inbox drafts are named for uniqueness ("2026-10-12 — session codex 01a12c05", before 0.14 "— harvest …", "2026-10-15 —
+/// toplantı 1647 — Toplantı"); people see who and when instead. Other notes keep their title.
+let inboxNamePattern = try? NSRegularExpression(pattern: #"^(\d{4}-\d{2}-\d{2}) — (?:(?:session|harvest) (\w+) [0-9a-f]+|(?:toplantı|meeting) (\d{2})(\d{2})(?: — (.*?))?)( \(\d+\))?$"#)
+func displayTitle(_ f: [String: Any]) -> String {
+    let title = str(f, "title", str(f, "name"))
+    let path = str(f, "path", "")
+    guard path.hasPrefix("+/"), let re = inboxNamePattern else { return title }
+    let stem = URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+    guard let m = re.firstMatch(in: stem, range: NSRange(stem.startIndex..., in: stem)) else { return title }
+    func group(_ i: Int) -> String { Range(m.range(at: i), in: stem).map { String(stem[$0]) } ?? "" }
+    let parse = DateFormatter(); parse.dateFormat = "yyyy-MM-dd"; parse.locale = Locale(identifier: "en_US_POSIX")
+    guard let date = parse.date(from: group(1)) else { return title }
+    let out = DateFormatter(); out.locale = Lang.locale; out.setLocalizedDateFormatFromTemplate("d MMMM")
+    let day = out.string(from: date) + group(6)
+    let client = group(2)
+    if !client.isEmpty {
+        let name = client == "claude" ? "Claude" : client == "codex" ? "Codex" : client.capitalized
+        return T("\(name) chat · \(day)", "\(name) sohbeti · \(day)")
+    }
+    let topic = group(5)
+    if topic.isEmpty || ["Toplantı", "Meeting"].contains(topic) { return T("Meeting · \(day) \(group(3)):\(group(4))", "Toplantı · \(day) \(group(3)):\(group(4))") }
+    return T("Meeting: \(topic) · \(day)", "Toplantı: \(topic) · \(day)")
+}
+
+/// One file of the Notes list with everything the list filters, sorts and shows read out of
+/// its dictionary once.
+struct NoteItem: Identifiable, Equatable {
+    let path: String, title: String, folder: String, top: String, modified: Double
+    let draft: Bool, system: Bool, indexed: Bool, indexState: String, locked: Bool, approvable: Bool, review: Bool, digest: Bool
+    /// Lowercased path, title, summary and type, for the name filter.
+    let haystack: String
+    var id: String { path }
+    init(_ f: [String: Any]) {
+        path = str(f, "path"); title = displayTitle(f); folder = str(f, "folder", "")
+        top = path.contains("/") ? String(path[..<path.firstIndex(of: "/")!]) : ""
+        modified = num(f, "modified")
+        draft = f["draft"] as? Bool == true; system = f["system"] as? Bool == true; indexed = f["indexed"] as? Bool != false
+        indexState = str(f, "index_state", ""); locked = f["locked"] as? Bool == true
+        approvable = f["approvable"] as? Bool == true; review = f["review"] as? Bool == true; digest = f["digest"] as? Bool == true
+        haystack = [path, title, str(f, "title", ""), str(f, "summary", ""), str(f, "type", "")].joined(separator: " ").lowercased()
+    }
+}
+
+/// The digest's own count line ("x: 1 new, 0 conflict, 0 already recorded") repeats the item list.
+func isDigestCount(_ summary: String) -> Bool {
+    summary.range(of: #": \d+ new, \d+ conflict, \d+ already recorded$"#, options: .regularExpression) != nil
 }
 
 /// Folder names people did not choose themselves get a word of explanation.
@@ -1523,12 +1717,17 @@ struct RecentChats: View {
                 }
             }
         }
+        .environment(\.openURL, OpenURLAction { url in
+            guard url.scheme == "carry-note" else { return .systemAction }
+            model.followLink(url.absoluteString.dropFirst("carry-note:".count).removingPercentEncoding ?? "")
+            return .handled
+        })
     }
     func item(_ entry: [String: Any], icon: String, color: Color) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: icon).foregroundStyle(color).font(.caption)
             VStack(alignment: .leading, spacing: 3) {
-                Text(str(entry, "text")).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                Text(inline(str(entry, "text"))).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 8) {
                     Text(str(entry, "day")).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                     if let digest = entry["digest"] as? String { Button(T("Where it came from", "Nereden geldi?")) { model.openNote(digest) }.buttonStyle(.link).font(.caption) }
@@ -1581,35 +1780,36 @@ struct VaultView: View {
     @State private var draftFolder = ""
     @State private var confirmAll = false
     var folders: [String] { (model.vault["folders"] as? [[String: Any]] ?? []).map { str($0, "name") }.filter { $0 != "(root)" } }
-    var filtered: [[String: Any]] {
+    var filtered: [NoteItem] {
         let week = Date().timeIntervalSince1970 - 7 * 86400
         let q = query.lowercased().trimmingCharacters(in: .whitespaces)
-        var list = model.files.filter { f in
-            switch model.vaultFilter {
-            case "mine": return f["system"] as? Bool != true
-            case "system": return f["system"] as? Bool == true
-            case "root": return str(f, "folder", "").isEmpty && f["system"] as? Bool != true
-            case "recent": return num(f, "modified") >= week && f["system"] as? Bool != true
-            case "inbox": return str(f, "path").hasPrefix("+/")
-            case "drafts": return f["draft"] as? Bool == true && f["system"] as? Bool != true && (draftFolder.isEmpty || topFolder(f) == draftFolder)
-            case "excluded": return f["indexed"] as? Bool == false
-            case let x where x.hasPrefix("folder:"): return str(f, "path").hasPrefix(String(x.dropFirst(7)) + "/")
+        let filter = model.vaultFilter
+        let prefix = filter.hasPrefix("folder:") ? String(filter.dropFirst(7)) + "/" : ""
+        var list = model.items.filter { f in
+            switch filter {
+            case "mine": return !f.system
+            case "system": return f.system
+            case "root": return f.folder.isEmpty && !f.system
+            case "recent": return f.modified >= week && !f.system
+            case "inbox": return f.path.hasPrefix("+/")
+            case "drafts": return f.draft && !f.system && (draftFolder.isEmpty || f.top == draftFolder)
+            case "excluded": return !f.indexed
+            case _ where !prefix.isEmpty: return f.path.hasPrefix(prefix)
             default: return true
             }
         }
-        if !q.isEmpty { list = list.filter { (str($0, "path") + " " + str($0, "title", "") + " " + str($0, "summary", "") + " " + str($0, "type", "")).lowercased().contains(q) } }
-        return sort == "name" ? list.sorted { str($0, "title", str($0, "name")).localizedStandardCompare(str($1, "title", str($1, "name"))) == .orderedAscending } : list.sorted { num($0, "modified") > num($1, "modified") }
+        if !q.isEmpty { list = list.filter { $0.haystack.contains(q) } }
+        return sort == "name" ? list.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending } : list.sorted { $0.modified > $1.modified }
     }
-    func topFolder(_ f: [String: Any]) -> String { str(f, "path").contains("/") ? String(str(f, "path").split(separator: "/")[0]) : "" }
-    var approvable: [String] { filtered.filter { $0["approvable"] as? Bool == true }.map { str($0, "path") } }
+    var approvable: [String] { filtered.filter(\.approvable).map(\.path) }
     /// Drafts folder by folder, so a whole group can be approved at once.
     var draftFolders: [(String, Int)] {
         var counts: [String: Int] = [:]
-        for f in model.files where f["draft"] as? Bool == true && f["system"] as? Bool != true { counts[topFolder(f), default: 0] += 1 }
+        for f in model.items where f.draft && !f.system { counts[f.top, default: 0] += 1 }
         return counts.sorted { $0.value > $1.value }.map { ($0.key, $0.value) }
     }
     @ViewBuilder var bulkBar: some View {
-        if ["drafts", "inbox"].contains(model.vaultFilter) {
+        if ["drafts", "inbox"].contains(model.vaultFilter) && !model.isReadOnly(model.vaultSource) {
             VStack(alignment: .leading, spacing: 8) {
                 if model.vaultFilter == "drafts" && draftFolders.count > 1 {
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -1648,38 +1848,23 @@ struct VaultView: View {
         Button("\(title) \(count)") { draftFolder = folder; selected = [] }
             .buttonStyle(.bordered).controlSize(.small).tint(draftFolder == folder ? .accentColor : .secondary)
     }
-    func row(_ f: [String: Any], selected isOpen: Bool) -> some View {
-        let path = str(f, "path")
-        let canPick = selecting && approvable.contains(path)
+    func row(_ f: NoteItem, selected isOpen: Bool) -> some View {
+        let path = f.path
+        let canPick = selecting && f.approvable
         return Button { if selecting { if canPick { if selected.contains(path) { selected.remove(path) } else { selected.insert(path) } } } else { model.openNote(path) } } label: {
-            HStack(alignment: .top, spacing: 8) {
-            if selecting {
-                Image(systemName: selected.contains(path) ? "checkmark.square.fill" : "square").foregroundStyle(canPick ? Color.accentColor : .secondary.opacity(0.4))
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 5) {
-                    if f["draft"] as? Bool == true { Circle().fill(Color.orange).frame(width: 6, height: 6).help(L("Draft")) }
-                    Text(str(f, "title", str(f, "name"))).fontWeight(.medium).lineLimit(2).fixedSize(horizontal: false, vertical: true)
-                    if str(f, "index_state") == "excluded" { Image(systemName: "eye.slash").font(.caption2).foregroundStyle(.secondary).help(L("Not indexed: excluded from search")) }
-                    if str(f, "index_state") == "pending" { Image(systemName: "clock.arrow.circlepath").font(.caption2).foregroundStyle(.orange).help(L("Waiting to be indexed")) }
-                    if f["locked"] as? Bool == true { Image(systemName: "lock").font(.caption2).foregroundStyle(.secondary) }
-                }
-                HStack {
-                    Text(folderLabel(str(f, "folder", "(root)"))).lineLimit(1)
-                    Spacer()
-                    Text(ago(num(f, "modified")))
-                }.font(.caption).foregroundStyle(.secondary)
-            }
-            }.padding(.vertical, 3).contentShape(Rectangle())
+            NoteRow(item: f, selecting: selecting, picked: selected.contains(path), canPick: canPick).equatable()
         }.buttonStyle(.plain).listRowBackground(isOpen && !selecting ? Color.accentColor.opacity(0.18) : Color.clear)
     }
     var body: some View {
         HSplitView {
             VStack(alignment: .leading, spacing: 10) {
-                if model.localSources.count > 1 {
+                if model.browsableSources.count > 1 {
                     Picker(T("Folder", "Klasör"), selection: Binding(get: { model.vaultSource }, set: { model.switchVault($0) })) {
-                        ForEach(model.localSources.indices, id: \.self) { i in Text(URL(fileURLWithPath: str(model.localSources[i], "root")).lastPathComponent).tag(str(model.localSources[i], "source_id")) }
+                        ForEach(model.browsableSources.indices, id: \.self) { i in Text(model.sourceLabel(model.browsableSources[i])).tag(str(model.browsableSources[i], "source_id")) }
                     }
+                }
+                if model.isReadOnly(model.vaultSource) {
+                    Label(T("Read-only copy of a GitHub knowledge base. Change it on GitHub.", "GitHub bilgi bankasının salt okunur kopyası. Değişikliği GitHub'da yapın."), systemImage: "lock").font(.caption).foregroundStyle(.secondary)
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     Text(T("All notes Carry can read. Click one to read it on the right.", "Carry'nin okuyabildiği tüm notlar. Birine tıklayın, sağda okuyun.")).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -1688,7 +1873,9 @@ struct VaultView: View {
                 }
                 HStack {
                     TextField(T("Find by name, folder or summary", "Ada, klasöre ya da özete göre bul"), text: $query).textFieldStyle(.roundedBorder)
-                    Button { model.showNewNote = true } label: { Label(T("New note", "Yeni not"), systemImage: "square.and.pencil") }
+                    if !model.isReadOnly(model.vaultSource) {
+                        Button { model.showNewNote = true } label: { Label(T("New note", "Yeni not"), systemImage: "square.and.pencil") }
+                    }
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     Picker(L("Show"), selection: $model.vaultFilter) {
@@ -1712,7 +1899,7 @@ struct VaultView: View {
                 if model.vault["truncated"] as? Bool == true { Text(L("This vault has more files than Carry lists (20,000).")).font(.caption).foregroundStyle(.orange) }
                 if rows.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(model.vaultFilter == "inbox" ? T("The Inbox is empty. New chat drafts will show up here.", "Gelen kutusu boş. Yeni sohbet taslakları burada görünecek.")
+                        Text(model.vaultFilter == "inbox" ? T("The Inbox is empty. New session recaps will show up here.", "Gelen kutusu boş. Yeni oturum özetleri burada görünecek.")
                              : T("No notes match this filter.", "Bu filtreye uyan not yok.")).foregroundStyle(.secondary)
                         if model.vaultFilter != "mine" || !query.isEmpty { Button(T("Clear filter", "Filtreyi temizle")) { model.vaultFilter = "mine"; query = "" }.buttonStyle(.link) }
                         if model.ownNotes == 0 { Button(T("Write my first note", "İlk notumu yaz")) { model.showNewNote = true } }
@@ -1720,17 +1907,41 @@ struct VaultView: View {
                     Spacer()
                 }
                 ScrollViewReader { proxy in
+                    let open = str(model.note, "path", "")
                     List {
-                        ForEach(shown.map { str($0, "path") }, id: \.self) { path in
-                            let f = shown.first { str($0, "path") == path } ?? [:]
-                            row(f, selected: str(model.note, "path", "") == path).id(path)
-                        }
+                        ForEach(shown) { f in row(f, selected: open == f.path).id(f.path) }
                     }.listStyle(.inset)
                     .onChange(of: str(model.note, "path", "")) { if !str(model.note, "path", "").isEmpty { withAnimation { proxy.scrollTo(str(model.note, "path", "")) } } }
                 }
             }.padding(16).frame(minWidth: 270, idealWidth: 320, maxWidth: 440)
             NoteView(model: model).frame(minWidth: 380, idealWidth: 480, maxWidth: .infinity)
         }
+    }
+}
+
+/// One row of the Notes list. Equatable, so a redraw of the page skips rows whose note did not change.
+struct NoteRow: View, Equatable {
+    let item: NoteItem, selecting: Bool, picked: Bool, canPick: Bool
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            if selecting {
+                Image(systemName: picked ? "checkmark.square.fill" : "square").foregroundStyle(canPick ? Color.accentColor : .secondary.opacity(0.4))
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 5) {
+                    if item.draft { Circle().fill(Color.orange).frame(width: 6, height: 6).help(L("Draft")) }
+                    Text(item.title).fontWeight(.medium).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                    if item.indexState == "excluded" { Image(systemName: "eye.slash").font(.caption2).foregroundStyle(.secondary).help(L("Not indexed: excluded from search")) }
+                    if item.indexState == "pending" { Image(systemName: "clock.arrow.circlepath").font(.caption2).foregroundStyle(.orange).help(L("Waiting to be indexed")) }
+                    if item.locked { Image(systemName: "lock").font(.caption2).foregroundStyle(.secondary) }
+                }
+                HStack {
+                    Text(folderLabel(item.folder.isEmpty ? "(root)" : item.folder)).lineLimit(1)
+                    Spacer()
+                    Text(ago(item.modified))
+                }.font(.caption).foregroundStyle(.secondary)
+            }
+        }.padding(.vertical, 3).contentShape(Rectangle())
     }
 }
 
@@ -1757,12 +1968,17 @@ struct NoteView: View {
                         Spacer()
                         Button { model.closeNote() } label: { Image(systemName: "xmark") }.help(L("Close note")).keyboardShortcut(.cancelAction)
                     }.buttonStyle(.borderless)
-                    Text(str(note, "title")).font(.title.bold()).textSelection(.enabled)
+                    Text(displayTitle(note)).font(.title.bold()).textSelection(.enabled)
                     Text(str(note, "path")).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
+                    // OKF v0.2: `status` is the lifecycle (draft, stable, deprecated); an effort's intensity has its own key.
+                    let okfView = note["okf"] as? [String: Any] ?? [:]
+                    let isDraft = okfView["status"] as? String == "draft" || front["draft"] as? Bool == true
                     FlowLayout(spacing: 6) {
                         if let t = front["type"] as? String { Badge(text: metaValue(t), color: .accentColor) }
-                        if let s = front["status"] as? String { Badge(text: metaValue(s)) }
-                        if front["draft"] as? Bool == true { Badge(text: L("draft"), color: .orange) }
+                        if let s = okfView["intensity"] as? String { Badge(text: metaValue(s)) }
+                        if isDraft { Badge(text: L("draft"), color: .orange) }
+                        if okfView["status"] as? String == "deprecated" { Badge(text: T("deprecated", "eskimiş"), color: .gray) }
+                        if okfView["stale"] as? Bool == true { Badge(text: T("stale", "güncelliğini yitirmiş"), color: .gray) }
                         if front["lock"] as? Bool == true { Badge(text: L("locked"), color: .red) }
                         if let s = front["sensitivity"] as? String { Badge(text: T("Privacy label: ", "Gizlilik etiketi: ") + metaValue(s), color: .purple) }
                         switch str(note, "index_state") {
@@ -1772,12 +1988,15 @@ struct NoteView: View {
                         }
                         Text(L("modified ") + ago(num(note, "modified"))).font(.caption).foregroundStyle(.secondary)
                     }
-                    if let summary = front["summary"] as? String { Text(summary).italic().foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).textSelection(.enabled) }
-                    let listed = model.files.first { str($0, "path") == str(note, "path") } ?? [:]
-                    let inQueue = listed["review"] as? Bool == true
-                    if inQueue && listed["digest"] as? Bool == true {
-                        DigestItemsView(model: model, path: str(note, "path")).id(str(note, "path"))
-                    } else if front["draft"] as? Bool == true && front["lock"] as? Bool != true {
+                    if let summary = (front["description"] as? String) ?? (front["summary"] as? String), !isDigestCount(summary) { Text(summary).italic().foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).textSelection(.enabled) }
+                    let listed = model.item(str(note, "path"))
+                    let inQueue = listed?.review == true
+                    let readOnly = model.isReadOnly(model.noteSource)
+                    if readOnly {
+                        EmptyView()
+                    } else if inQueue && listed?.digest == true {
+                        DigestItemsView(model: model, path: str(note, "path"), meeting: str(front, "provenance", "") == "meeting").id(str(note, "path"))
+                    } else if isDraft && front["lock"] as? Bool != true {
                         VStack(alignment: .leading, spacing: 10) {
                             Label(inQueue ? T("Draft: read it, and approve it if it is right.", "Taslak: okuyun, doğruysa onaylayın.")
                                           : T("Written by an assistant, not checked by you. It is already searchable; approve it once you have checked it.", "Bir asistan yazdı, siz kontrol etmediniz. Zaten aranabilir; kontrol ettiğinizde onaylayın."),
@@ -1802,8 +2021,10 @@ struct NoteView: View {
                         }.padding(12).background(Color.orange.opacity(0.08)).clipShape(RoundedRectangle(cornerRadius: 10))
                     }
                     FlowLayout {
-                        if obsidianInstalled { Button(L("Open in Obsidian"), systemImage: "arrow.up.forward.app") { if let u = obsidianURL(absolute) { NSWorkspace.shared.open(u) } } }
-                        Button(T("Open in default app", "Varsayılan uygulamada aç"), systemImage: "square.and.pencil") { NSWorkspace.shared.open(URL(fileURLWithPath: absolute)) }
+                        if !readOnly {
+                            if obsidianInstalled { Button(L("Open in Obsidian"), systemImage: "arrow.up.forward.app") { if let u = obsidianURL(absolute) { NSWorkspace.shared.open(u) } } }
+                            Button(T("Open in default app", "Varsayılan uygulamada aç"), systemImage: "square.and.pencil") { NSWorkspace.shared.open(URL(fileURLWithPath: absolute)) }
+                        }
                         Button(L("Show in Finder"), systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: absolute)]) }
                         Button(L("Copy path"), systemImage: "doc.on.doc") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(absolute, forType: .string) }
                     }.controlSize(.small)
@@ -1820,7 +2041,12 @@ struct NoteView: View {
                         }
                     }
                     Divider()
-                    MarkdownText(bodyWithoutTitle(note))
+                    // The items above are the digest; its text repeats them, so it stays folded.
+                    if inQueue && listed?.digest == true {
+                        DisclosureGroup(T("Full text of the draft", "Taslağın tam metni")) { MarkdownText(doc: model.noteDoc).padding(.top, 6) }
+                    } else {
+                        MarkdownText(doc: model.noteDoc)
+                    }
                     let backlinks = model.backlinks
                     let links = note["links"] as? [String] ?? []
                     if !backlinks.isEmpty || !links.isEmpty { Divider().padding(.top, 10) }
@@ -1850,17 +2076,15 @@ struct NoteView: View {
                     model.followLink(url.absoluteString.dropFirst("carry-note:".count).removingPercentEncoding ?? "")
                     return .handled
                 }
+                // A plain Markdown link to another note, relative to this one (GitHub knowledge bases).
+                if url.scheme == nil, let target = url.relativeString.removingPercentEncoding?.components(separatedBy: "#").first,
+                   target.lowercased().hasSuffix(".md") {
+                    model.followLink(target)
+                    return .handled
+                }
                 return .systemAction
             })
         }
-    }
-    /// Most notes repeat their title as the first heading; the header already shows it.
-    func bodyWithoutTitle(_ note: [String: Any]) -> String {
-        let body = str(note, "body", "")
-        let lines = body.components(separatedBy: "\n")
-        guard let first = lines.firstIndex(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }),
-              lines[first].trimmingCharacters(in: .whitespaces) == "# " + str(note, "title") else { return body }
-        return lines[(first + 1)...].joined(separator: "\n")
     }
     func value(_ v: Any?) -> String {
         if let list = v as? [Any] { return list.map { String(describing: $0) }.joined(separator: ", ") }
@@ -1964,11 +2188,10 @@ struct SearchSettings: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 PageIntro(icon: "magnifyingglass", title: T("Search", "Arama"),
-                          text: T("How Carry finds the right notes when your assistant asks. Now: \(presetLabel(str(model.settings, "preset", ""))).",
-                                  "Asistanınız sorduğunda Carry'nin doğru notları nasıl bulduğu. Şu an: \(presetLabel(str(model.settings, "preset", "")))."))
+                          text: T("How Carry finds the right notes when your assistant asks.", "Asistanınız sorduğunda Carry'nin doğru notları nasıl bulduğu."))
                 GroupBox(T("How should Carry search?", "Carry nasıl arasın?")) {
                     VStack(alignment: .leading, spacing: 16) {
-                        Text(T("1. How should it find notes?", "1. Notları nasıl bulsun?")).font(.headline)
+                        Text(legacyChecker ? T("1. How should it find notes?", "1. Notları nasıl bulsun?") : T("How should it find notes?", "Notları nasıl bulsun?")).font(.headline)
                         option(isOn: finder == "semantic", title: T("By meaning", "Anlamına göre"), uses: [T("built-in model", "yerleşik model")],
                                short: T("Also finds notes written with other words (“meeting” finds “call”).", "Başka kelimelerle yazılmış notları da bulur (“toplantı” diye sorunca “görüşme”yi de)."),
                                long: T("A small language model (embeddinggemma) runs inside Carry, on the Mac's GPU: a one-time 330 MB download, about 1 GB of memory while searching, released when idle. If the Ollama app is installed, Carry uses it instead. Your notes never leave the Mac for this step.",
@@ -1988,8 +2211,8 @@ struct SearchSettings: View {
                         Text(T("The check keeps only passages that really answer the question, so your assistant is not misled.", "Kontrol, yalnızca soruyu gerçekten yanıtlayan parçaları tutar; böylece asistanınız yanılmaz.")).font(.caption).foregroundStyle(.secondary)
                         option(isOn: checker == "jev", title: "TypeSafe Jev", uses: [T("online service", "çevrimiçi hizmet"), T("access key", "erişim anahtarı")],
                                short: T("Most accurate and fastest (about half a second). Needs a TypeSafe key.", "En isabetli ve en hızlı (yaklaşık yarım saniye). TypeSafe anahtarı gerekir."),
-                               long: T("A specialised service checks which passages answer the question and drops passages that try to instruct an AI. The question and up to 32 found passages go to TypeSafe in the US (secrets masked, best effort; TypeSafe says it does not train on them). In Carry's 36-question test, meaning + Jev put the right note first 34 times, the best result. Chat drafts are checked there too: masked chat excerpts and note passages go to TypeSafe while they are compared with your notes.",
-                                       "Bu işe özel bir hizmet, hangi parçaların soruyu yanıtladığını kontrol eder ve yapay zekâya talimat vermeye çalışan parçaları eler. Soru ve en fazla 32 bulunan parça ABD'deki TypeSafe'e gider (gizli bilgiler elden geldiğince maskelenir; TypeSafe bunlarla model eğitmediğini belirtiyor). Carry'nin 36 soruluk testinde anlam + Jev doğru notu 34 kez ilk sıraya koydu; en iyi sonuç buydu. Sohbet taslakları da orada denetlenir: notlarınızla karşılaştırılırken maskelenmiş sohbet alıntıları ve not parçaları TypeSafe'e gider."),
+                               long: T("A specialised service checks which passages answer the question and drops passages that try to instruct an AI. The question and up to 32 found passages go to TypeSafe in the US (secrets masked, best effort; TypeSafe says it does not train on them). In Carry's 36-question test, meaning + Jev put the right note first 34 times, the best result. Session recaps are checked there too: masked chat excerpts and note passages go to TypeSafe while they are compared with your notes.",
+                                       "Bu işe özel bir hizmet, hangi parçaların soruyu yanıtladığını kontrol eder ve yapay zekâya talimat vermeye çalışan parçaları eler. Soru ve en fazla 32 bulunan parça ABD'deki TypeSafe'e gider (gizli bilgiler elden geldiğince maskelenir; TypeSafe bunlarla model eğitmediğini belirtiyor). Carry'nin 36 soruluk testinde anlam + Jev doğru notu 34 kez ilk sıraya koydu; en iyi sonuç buydu. Oturum özetleri de orada denetlenir: notlarınızla karşılaştırılırken maskelenmiş sohbet alıntıları ve not parçaları TypeSafe'e gider."),
                                badge: nil) { checker = "jev" }
                         option(isOn: checker == "assistant", title: T("My own assistant (Claude or GPT)", "Kendi asistanım (Claude ya da GPT)"), uses: ["Claude Code: Claude Sonnet", "Codex: GPT"],
                                short: T("No extra service or key: the assistant you already use sorts the results.", "Ek hizmet ya da anahtar yok: zaten kullandığınız asistan sonuçları ayıklar."),
@@ -2121,7 +2344,7 @@ struct IndexSettings: View {
     }
     func count(_ value: [String: Any], _ key: String) -> String { String(Int(num(value, key))) }
     @ViewBuilder var status: some View {
-        GroupBox(T("Status", "Durum")) {
+        GroupBox {
             VStack(alignment: .leading, spacing: 8) {
                 LabeledContent(T("State", "Durum"), value: stateText(str(index, "state", "")))
                 LabeledContent(T("Notes indexed", "İndekslenen not"), value: count(index, "indexed_files") + " / " + count(index, "corpus_files"))
@@ -2161,12 +2384,12 @@ struct IndexSettings: View {
         }
         GroupBox(T("Checks", "Kontroller")) {
             VStack(alignment: .leading, spacing: 10) {
-                LabeledContent(L("Local MCP test"), value: L(model.localTest))
+                LabeledContent(T("Search service test", "Arama hizmeti testi"), value: L(model.localTest))
                 FlowLayout {
                     Button(T("Check Carry's search service", "Carry arama hizmetini kontrol et")) { model.run("connection_test") { model.localTest = str($0,"mcp_local_test"); model.refresh() } }
-                    Button(L("Probe provider")) { model.run("snapshot", ["probe": true]) { model.snapshot = $0 } }
+                    Button(T("Check the search-by-meaning model", "Anlamına göre arama modelini kontrol et")) { model.run("snapshot", ["probe": true]) { model.snapshot = $0 } }
                 }
-                Text(L("The local test checks Carry’s MCP server only. Client trust and capture are verified by the clients themselves.")).font(.caption).foregroundStyle(.secondary)
+                Text(T("This checks only Carry's own search service. Whether an assistant may use it is checked by that assistant.", "Bu yalnızca Carry'nin kendi arama hizmetini kontrol eder. Bir asistanın onu kullanıp kullanamadığını o asistan kendisi denetler.")).font(.caption).foregroundStyle(.secondary)
             }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
         }
     }
@@ -2213,10 +2436,10 @@ struct HarvestSettings: View {
                 PageIntro(icon: "tray.and.arrow.down", title: T("Capture", "Yakalama"),
                           text: T("What Carry takes from your chats. After you chat with your assistant in your notes folder, Carry picks out what is worth keeping (decisions, facts, preferences, unfinished work) into a draft; you go through it item by item on the Review page. Recording your prompts word for word is a separate, optional step below.",
                                   "Carry'nin sohbetlerinizden aldıkları. Not klasörünüzde asistanınızla sohbet ettikten sonra Carry saklanmaya değer olanları (kararlar, bilgiler, tercihler, yarım kalan işler) bir taslağa çıkarır; siz İncele sayfasında madde madde geçersiniz. Mesajlarınızı kelimesi kelimesine kaydetmek ayrı ve isteğe bağlı bir adımdır, aşağıda."))
-                Text(T("Chat drafts", "Sohbet taslakları")).font(.title3.bold())
+                Text(T("Session recaps", "Oturum özetleri")).font(.title3.bold())
                 GroupBox(L("Drafts")) {
                     VStack(alignment: .leading, spacing: 10) {
-                        Picker(L("Language of drafts"), selection: language) { Text("Türkçe").tag("Turkish"); Text("English").tag("English") }.pickerStyle(.segmented).frame(maxWidth: 320)
+                        HStack { Text(L("Language of drafts")); Picker(L("Language of drafts"), selection: language) { Text("Türkçe").tag("Turkish"); Text("English").tag("English") }.pickerStyle(.segmented).labelsHidden().fixedSize() }
                         Text(L("Used by every harvest: nightly, manual and at chat end.") + T(" Saved automatically.", " Otomatik kaydedilir.")).font(.caption).foregroundStyle(.secondary)
                     }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -2226,7 +2449,7 @@ struct HarvestSettings: View {
                             Text(L("The nightly harvest on this Mac belongs to another Carry workspace (%@). Saving here replaces it.", str(schedule, "workspace"))).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
                         }
                         Toggle(L("Harvest finished chats every evening"), isOn: $enabled)
-                        DatePicker(L("Time"), selection: $time, displayedComponents: .hourAndMinute).frame(maxWidth: 220).disabled(!enabled)
+                        DatePicker(L("Time"), selection: $time, displayedComponents: .hourAndMinute).fixedSize().disabled(!enabled)
                         if let vault = schedule["vault"] as? String, !foreign { Text(L("Vault: ") + vault).font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }
                         if schedule["installed"] as? Bool == true && schedule["loaded"] as? Bool == false && !foreign {
                             Text(L("launchd has not loaded this job. Save the schedule again on the Harvest tab.")).foregroundStyle(.orange).font(.callout)
@@ -2243,10 +2466,15 @@ struct HarvestSettings: View {
                         if model.assistants["chat_end"] as? Bool == true {
                             Label(T("On for this notes folder", "Bu not klasörü için açık"), systemImage: "checkmark.circle.fill").foregroundStyle(.green)
                             Text(L("Claude Code and Codex call Carry when a chat in the vault ends, and the next chat starts with a short state pack of open items and decisions. These hooks are set up by `carry setup` or on the Clients tab; Codex asks you to approve each hook once.")).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                            if model.assistants["checkpoint"] as? Bool == true {
+                                Label(T("Also before a long chat is compacted", "Uzun bir sohbet sıkıştırılmadan önce de"), systemImage: "checkmark.circle").foregroundStyle(.green)
+                                Text(T("Before Claude Code or Codex compacts a chat, Carry recaps it so far; the chat end then recaps only what came after.",
+                                       "Claude Code ya da Codex bir sohbeti sıkıştırmadan önce Carry o ana kadarki kısmın özetini çıkarır; sohbet bitince yalnız sonrası özetlenir.")).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                            }
                         } else {
-                            Label(T("Not set up for this notes folder", "Bu not klasörü için kurulu değil"), systemImage: "circle").foregroundStyle(.secondary)
-                            Text(T("Notes folders created by Carry have this on from the start. For a folder you already had, turn on the evening run above: it collects the day's chats in one go.",
-                                   "Carry'nin oluşturduğu not klasörlerinde bu baştan açıktır. Önceden sahip olduğunuz bir klasör için yukarıdan akşam çalışmasını açın: günün sohbetlerini tek seferde toplar.")).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                            Label(T("Not set up for this notes folder", "Bu not klasörü için kurulu değil"), systemImage: "info.circle").foregroundStyle(.secondary)
+                            Text(T("Notes folders created by Carry have this on from the start. For a folder you already had, run `carry session hooks --install` once on this Mac, or turn on the evening run above: it collects the day's chats in one go.",
+                                   "Carry'nin oluşturduğu not klasörlerinde bu baştan açıktır. Önceden sahip olduğunuz bir klasör için bu Mac'te bir kez `carry session hooks --install` çalıştırın ya da yukarıdan akşam çalışmasını açın: günün sohbetlerini tek seferde toplar.")).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         }
                     }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -2265,7 +2493,7 @@ struct HarvestSettings: View {
                             Button(L("Open full log")) { NSWorkspace.shared.open(URL(fileURLWithPath: str(model.settings, "state_dir", model.workspace)).appendingPathComponent("harvest.log")) }
                             Button(T("Open Review", "İncele'yi aç")) { model.page = "Review" }
                         }
-                    }.padding(12)
+                    }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
                 }
                 PromptCapture(model: model)
             }.padding(30).frame(maxWidth: .infinity, alignment: .leading)
@@ -2281,8 +2509,8 @@ struct AdvancedSettings: View {
                 PageIntro(icon: "gearshape", title: T("General", "Genel"), text: T("Language, help and troubleshooting.", "Dil, yardım ve sorun giderme."))
                 GroupBox(L("Language")) {
                     VStack(alignment: .leading, spacing: 10) {
-                        Picker(L("App language"), selection: $model.language) { Text("Türkçe").tag("tr"); Text("English").tag("en") }.pickerStyle(.segmented).frame(maxWidth: 320)
-                        Text(T("Changes Carry's own screens. The language of chat drafts is set on the Capture tab.", "Carry'nin ekranlarını değiştirir. Sohbet taslaklarının dili Yakalama sekmesinden ayarlanır.")).font(.caption).foregroundStyle(.secondary)
+                        HStack { Text(L("App language")); Picker(L("App language"), selection: $model.language) { Text("Türkçe").tag("tr"); Text("English").tag("en") }.pickerStyle(.segmented).labelsHidden().fixedSize() }
+                        Text(T("Changes Carry's own screens. The language of session recaps is set on the Session recap tab.", "Carry'nin ekranlarını değiştirir. Oturum özetlerinin dili Oturum özeti sekmesinden ayarlanır.")).font(.caption).foregroundStyle(.secondary)
                     }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
                 }
                 GroupBox(T("Help", "Yardım")) {
@@ -2495,7 +2723,7 @@ struct SourceCard: View {
                     Text(isGitHub ? sid : URL(fileURLWithPath: str(source, "root")).lastPathComponent).font(.headline)
                     Badge(text: isGitHub ? "GitHub" : (source["writable"] as? Bool == true ? T("Carry may add records", "Carry kayıt ekleyebilir") : T("your notes are not changed", "notlarınız değiştirilmez")))
                     if source["root_available"] as? Bool == false { Badge(text: T("folder not found", "klasör bulunamadı"), color: .red) }
-                    if !isGitHub { Button(T("Show notes", "Notları göster")) { model.switchVault(sid); model.page = "Vault" } }
+                    if !isGitHub || source["root_available"] as? Bool != false { Button(T("Show notes", "Notları göster")) { model.switchVault(sid); model.page = "Vault" } }
                     Button(T("Remove from Carry…", "Carry'den çıkar…"), role: .destructive) { confirmRemove = true }
                 }
                 if source["root_available"] as? Bool == false && !isGitHub {
@@ -2724,6 +2952,12 @@ struct SearchHitCard: View {
                     }
                 }
                 HStack(spacing: 6) {
+                    let sid = str(hit, "source_id")
+                    if !sid.isEmpty {
+                        Label(model.sourceLabel(id: sid), systemImage: model.isReadOnly(sid) ? "cloud" : "books.vertical").lineLimit(1)
+                            .help(T("The notes folder this passage comes from", "Bu bölümün geldiği not klasörü"))
+                        Text("›")
+                    }
                     Text(folderLabel(str(hit, "path").contains("/") ? String(str(hit, "path").split(separator: "/").dropLast().joined(separator: "/")) : "(root)"))
                     if let heading = hit["heading"] as? String, !heading.isEmpty, heading != "summary", heading != str(hit, "title") { Text("› " + heading).lineLimit(1) }
                 }.font(.caption).foregroundStyle(.secondary)
@@ -2732,7 +2966,7 @@ struct SearchHitCard: View {
                     if str(hit, "text").count > 420 { Button(expanded ? T("Show less", "Daha az göster") : T("Show more", "Devamını göster")) { expanded.toggle() }.buttonStyle(.link) }
                     Spacer()
                     if let url = hit["url"] as? String, let link = URL(string: url) { Link(L("Open this version on GitHub"), destination: link) }
-                    else if model.localSources.contains(where: { str($0, "source_id") == str(hit, "source_id") }) {
+                    if model.browsableSources.contains(where: { str($0, "source_id") == str(hit, "source_id") }) {
                         Button(T("Open note", "Notu aç")) { model.openNote(str(hit, "path"), source: str(hit, "source_id")) }
                     }
                 }
@@ -2816,8 +3050,8 @@ struct Activity: View {
             VStack(alignment: .leading, spacing: 14) {
                 Button { model.page = "Review" } label: { Label(pageName("Review"), systemImage: "chevron.left") }.buttonStyle(.link)
                 Text(pageName("Proposals")).font(.title.bold())
-                Text(T("Changes your assistant proposes to your existing notes. Accept or reject each one here. (New chat drafts are on the Review page.)",
-                       "Asistanınızın mevcut notlarınız için önerdiği değişiklikler. Her birini burada kabul edin ya da reddedin. (Yeni sohbet taslakları İncele sayfasındadır.)")).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(T("Changes your assistant proposes to your existing notes. Accept or reject each one here. (New session recaps are on the Review page.)",
+                       "Asistanınızın mevcut notlarınız için önerdiği değişiklikler. Her birini burada kabul edin ya da reddedin. (Yeni oturum özetleri İncele sayfasındadır.)")).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 Toggle(T("Only those waiting for approval", "Yalnız onay bekleyenler"), isOn: $pendingOnly)
                 ForEach(model.adapters.indices, id: \.self) { i in
                     let adapter = model.adapters[i]
@@ -2835,7 +3069,7 @@ struct Activity: View {
                         Text(model.activity.isEmpty ? T("No proposals have arrived yet.", "Henüz hiç öneri gelmedi.") : T("Nothing waits for your approval.", "Onayınızı bekleyen öneri yok.")).fontWeight(.medium)
                         Text(T("This page fills only when an assistant asks to correct one of your notes: instead of editing the note itself, it sends a proposal here for your yes or no. That happens rarely, so an empty page is normal.",
                                "Bu sayfa yalnızca bir asistan notlarınızdan birini düzeltmek istediğinde dolar: notu kendisi değiştirmek yerine öneriyi evet ya da hayır demeniz için buraya gönderir. Bu seyrek olur; sayfanın boş olması normaldir.")).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                        Text(T("New chat drafts are reviewed on the Review page.", "Yeni sohbet taslaklarını İncele sayfasında inceleyebilirsiniz.")).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        Text(T("New session recaps are reviewed on the Review page.", "Yeni oturum özetlerini İncele sayfasında inceleyebilirsiniz.")).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         Button(T("Open Review", "İncele'yi aç")) { model.page = "Review" }.buttonStyle(.link)
                         Button(T("Open drafts", "Taslakları aç")) { model.showVault("drafts") }.buttonStyle(.link)
                         if !model.anyAssistantConnected { Button(L("Connect a client")) { model.page = "Settings"; model.settingsTab = "Clients" }.buttonStyle(.link) }
@@ -2905,10 +3139,12 @@ func topicColor(_ slot: Int?) -> Color {
     })
 }
 
-/// The map's data parsed once per load, so drawing never touches dictionaries.
-struct MapData {
-    struct Node { let path: String; let title: String; let point: CGPoint; let cluster: Int; let radius: CGFloat; let degree: Double }
-    struct Topic { let id: Int; let label: String; let size: Int; let centre: CGPoint; let r: CGFloat; let slot: Int?; let unlinked: Bool }
+/// The map's data parsed once per load, so drawing never touches dictionaries. The links are
+/// turned into paths here, in the map's own coordinates: a frame only scales and moves them.
+struct MapData: Equatable {
+    struct Node { let path: String; let title: String; let folder: String; let type: String; let point: CGPoint; let cluster: Int; let radius: CGFloat; let degree: Double }
+    struct Topic: Equatable { let id: Int; let label: String; let size: Int; let centre: CGPoint; let r: CGFloat; let slot: Int?; let unlinked: Bool }
+    var id = UUID()
     var nodes: [Node] = []
     var topics: [Topic] = []
     var edges: [(Int, Int)] = []
@@ -2919,6 +3155,17 @@ struct MapData {
     var available: [String] = []
     var truncated = false
     var semantic = true
+    var colors: [Int: Color] = [:]
+    /// Links inside each topic, links between topics, and the latter again per topic for a focused one.
+    var inner: [(cluster: Int, path: Path)] = []
+    var across = Path()
+    var acrossOf: [Int: Path] = [:]
+    /// Most-linked first: the order in which notes get their titles drawn.
+    var byDegree: [Int] = []
+    /// The most-linked notes, drawn with a soft halo.
+    var hubs: Set<Int> = []
+    var indexOf: [String: Int] = [:]
+    var search: [String] = []
     init() {}
     init(_ v: [String: Any]) {
         sourceId = str(v, "source_id", ""); folders = v["folders"] as? [String] ?? []; available = v["available_folders"] as? [String] ?? []
@@ -2928,14 +3175,36 @@ struct MapData {
             Topic(id: Int(num(c, "id")), label: str(c, "label", ""), size: Int(num(c, "size")), centre: CGPoint(x: num(c, "x"), y: num(c, "y")),
                   r: num(c, "r"), slot: (c["color"] as? NSNumber)?.intValue, unlinked: c["unlinked"] as? Bool == true)
         }
+        colors = Dictionary(uniqueKeysWithValues: topics.map { ($0.id, topicColor($0.slot)) })
+        var full: [String] = []
         nodes = (v["nodes"] as? [[String: Any]] ?? []).map { n in
-            Node(path: str(n, "path", ""), title: { let t = str(n, "title", ""); return t.count > 40 ? String(t.prefix(38)) + "…" : t }(),
-                 point: CGPoint(x: num(n, "x"), y: num(n, "y")), cluster: Int(num(n, "cluster")),
-                 radius: 3 + min(7, sqrt(num(n, "degree")) * 1.1), degree: num(n, "degree"))
+            let path = str(n, "path", ""), title = str(n, "title", "")
+            full.append(title.lowercased())
+            return Node(path: path, title: title.count > 40 ? String(title.prefix(38)) + "…" : title,
+                        folder: path.contains("/") ? String(path[..<path.lastIndex(of: "/")!]) : "", type: str(n, "type", ""),
+                        point: CGPoint(x: num(n, "x"), y: num(n, "y")), cluster: Int(num(n, "cluster")),
+                        radius: 3 + min(7, sqrt(num(n, "degree")) * 1.1), degree: num(n, "degree"))
         }
+        search = full
+        indexOf = Dictionary(nodes.indices.map { (nodes[$0].path, $0) }, uniquingKeysWith: { first, _ in first })
         neighbours = Array(repeating: [], count: nodes.count)
+        var innerPaths: [Int: Path] = [:]
         for e in v["edges"] as? [[Int]] ?? [] where e.count == 2 && e[0] < nodes.count && e[1] < nodes.count {
-            edges.append((e[0], e[1])); neighbours[e[0]].append(e[1]); neighbours[e[1]].append(e[0])
+            let (a, b) = (e[0], e[1])
+            edges.append((a, b)); neighbours[a].append(b); neighbours[b].append(a)
+            let ca = nodes[a].cluster, cb = nodes[b].cluster
+            if ca == cb {
+                MapData.curve(&innerPaths[ca, default: Path()], nodes[a].point, nodes[b].point)
+            } else {
+                MapData.curve(&across, nodes[a].point, nodes[b].point)
+                MapData.curve(&acrossOf[ca, default: Path()], nodes[a].point, nodes[b].point)
+                MapData.curve(&acrossOf[cb, default: Path()], nodes[a].point, nodes[b].point)
+            }
+        }
+        inner = innerPaths.sorted { $0.key < $1.key }.map { (cluster: $0.key, path: $0.value) }
+        byDegree = nodes.indices.sorted { nodes[$0].degree > nodes[$1].degree }
+        if let floor = byDegree.dropFirst(max(0, nodes.count / 12)).first.map({ max(3, nodes[$0].degree) }) {
+            hubs = Set(byDegree.prefix { nodes[$0].degree >= floor && nodes[$0].degree >= 3 })
         }
         if !topics.isEmpty {
             var r = CGRect.null
@@ -2943,101 +3212,336 @@ struct MapData {
             bounds = r
         }
     }
+    static func == (a: MapData, b: MapData) -> Bool { a.id == b.id }
+    /// A gentle bend, always to the same side: the links read as a web rather than a mesh of strokes.
+    static func curve(_ path: inout Path, _ a: CGPoint, _ b: CGPoint) {
+        let dx = b.x - a.x, dy = b.y - a.y
+        path.move(to: a)
+        path.addQuadCurve(to: b, control: CGPoint(x: (a.x + b.x) / 2 - dy * 0.12, y: (a.y + b.y) / 2 + dx * 0.12))
+    }
     func topic(_ id: Int) -> Topic? { topics.first { $0.id == id } }
-    func slot(_ cluster: Int) -> Int? { topics.first { $0.id == cluster }?.slot }
+    func color(_ cluster: Int) -> Color { colors[cluster] ?? .secondary }
+    /// Scale of the map at zoom 1: the whole map fits the view with a margin.
+    func fit(_ size: CGSize) -> CGFloat {
+        min(size.width / max(bounds.width, 0.001), size.height / max(bounds.height, 0.001)) * 0.92
+    }
+    func transform(_ camera: MapCamera, _ size: CGSize) -> CGAffineTransform {
+        let s = fit(size) * camera.zoom
+        return CGAffineTransform(a: s, b: 0, c: 0, d: s, tx: size.width / 2 - bounds.midX * s + camera.pan.width, ty: size.height / 2 - bounds.midY * s + camera.pan.height)
+    }
+    /// The camera that puts a point of the map in the middle of the view at `zoom`.
+    func centring(_ point: CGPoint, zoom: CGFloat, _ size: CGSize) -> MapCamera {
+        let s = fit(size) * zoom
+        return MapCamera(zoom: zoom, pan: CGSize(width: -(point.x - bounds.midX) * s, height: -(point.y - bounds.midY) * s))
+    }
 }
 
-/// Every note as a dot, notes about the same thing pulled into topic clouds. Zoomed out the clouds and
-/// their names show what the vault is about; zooming in brings out the note titles.
-/// Topics come from the meaning of the notes (the search index's vectors); the lines drawn
-/// are the links. Deliberately still: no animation, and hovering
-/// only lights the note and its links.
-struct GraphView: View {
-    @ObservedObject var model: Model
-    @State private var map = MapData()
-    @State private var loaded = false
-    @State private var folders: [String]? = nil
-    @State private var loading = false
-    @State private var zoom: CGFloat = 1
-    @State private var liveZoom: CGFloat = 1
-    @State private var pan: CGSize = .zero
-    @State private var livePan: CGSize = .zero
-    @State private var hover: Int? = nil
-    @State private var focus: Int? = nil
-    @State private var source = ""
-    @State private var canvasSize = CGSize(width: 800, height: 600)
-    var scale: CGFloat { zoom * liveZoom }
-    var offset: CGSize { CGSize(width: pan.width + livePan.width, height: pan.height + livePan.height) }
-    func fit(_ size: CGSize) -> CGFloat {
-        let b = map.bounds
-        return min(size.width / max(b.width, 0.001), size.height / max(b.height, 0.001)) * 0.92
+/// Where the map is looked at from: a zoom and a shift, in points.
+struct MapCamera: Equatable {
+    static let range: ClosedRange<CGFloat> = 0.4...12
+    var zoom: CGFloat = 1
+    var pan: CGSize = .zero
+    /// Zoomed by `factor` with the point `anchor` (in the view) staying where it is.
+    func zoomed(by factor: CGFloat, at anchor: CGPoint, in size: CGSize) -> MapCamera {
+        let zoom = min(MapCamera.range.upperBound, max(MapCamera.range.lowerBound, self.zoom * factor))
+        let k = zoom / self.zoom, ax = anchor.x - size.width / 2, ay = anchor.y - size.height / 2
+        return MapCamera(zoom: zoom, pan: CGSize(width: ax - (ax - pan.width) * k, height: ay - (ay - pan.height) * k))
     }
-    func project(_ size: CGSize) -> (CGPoint) -> CGPoint {
-        let b = map.bounds, s = fit(size) * scale, o = offset
-        return { p in CGPoint(x: size.width / 2 + (p.x - b.midX) * s + o.width, y: size.height / 2 + (p.y - b.midY) * s + o.height) }
+}
+
+/// The drawing itself. Animatable, so a focus or zoom button glides there instead of jumping;
+/// a frame is batched paths (one per topic) plus one dot per note and a limited number of titles.
+struct MapLayer: View, Animatable, Equatable {
+    let map: MapData
+    var camera: MapCamera
+    let hover: Int?, focus: Int?, open: Int?
+    let matches: Set<Int>?
+    /// While the map is being dragged, scrolled or pinched, note titles wait until it stops.
+    let moving: Bool
+    var animatableData: AnimatablePair<CGFloat, AnimatablePair<CGFloat, CGFloat>> {
+        get { AnimatablePair(camera.zoom, AnimatablePair(camera.pan.width, camera.pan.height)) }
+        set { camera = MapCamera(zoom: newValue.first, pan: CGSize(width: newValue.second.first, height: newValue.second.second)) }
+    }
+    static let maxTitles = 150
+    var body: some View {
+        let layer = self
+        return Canvas(rendersAsynchronously: true) { ctx, size in layer.draw(&ctx, size) }
+    }
+    func draw(_ ctx: inout GraphicsContext, _ size: CGSize) {
+        // A refreshed map can arrive while the pointer is on a note of the old one.
+        let hover = hover.flatMap { $0 < map.nodes.count ? $0 : nil }
+        let matches = matches.map { $0.filter { $0 < map.nodes.count } }
+        let t = map.transform(camera, size), s = t.a
+        let detail = Double(min(1, max(0, (camera.zoom - 1.6) / 1.2)))
+        let surface = Color(nsColor: .textBackgroundColor)
+        let view = CGRect(origin: .zero, size: size).insetBy(dx: -60, dy: -30)
+        let lit: Set<Int> = hover.map { Set(map.neighbours[$0] + [$0]) } ?? []
+        // Something is picked out (a hovered note, notes found by name): the rest steps back.
+        let quiet = hover != nil || matches != nil
+        func picked(_ i: Int) -> Bool { lit.contains(i) || matches?.contains(i) == true }
+
+        // Clouds: one soft glow per topic, brightest at its heart.
+        for topic in map.topics where !topic.unlinked {
+            let c = topic.centre.applying(t), r = topic.r * 1.15 * s
+            guard r > 2, view.insetBy(dx: -r, dy: -r).contains(c) else { continue }
+            let dim = (focus != nil && focus != topic.id) || quiet
+            let strength = (dim ? 0.45 : 1) * (0.2 + 0.1 * (1 - detail))
+            let color = map.color(topic.id)
+            ctx.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)),
+                     with: .radialGradient(Gradient(stops: [.init(color: color.opacity(strength), location: 0),
+                                                           .init(color: color.opacity(strength * 0.4), location: 0.62),
+                                                           .init(color: color.opacity(0), location: 1)]),
+                                           center: c, startRadius: 0, endRadius: r))
+        }
+
+        // Topic names: zoomed out, a tag in the middle of each cloud; zoomed in, a quieter name
+        // above it so the note titles inside stay readable. While something is picked out they
+        // go under everything else, so they never cover a highlighted title.
+        func topicNames(_ ctx: inout GraphicsContext) {
+            for topic in map.topics where !topic.unlinked && !topic.label.isEmpty {
+                let c = topic.centre.applying(t), r = topic.r * 1.15 * s
+                guard view.insetBy(dx: -r - 120, dy: -r - 40).contains(c) else { continue }
+                let dim = (focus != nil && focus != topic.id) || quiet
+                let points = min(20, max(12, 10 + sqrt(Double(topic.size)) * 1.2))
+                if detail < 1 {
+                    let tag = ctx.resolve(Text(topic.label).font(.system(size: points, weight: .bold)).foregroundColor(.primary.opacity(dim ? 0.35 : 1)))
+                    let fits = tag.measure(in: CGSize(width: max(160, r * 2.4), height: 200))
+                    let box = CGRect(x: c.x - fits.width / 2 - 9, y: c.y - fits.height / 2 - 4, width: fits.width + 18, height: fits.height + 8)
+                    ctx.drawLayer { layer in
+                        layer.opacity = 1 - detail
+                        let pill = Path(roundedRect: box, cornerRadius: box.height / 2)
+                        layer.fill(pill, with: .color(surface.opacity(0.88)))
+                        layer.stroke(pill, with: .color(map.color(topic.id).opacity(dim ? 0.25 : 0.85)), lineWidth: 1.5)
+                        layer.draw(tag, in: box.insetBy(dx: 9, dy: 4))
+                    }
+                }
+                if detail > 0 {
+                    ctx.draw(Text(topic.label).font(.system(size: points, weight: .bold)).foregroundColor(.primary.opacity((dim ? 0.3 : 0.85) * detail)),
+                             at: CGPoint(x: c.x, y: c.y - r - 2), anchor: .bottom)
+                }
+            }
+        }
+        if quiet { topicNames(&ctx) }
+
+        // Links: the paths built at load, scaled into the view; widths stay in screen points.
+        // Long links between topics step back as you zoom in, where they only cross the view.
+        var links = ctx
+        links.concatenate(t)
+        let w = 1 / s, fade = quiet ? 0.3 : 1.0
+        if let focus {
+            if let path = map.acrossOf[focus] { links.stroke(path, with: .color(Color.secondary.opacity(0.22 * fade)), lineWidth: 0.8 * w) }
+        } else {
+            links.stroke(map.across, with: .color(Color.secondary.opacity(0.15 * fade * (1 - 0.55 * detail))), lineWidth: 0.7 * w)
+        }
+        for (cluster, path) in map.inner where focus == nil || focus == cluster {
+            links.stroke(path, with: .color(map.color(cluster).opacity(0.34 * fade)), lineWidth: 0.9 * w)
+        }
+        if let h = hover {
+            var path = Path()
+            for j in map.neighbours[h] { MapData.curve(&path, map.nodes[h].point, map.nodes[j].point) }
+            links.stroke(path, with: .color(map.color(map.nodes[h].cluster).opacity(0.65)), lineWidth: 1.3 * w)
+        }
+
+        // Notes: a dot each, with a surface ring so neighbours stay apart, and a halo on the hubs.
+        let grow = 0.8 + 0.2 * min(camera.zoom, 3)
+        var rings = Path(), halos: [Int: Path] = [:], dots: [Int: Path] = [:], faded: [Int: Path] = [:]
+        for (i, n) in map.nodes.enumerated() {
+            let p = n.point.applying(t)
+            guard view.contains(p) else { continue }
+            let r = n.radius * grow, rect = CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)
+            let back = (focus != nil && n.cluster != focus) || (quiet && !picked(i))
+            if map.hubs.contains(i) && !back { halos[n.cluster, default: Path()].addEllipse(in: rect.insetBy(dx: -r * 0.8, dy: -r * 0.8)) }
+            rings.addEllipse(in: rect.insetBy(dx: -1.5, dy: -1.5))
+            if back { faded[n.cluster, default: Path()].addEllipse(in: rect) } else { dots[n.cluster, default: Path()].addEllipse(in: rect) }
+        }
+        for (cluster, path) in halos { ctx.fill(path, with: .color(map.color(cluster).opacity(0.2))) }
+        ctx.fill(rings, with: .color(surface))
+        for (cluster, path) in faded { ctx.fill(path, with: .color(map.color(cluster).opacity(0.22))) }
+        for (cluster, path) in dots { ctx.fill(path, with: .color(map.color(cluster))) }
+        func ring(_ i: Int, _ color: Color, _ width: CGFloat, _ gap: CGFloat) {
+            let n = map.nodes[i], p = n.point.applying(t), r = n.radius * grow + gap
+            ctx.stroke(Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)), with: .color(color), lineWidth: width)
+        }
+        if let matches { for i in matches { ring(i, .primary.opacity(0.8), 1.2, 2.5) } }
+        if let open, open < map.nodes.count { ring(open, .accentColor, 2.2, 3.5) }
+        if let h = hover { ring(h, .primary, 1.5, 3) }
+
+        // Note titles once zoomed in, and always for what is picked out. The most-linked notes are
+        // named first, a title that would cover another is skipped, and only so many are drawn.
+        if detail > 0 || quiet {
+            var order: [Int] = []
+            if let h = hover { order += map.neighbours[h].sorted { map.nodes[$0].degree > map.nodes[$1].degree }.prefix(30) }
+            if let matches { order += map.byDegree.filter { matches.contains($0) } }
+            if detail > 0 && !moving { order += map.byDegree }
+            var placed: [CGRect] = [], seen: Set<Int> = [], drawn = 0
+            if let h = hover {      // the card names the hovered note; keep its spot free
+                let n = map.nodes[h], p = n.point.applying(t)
+                placed.append(CGRect(x: p.x - 20, y: p.y - 20, width: 40, height: 40))
+                seen.insert(h)
+            }
+            for i in order where seen.insert(i).inserted {
+                let n = map.nodes[i], p = n.point.applying(t)
+                guard view.contains(p), focus == nil || n.cluster == focus || picked(i) else { continue }
+                let strong = picked(i)
+                if quiet && !strong && moving { continue }
+                let points: CGFloat = strong ? 11 : 10.5
+                // An estimate is enough to keep titles apart and much cheaper than measuring each one.
+                let width = CGFloat(n.title.count) * points * 0.55, height = points * 1.3
+                let rect = CGRect(x: p.x - width / 2, y: p.y + n.radius * grow + 4, width: width, height: height)
+                if placed.contains(where: { $0.intersects(rect) }) { continue }
+                placed.append(rect.insetBy(dx: -3, dy: -1))
+                ctx.draw(Text(n.title).font(.system(size: points, weight: strong ? .medium : .regular))
+                            .foregroundColor(.primary.opacity(strong ? 1 : quiet ? 0.3 * detail : detail)),
+                         at: CGPoint(x: p.x, y: rect.minY), anchor: .top)
+                drawn += 1
+                if drawn >= MapLayer.maxTitles { break }
+            }
+        }
+
+        if !quiet { topicNames(&ctx) }
+    }
+}
+
+/// Holds the scroll-wheel monitor, the handler of the current view (it changes with every
+/// redraw) and where the pointer is. Not state: moving the pointer must not redraw anything.
+final class MapScroll {
+    var monitor: Any?
+    var handle: ((NSEvent) -> Bool)?
+    var pointer: CGPoint?
+}
+
+/// The map's canvas and everything the pointer does on it. Its own view, so hovering and dragging
+/// redraw only the map, not the page around it.
+struct MapCanvas: View {
+    let map: MapData
+    @Binding var camera: MapCamera
+    let focus: Int?, open: Int?
+    let matches: Set<Int>?
+    let topicName: (Int) -> String
+    let openNote: (Int) -> Void
+    @State private var hover: Int? = nil
+    @State private var livePan: CGSize = .zero
+    @State private var liveZoom: CGFloat = 1
+    @State private var anchor: CGPoint = .zero
+    @State private var scrolling = false
+    @State private var settle: DispatchWorkItem? = nil
+    @State private var scroll = MapScroll()
+    func shown(_ size: CGSize) -> MapCamera {
+        var c = liveZoom == 1 ? camera : camera.zoomed(by: liveZoom, at: anchor, in: size)
+        c.pan.width += livePan.width; c.pan.height += livePan.height
+        return c
     }
     func nearest(_ location: CGPoint, _ size: CGSize) -> Int? {
-        let at = project(size)
+        let t = map.transform(shown(size), size), grow = 0.8 + 0.2 * min(shown(size).zoom, 3)
         var best: (Int, CGFloat)? = nil
         for (i, n) in map.nodes.enumerated() {
-            let p = at(n.point), d = hypot(p.x - location.x, p.y - location.y)
-            if d <= n.radius + 6, d < (best?.1 ?? .infinity) { best = (i, d) }
+            let p = n.point.applying(t), d = hypot(p.x - location.x, p.y - location.y)
+            if d <= n.radius * grow + 6, d < (best?.1 ?? .infinity) { best = (i, d) }
         }
         return best?.0
     }
-    /// 0 when zoomed out (topics lead), 1 when zoomed in far enough to read note titles.
-    var detail: Double { Double(min(1, max(0, (scale - 1.6) / 1.2))) }
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(T("Map of your notes", "Notlarının haritası")).font(.title2.bold())
-                    Text(T("Each dot is a note; notes about the same thing gather into topics, lines are links. Zoom in to read titles, click a note to open it.",
-                           "Her nokta bir not; aynı şeyden bahseden notlar konulara toplanır, çizgiler linklerdir. Başlıkları okumak için yakınlaş, açmak için nota tıkla."))
-                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer()
-                if loading { ProgressView().controlSize(.small) }
-                Button { zoom = min(8, zoom * 1.5) } label: { Image(systemName: "plus.magnifyingglass") }.help(T("Zoom in", "Yakınlaş"))
-                Button { zoom = max(0.4, zoom / 1.5) } label: { Image(systemName: "minus.magnifyingglass") }.help(T("Zoom out", "Uzaklaş"))
-                Button { reset() } label: { Image(systemName: "arrow.up.left.and.down.right.magnifyingglass") }.help(T("Show everything", "Tümünü göster"))
-            }.padding([.horizontal, .top], 20).padding(.bottom, 10)
-            HStack(spacing: 6) {
-                Text(T("Folders:", "Klasörler:")).font(.caption).foregroundStyle(.secondary)
-                ForEach(map.available, id: \.self) { f in
-                    Toggle(f.isEmpty ? T("(top level)", "(en üst)") : f + "/", isOn: Binding(get: { map.folders.contains(f) }, set: { value in
-                        var current = Set(map.folders)
-                        if value { current.insert(f) } else { current.remove(f) }
-                        guard !current.isEmpty else { return }
-                        folders = current.sorted(); load()
-                    })).toggleStyle(.button).controlSize(.small)
-                }
-                Spacer()
-                if !map.semantic {
-                    Text(T("Meaning search is off, so these groups follow shared words.", "Anlam araması kapalı; gruplar ortak kelimelere göre.")).font(.caption).foregroundStyle(.secondary)
-                }
-                if map.truncated {
-                    Text(T("Showing the most-linked notes only.", "Yalnızca en çok bağlantılı notlar gösteriliyor.")).font(.caption).foregroundStyle(.secondary)
-                }
-                Text(T("\(map.nodes.count) notes · \(map.edges.count) links", "\(map.nodes.count) not · \(map.edges.count) bağlantı")).font(.caption).foregroundStyle(.secondary)
-            }.padding(.horizontal, 20).padding(.bottom, 8)
-            HStack(alignment: .top, spacing: 0) {
-                GeometryReader { geo in canvas(geo.size).onAppear { canvasSize = geo.size }.onChange(of: geo.size) { canvasSize = geo.size } }
-                    .background(Color(nsColor: .textBackgroundColor))
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.2)))
-                legend.frame(width: 220)
-            }.padding(.horizontal, 20).padding(.bottom, 16)
+    /// Two fingers on a trackpad move the map; a mouse wheel, or ⌘ with two fingers, zooms
+    /// around the pointer. Only while the pointer is over the map, so the page still scrolls elsewhere.
+    func scrolled(_ e: NSEvent, _ size: CGSize) -> Bool {
+        guard let at = scroll.pointer else { return false }
+        if e.hasPreciseScrollingDeltas && !e.modifierFlags.contains(.command) {
+            camera.pan.width += e.scrollingDeltaX; camera.pan.height += e.scrollingDeltaY
+        } else {
+            let away = e.scrollingDeltaY * (e.isDirectionInvertedFromDevice ? -1 : 1) * (e.hasPreciseScrollingDeltas ? 1 : 10)
+            camera = camera.zoomed(by: exp(away * 0.01), at: at, in: size)
         }
-        .onAppear { if !loaded || source != model.vaultSource { load() } }
-        .onChange(of: model.vaultSource) { folders = nil; load() }   // another source has its own folders
+        if hover != nil { hover = nil }
+        if !scrolling { scrolling = true }
+        settle?.cancel()
+        let done = DispatchWorkItem { scrolling = false }
+        settle = done
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18, execute: done)
+        return true
     }
-    var legend: some View {
+    var body: some View {
+        GeometryReader { geo in
+            let size = geo.size
+            let _ = { scroll.handle = { e in scrolled(e, size) } }()
+            let moving = scrolling || livePan != .zero || liveZoom != 1
+            MapLayer(map: map, camera: shown(size), hover: hover, focus: focus, open: open, matches: matches, moving: moving)
+                .contentShape(Rectangle())
+                .onContinuousHover { phase in
+                    switch phase {
+                    case .active(let location):
+                        scroll.pointer = location
+                        let found = moving ? nil : nearest(location, size)
+                        if found != hover { hover = found }   // redraw only when the note under the pointer changes
+                    case .ended:
+                        scroll.pointer = nil
+                        if hover != nil { hover = nil }
+                    }
+                }
+                .simultaneousGesture(SpatialTapGesture().onEnded { value in
+                    if let i = nearest(value.location, size) { openNote(i) }
+                })
+                .gesture(DragGesture(minimumDistance: 3).onChanged { livePan = $0.translation; if hover != nil { hover = nil } }.onEnded { v in
+                    camera.pan.width += v.translation.width; camera.pan.height += v.translation.height; livePan = .zero
+                })
+                .simultaneousGesture(MagnifyGesture().onChanged { v in
+                    if liveZoom == 1 { anchor = v.startLocation }
+                    liveZoom = v.magnification
+                }.onEnded { v in
+                    camera = camera.zoomed(by: v.magnification, at: anchor, in: size); liveZoom = 1
+                })
+                .overlay(alignment: .topLeading) {
+                    if let h = hover, h < map.nodes.count {
+                        let n = map.nodes[h], p = n.point.applying(map.transform(shown(size), size))
+                        MapCard(node: n, topic: topicName(n.cluster), color: map.color(n.cluster))
+                            .frame(width: 250, alignment: .leading)
+                            .offset(x: min(max(8, p.x + 16), size.width - 258), y: p.y > size.height - 120 ? p.y - 110 : p.y + 14)
+                            .allowsHitTesting(false)
+                    }
+                }
+        }
+        .onChange(of: map.id) { hover = nil; livePan = .zero; liveZoom = 1 }
+        .onAppear {
+            scroll.monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [scroll] e in scroll.handle?(e) == true ? nil : e }
+        }
+        .onDisappear { if let m = scroll.monitor { NSEvent.removeMonitor(m) }; scroll.monitor = nil; scroll.handle = nil }
+    }
+}
+
+/// What the pointer is on: the note's title, where it sits and how linked it is.
+struct MapCard: View {
+    let node: MapData.Node, topic: String, color: Color
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Circle().fill(color).frame(width: 8, height: 8)
+                Text(topic).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Text(node.title).font(.callout.weight(.semibold)).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 6) {
+                if !node.type.isEmpty { Text(metaValue(node.type)) }
+                Text(node.folder.isEmpty ? T("Main folder", "Ana klasör") : node.folder + "/").lineLimit(1).truncationMode(.middle)
+            }.font(.caption).foregroundStyle(.secondary)
+            Text(T("\(Int(node.degree)) links · click to open", "\(Int(node.degree)) bağlantı · açmak için tıkla")).font(.caption2).foregroundStyle(.tertiary)
+        }
+        .padding(10)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9))
+        .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.secondary.opacity(0.2)))
+        .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
+    }
+}
+
+/// The topic list beside the map. Equatable, so moving the map does not rebuild it.
+struct MapLegend: View, Equatable {
+    let topics: [MapData.Topic]
+    let focus: Int?
+    let pick: (Int) -> Void
+    let reset: () -> Void
+    static func == (a: MapLegend, b: MapLegend) -> Bool { a.topics == b.topics && a.focus == b.focus }
+    var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 2) {
                 Text(T("Topics", "Konular")).font(.headline).padding(.bottom, 6)
-                ForEach(map.topics, id: \.id) { t in
-                    Button { focusOn(t.id) } label: {
+                ForEach(topics, id: \.id) { t in
+                    Button { pick(t.id) } label: {
                         HStack(spacing: 8) {
                             Circle().fill(topicColor(t.slot)).frame(width: 10, height: 10)
                             Text(t.unlinked ? T("Not indexed yet", "Henüz indekslenmedi") : t.label).lineLimit(2).multilineTextAlignment(.leading)
@@ -3053,144 +3557,1227 @@ struct GraphView: View {
             }.padding(.leading, 14)
         }
     }
-    func canvas(_ size: CGSize) -> some View {
-        let at = project(size), u = fit(size) * scale, detail = detail, map = map, focus = focus
-        let hovered = hover.flatMap { $0 < map.nodes.count ? $0 : nil }
-        let lit = Set(hovered.map { map.neighbours[$0] } ?? [])
-        let surface = Color(nsColor: .textBackgroundColor)
-        let colors = Dictionary(uniqueKeysWithValues: map.topics.map { ($0.id, topicColor($0.slot)) })
-        let view = CGRect(origin: .zero, size: size).insetBy(dx: -60, dy: -30)
-        return Canvas(rendersAsynchronously: true) { ctx, _ in
-            // Clouds: one soft disc per topic.
-            for t in map.topics where !t.unlinked {
-                let c = at(t.centre), r = t.r * 1.12 * u
-                let dim = focus != nil && focus != t.id
-                ctx.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)),
-                         with: .color((colors[t.id] ?? .secondary).opacity(dim ? 0.03 : 0.07 + 0.07 * (1 - detail))))
-            }
-            // Links, batched into one path per topic plus one for links between topics.
-            var inner: [Int: Path] = [:], across = Path()
-            for (a, b) in map.edges {
-                let na = map.nodes[a], nb = map.nodes[b]
-                if focus != nil && na.cluster != focus && nb.cluster != focus { continue }
-                if na.cluster == nb.cluster {
-                    inner[na.cluster, default: Path()].move(to: at(na.point)); inner[na.cluster]!.addLine(to: at(nb.point))
-                } else { across.move(to: at(na.point)); across.addLine(to: at(nb.point)) }
-            }
-            ctx.stroke(across, with: .color(Color.secondary.opacity(0.12)), lineWidth: 0.8)
-            for (cluster, path) in inner { ctx.stroke(path, with: .color((colors[cluster] ?? .secondary).opacity(0.28)), lineWidth: 0.8) }
-            if let h = hovered {
-                var path = Path()
-                for j in map.neighbours[h] { path.move(to: at(map.nodes[h].point)); path.addLine(to: at(map.nodes[j].point)) }
-                ctx.stroke(path, with: .color(Color.primary.opacity(0.7)), lineWidth: 1.5)
-            }
-            // Notes: a dot per note with a surface ring so overlapping dots stay distinct.
-            let grow = 0.8 + 0.2 * min(scale, 3)
-            var rings = Path(), dots: [Int: Path] = [:], faded: [Int: Path] = [:]
-            for n in map.nodes {
-                let p = at(n.point)
-                guard view.contains(p) else { continue }
-                let r = n.radius * grow, rect = CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)
-                rings.addEllipse(in: rect.insetBy(dx: -1.5, dy: -1.5))
-                if focus != nil && n.cluster != focus { faded[n.cluster, default: Path()].addEllipse(in: rect) }
-                else { dots[n.cluster, default: Path()].addEllipse(in: rect) }
-            }
-            ctx.fill(rings, with: .color(surface))
-            for (cluster, path) in faded { ctx.fill(path, with: .color((colors[cluster] ?? .secondary).opacity(0.2))) }
-            for (cluster, path) in dots { ctx.fill(path, with: .color(colors[cluster] ?? .secondary)) }
-            if let h = hovered {
-                let n = map.nodes[h], p = at(n.point), r = n.radius * grow + 3
-                ctx.stroke(Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)), with: .color(.primary), lineWidth: 1.5)
-            }
-            // Note titles once zoomed in, plus the hovered note and its neighbours. The
-            // most-linked notes are named first; a title that would cover another is skipped.
-            if detail > 0 || hovered != nil {
-                var placed: [CGRect] = []
-                var order = (detail > 0 ? Array(map.nodes.indices) : []).filter { i in
-                    (focus == nil || map.nodes[i].cluster == focus) && view.contains(at(map.nodes[i].point))
-                }.sorted { map.nodes[$0].degree > map.nodes[$1].degree }
-                if let h = hovered { order = [h] + map.neighbours[h] + order }
-                for i in order {
-                    let n = map.nodes[i], p = at(n.point), strong = i == hovered || lit.contains(i)
-                    let points: CGFloat = i == hovered ? 12 : 10.5
-                    // An estimate is enough to keep titles apart and much cheaper than measuring each one.
-                    let width = CGFloat(n.title.count) * points * 0.55, height = points * 1.3
-                    let rect = CGRect(x: p.x - width / 2, y: p.y + n.radius * grow + 4, width: width, height: height)
-                    if i != hovered && placed.contains(where: { $0.intersects(rect) }) { continue }
-                    placed.append(rect.insetBy(dx: -3, dy: -1))
-                    ctx.draw(Text(n.title).font(.system(size: points, weight: i == hovered ? .semibold : .regular))
-                                .foregroundColor(.primary.opacity(strong ? 1 : detail)),
-                             at: CGPoint(x: p.x, y: rect.minY), anchor: .top)
-                }
-            }
-            // Topic names: zoomed out, a tag in the middle of each cloud; zoomed in, a quieter
-            // name above it so the note titles inside stay readable.
-            for t in map.topics where !t.unlinked && !t.label.isEmpty {
-                let c = at(t.centre), r = t.r * 1.12 * u
-                let dim = focus != nil && focus != t.id
-                let points = min(20, max(12, 10 + sqrt(Double(t.size)) * 1.2))
-                if detail < 1 {
-                    let tag = ctx.resolve(Text(t.label).font(.system(size: points, weight: .bold)).foregroundColor(.primary.opacity(dim ? 0.3 : 1)))
-                    let fits = tag.measure(in: CGSize(width: max(160, r * 2.4), height: 200))
-                    let box = CGRect(x: c.x - fits.width / 2 - 8, y: c.y - fits.height / 2 - 4, width: fits.width + 16, height: fits.height + 8)
-                    ctx.drawLayer { layer in
-                        layer.opacity = 1 - detail
-                        layer.fill(Path(roundedRect: box, cornerRadius: box.height / 2), with: .color(surface.opacity(0.82)))
-                        layer.stroke(Path(roundedRect: box, cornerRadius: box.height / 2), with: .color((colors[t.id] ?? .secondary).opacity(dim ? 0.2 : 0.7)), lineWidth: 1.5)
-                        layer.draw(tag, in: box.insetBy(dx: 8, dy: 4))
-                    }
-                }
-                if detail > 0 {
-                    ctx.draw(Text(t.label).font(.system(size: points, weight: .bold)).foregroundColor(.primary.opacity((dim ? 0.3 : 0.85) * detail)),
-                             at: CGPoint(x: c.x, y: c.y - r - 4), anchor: .bottom)
-                }
-            }
-        }
-        .contentShape(Rectangle())
-        .onContinuousHover { phase in
-            let found: Int?
-            switch phase {
-            case .active(let location): found = nearest(location, size)
-            case .ended: found = nil
-            }
-            if found != hover { hover = found }   // redraw only when the note under the pointer changes
-        }
-        .simultaneousGesture(SpatialTapGesture().onEnded { value in
-            if let i = nearest(value.location, size) { model.openNote(map.nodes[i].path, source: map.sourceId.isEmpty ? model.vaultSource : map.sourceId) }
-        })
-        .gesture(DragGesture(minimumDistance: 3).onChanged { livePan = $0.translation; hover = nil }.onEnded { v in
-            pan.width += v.translation.width; pan.height += v.translation.height; livePan = .zero
-        })
-        .simultaneousGesture(MagnifyGesture().onChanged { liveZoom = $0.magnification }.onEnded { v in
-            zoom = min(8, max(0.4, zoom * v.magnification)); liveZoom = 1
-        })
+}
+
+/// Every note as a dot, notes about the same thing pulled into topic clouds. Zoomed out the clouds and
+/// their names show what the vault is about; zooming in brings out the note titles.
+/// Topics come from the meaning of the notes (the search index's vectors); the lines drawn
+/// are the links, [[wiki links]] and Markdown links alike. Any connected notes folder can be
+/// shown, a GitHub knowledge base too. The map is still unless asked: hovering lights a note
+/// and its links and fades the rest, and only picking a topic, a found note or a zoom button
+/// moves the view, gliding there.
+struct GraphView: View {
+    @ObservedObject var model: Model
+    @State private var map = MapData()
+    @State private var folders: [String]? = nil
+    @State private var loading = false
+    @State private var camera = MapCamera()
+    @State private var focus: Int? = nil
+    @State private var find = ""
+    @State private var canvasSize = CGSize(width: 800, height: 600)
+    /// The folder shown: the one picked here, else the one open on the Notes page.
+    var source: String { model.graphSource.isEmpty ? model.vaultSource : model.graphSource }
+    var key: String { source + "|" + (folders ?? []).joined(separator: ",") }
+    var matches: Set<Int>? {
+        let q = find.lowercased().trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return nil }
+        return Set(map.search.indices.filter { map.search[$0].contains(q) })
     }
-    func reset() { zoom = 1; pan = .zero; focus = nil }
+    var body: some View {
+        let matches = matches
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(T("Map of your notes", "Notlarının haritası")).font(.title2.bold())
+                    Text(T("Each dot is a note; notes about the same thing gather into topics, lines are links. Move with two fingers, zoom by pinching or with ⌘, click a note to open it.",
+                           "Her nokta bir not; aynı şeyden bahseden notlar konulara toplanır, çizgiler linklerdir. İki parmakla kaydır, kıstırarak ya da ⌘ ile yakınlaş, açmak için nota tıkla."))
+                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                if loading { ProgressView().controlSize(.small) }
+                Button { zoom(by: 1.5) } label: { Image(systemName: "plus.magnifyingglass") }.help(T("Zoom in", "Yakınlaş"))
+                Button { zoom(by: 1 / 1.5) } label: { Image(systemName: "minus.magnifyingglass") }.help(T("Zoom out", "Uzaklaş"))
+                Button { reset() } label: { Image(systemName: "arrow.up.left.and.down.right.magnifyingglass") }.help(T("Show everything", "Tümünü göster"))
+            }.padding([.horizontal, .top], 20).padding(.bottom, 10)
+            HStack(spacing: 10) {
+                if model.browsableSources.count > 1 {
+                    Picker(T("Notes folder", "Not klasörü"), selection: Binding(get: { source }, set: { pick($0) })) {
+                        ForEach(model.browsableSources.indices, id: \.self) { i in
+                            Text(model.sourceLabel(model.browsableSources[i])).tag(str(model.browsableSources[i], "source_id"))
+                        }
+                    }.labelsHidden().fixedSize().help(T("Which connected notes folder to map", "Hangi bağlı not klasörünün haritası"))
+                }
+                TextField(T("Find a note", "Not bul"), text: $find).textFieldStyle(.roundedBorder).frame(maxWidth: 220)
+                    .onSubmit { flyToMatch() }
+                if let matches {
+                    Text(matches.isEmpty ? T("No match", "Eşleşme yok") : T("\(matches.count) found · ↩ to go", "\(matches.count) not · gitmek için ↩")).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                if !map.semantic {
+                    Text(T("Meaning search is off, so these groups follow shared words.", "Anlam araması kapalı; gruplar ortak kelimelere göre.")).font(.caption).foregroundStyle(.secondary)
+                }
+                if map.truncated {
+                    Text(T("Showing the most-linked notes only.", "Yalnızca en çok bağlantılı notlar gösteriliyor.")).font(.caption).foregroundStyle(.secondary)
+                }
+                Text(T("\(map.nodes.count) notes · \(map.edges.count) links", "\(map.nodes.count) not · \(map.edges.count) bağlantı")).font(.caption).foregroundStyle(.secondary)
+            }.padding(.horizontal, 20).padding(.bottom, 8)
+            if map.available.count > 1 {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        Text(T("Folders:", "Klasörler:")).font(.caption).foregroundStyle(.secondary)
+                        ForEach(map.available, id: \.self) { f in
+                            Toggle(f.isEmpty ? T("(top level)", "(en üst)") : f + "/", isOn: Binding(get: { map.folders.contains(f) }, set: { value in
+                                var current = Set(map.folders)
+                                if value { current.insert(f) } else { current.remove(f) }
+                                guard !current.isEmpty else { return }
+                                folders = current.sorted(); load()
+                            })).toggleStyle(.button).controlSize(.small)
+                        }
+                    }
+                }.padding(.horizontal, 20).padding(.bottom, 8)
+            }
+            HStack(alignment: .top, spacing: 0) {
+                MapCanvas(map: map, camera: $camera, focus: focus, open: openIndex, matches: matches,
+                          topicName: { id in map.topic(id).map { $0.unlinked ? T("Not indexed yet", "Henüz indekslenmedi") : $0.label } ?? "" },
+                          openNote: { i in model.openNote(map.nodes[i].path, source: map.sourceId.isEmpty ? source : map.sourceId) })
+                    .background(GeometryReader { geo in Color(nsColor: .textBackgroundColor).onAppear { canvasSize = geo.size }.onChange(of: geo.size) { canvasSize = geo.size } })
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.2)))
+                    .overlay {
+                        if map.nodes.isEmpty && !loading {
+                            Text(T("No notes to show in these folders.", "Bu klasörlerde gösterilecek not yok.")).foregroundStyle(.secondary)
+                        }
+                    }
+                MapLegend(topics: map.topics, focus: focus, pick: { focusOn($0) }, reset: { reset() }).equatable().frame(width: 220)
+            }.padding(.horizontal, 20).padding(.bottom, 16)
+        }
+        .onAppear { load() }
+        .onChange(of: model.vaultSource) { if model.graphSource.isEmpty { folders = nil; load() } }   // another source has its own folders
+    }
+    /// The note open on the Notes page, ringed on the map when it is on it.
+    var openIndex: Int? {
+        let path = str(model.note, "path", "")
+        guard !path.isEmpty, str(model.note, "source_id", model.vaultSource) == map.sourceId else { return nil }
+        return map.indexOf[path]
+    }
+    func pick(_ sid: String) {
+        guard sid != source else { return }
+        model.graphSource = sid; folders = nil; find = ""; load()
+    }
+    func glide(_ change: () -> Void) { withAnimation(.smooth(duration: 0.45)) { change() } }
+    func zoom(by factor: CGFloat) {
+        glide { camera = camera.zoomed(by: factor, at: CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2), in: canvasSize) }
+    }
+    func reset() { glide { camera = MapCamera(); focus = nil } }
     /// Centres a topic and zooms until it fills most of the view.
     func focusOn(_ id: Int) {
         guard focus != id, let t = map.topic(id) else { reset(); return }
         let b = map.bounds
-        focus = id
-        zoom = min(8, max(1, min(b.width, b.height) / max(t.r * 2.6, 0.001)))
-        let f = fit(canvasSize)
-        pan = CGSize(width: -(t.centre.x - b.midX) * f * zoom, height: -(t.centre.y - b.midY) * f * zoom)
+        glide {
+            focus = id
+            camera = map.centring(t.centre, zoom: min(8, max(1, min(b.width, b.height) / max(t.r * 2.6, 0.001))), canvasSize)
+        }
     }
+    /// The most-linked note whose title matches, brought to the middle.
+    func flyToMatch() {
+        guard let matches, let best = map.byDegree.first(where: { matches.contains($0) }) else { return }
+        glide { focus = nil; camera = map.centring(map.nodes[best].point, zoom: max(camera.zoom, 3.2), canvasSize) }
+    }
+    /// Shows the map from this session's cache at once and asks the core again only when the
+    /// cached one is older than half a minute; an unchanged answer leaves the view as it is.
     func load() {
-        var fields = model.vaultFields
+        let sid = source, k = key
+        if let cached = model.maps[k] {
+            if cached.data != map { show(cached.data) }
+            if Date().timeIntervalSince(cached.at) < 30 { return }
+        }
+        var fields: [String: Any] = sid.isEmpty ? [:] : ["source_id": sid]
         if let folders { fields["folders"] = folders }
         loading = true
-        let requested = model.vaultSource
-        model.request("vault_graph", fields, clearError: false, quiet: true, orElse: { e in loading = false; model.error = e.localizedDescription }) { value in
+        model.request("vault_graph", fields, clearError: false, quiet: true, orElse: { e in
             loading = false
-            guard requested == model.vaultSource else { return }
-            map = MapData(value); loaded = true; source = requested; hover = nil; focus = nil; zoom = 1; pan = .zero
+            if model.maps[k] == nil { model.error = e.localizedDescription }
+        }) { value in
+            loading = false
+            let raw = NSDictionary(dictionary: value)
+            if let cached = model.maps[k], cached.raw.isEqual(raw) {
+                model.maps[k] = (cached.data, raw, Date())
+                return
+            }
+            let data = MapData(value)
+            model.maps[k] = (data, raw, Date())
+            if k == key { show(data) }      // the owner may have moved on to another folder meanwhile
         }
+    }
+    func show(_ data: MapData) {
+        let moved = data.sourceId != map.sourceId || data.folders != map.folders
+        map = data
+        if moved || map.nodes.isEmpty { camera = MapCamera(); focus = nil }
+        if let f = focus, data.topic(f) == nil { focus = nil }
+    }
+}
+
+// MARK: - Carry Meet
+// A meeting is recorded from the microphone and, on macOS 14.2+, the system audio (the other
+// side of a call, also in headphones), and transcribed live on this Mac by Apple's on-device
+// recognizer. Each side is also written to a temporary WAV file in the workspace. At Stop the
+// transcript and that folder go to carry.meet, which saves the note at once; in the background
+// Whisper transcribes the audio again on this Mac, the audio is deleted, and the owner's
+// connected assistant summarises the meeting.
+
+/// One line of a meeting transcript: who spoke ("me" is the microphone, "others" the system
+/// audio), seconds from the start of the recording, and what the recognizer heard.
+struct Utterance { let start: Double; let speaker: String; let text: String }
+
+/// Any PCM buffer as 16 kHz mono Float32, the smallest stream the recognizer takes.
+final class MonoConverter {
+    static let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)!
+    private var converter: AVAudioConverter?
+    private var input: AVAudioFormat?
+    func convert(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        if input != buffer.format { converter = AVAudioConverter(from: buffer.format, to: Self.format); input = buffer.format }
+        guard let converter else { return nil }
+        let capacity = AVAudioFrameCount(Double(buffer.frameLength) * Self.format.sampleRate / buffer.format.sampleRate) + 32
+        guard let out = AVAudioPCMBuffer(pcmFormat: Self.format, frameCapacity: capacity) else { return nil }
+        var fed = false
+        var error: NSError?
+        converter.convert(to: out, error: &error) { _, status in
+            if fed { status.pointee = .noDataNow; return nil }
+            fed = true; status.pointee = .haveData; return buffer
+        }
+        return error == nil && out.frameLength > 0 ? out : nil
+    }
+}
+
+/// One side of a meeting as a temporary 16 kHz mono 16-bit WAV for Whisper. A gap (the
+/// microphone restarting, the call audio rebuilt) is filled with silence, so both sides keep
+/// the recording's clock. Writes run on their own queue, off the capture thread.
+final class AudioTrack {
+    static let rate = 16_000.0
+    private var file: AVAudioFile?
+    private let origin: Date
+    private var written: AVAudioFramePosition = 0
+    private let queue = DispatchQueue(label: "carry.meet.track", qos: .utility)
+    init?(url: URL, origin: Date) {
+        let settings: [String: Any] = [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: Self.rate, AVNumberOfChannelsKey: 1,
+                                       AVLinearPCMBitDepthKey: 16, AVLinearPCMIsFloatKey: false, AVLinearPCMIsBigEndianKey: false]
+        guard let file = try? AVAudioFile(forWriting: url, settings: settings, commonFormat: .pcmFormatFloat32, interleaved: false) else { return nil }
+        self.file = file; self.origin = origin
+    }
+    func write(_ mono: AVAudioPCMBuffer) {
+        // Where the buffer belongs on the recording's clock: it ends now.
+        let due = AVAudioFramePosition(Date().timeIntervalSince(origin) * Self.rate) - AVAudioFramePosition(mono.frameLength)
+        queue.async {
+            guard let file = self.file else { return }
+            while due - self.written > AVAudioFramePosition(Self.rate / 2) {
+                let n = AVAudioFrameCount(min(due - self.written, AVAudioFramePosition(Self.rate)))
+                guard let gap = AVAudioPCMBuffer(pcmFormat: MonoConverter.format, frameCapacity: n), let data = gap.floatChannelData else { break }
+                gap.frameLength = n
+                memset(data[0], 0, Int(n) * MemoryLayout<Float>.size)
+                guard (try? file.write(from: gap)) != nil else { return }
+                self.written += AVAudioFramePosition(n)
+            }
+            if (try? file.write(from: mono)) != nil { self.written += AVAudioFramePosition(mono.frameLength) }
+        }
+    }
+    /// Waits for the last writes and closes the file.
+    func close() { queue.sync { file = nil } }
+}
+
+/// On-device speech recognition for one audio source. One recognition task is unreliable past
+/// about a minute, so a new request starts at the first sentence end after 45 s (at the latest
+/// at 58 s, mid-sentence). Words are split into utterances at pauses.
+final class SpeechStream: @unchecked Sendable {  // requests and results are behind `lock`
+    let speaker: String
+    private let recognizer: SFSpeechRecognizer
+    private let lock = NSLock()
+    private var request: SFSpeechAudioBufferRecognitionRequest?
+    private var current: Kept?
+    private var live: [Kept] = []  // requests whose final result has not come yet
+    private var timer: Timer?
+    private var origin = Date()
+    private var finals: [Utterance] = []
+    private var partialText = ""
+    private let converter = MonoConverter()
+    /// Where this side's audio is kept for Whisper until the meeting is transcribed again.
+    var track: AudioTrack?
+    /// Called once when macOS refuses recognition because Siri and Dictation are off.
+    var onUnavailable: (() -> Void)?
+    private var refused = false
+    static let turnSeconds: TimeInterval = 45
+    static let longestSeconds: TimeInterval = 58
+    static let pause: TimeInterval = 1.5
+
+    init?(speaker: String, locale: String) {
+        guard let r = SFSpeechRecognizer(locale: Locale(identifier: locale)), r.supportsOnDeviceRecognition else { return nil }
+        self.speaker = speaker; recognizer = r
+    }
+    private func locked<T>(_ body: () -> T) -> T { lock.lock(); defer { lock.unlock() }; return body() }
+    var utterances: [Utterance] { locked { finals } }
+    var partial: String { locked { partialText } }
+    private var busy: Bool { locked { live.contains { !$0.done } } }
+
+    func start(origin: Date) {
+        self.origin = origin
+        begin()
+        let t = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
+            guard let self, let old = self.locked({ self.current }), Date().timeIntervalSince(old.started) > Self.longestSeconds else { return }
+            self.rotate(from: old)
+        }
+        RunLoop.main.add(t, forMode: .common)
+        locked { timer = t }
+    }
+    /// Called from the capture thread: convert and hand over, nothing heavier.
+    func append(_ buffer: AVAudioPCMBuffer) {
+        guard let mono = converter.convert(buffer) else { return }
+        locked { request }?.append(mono)
+        track?.write(mono)
+    }
+    /// One request: what it has kept (in its own time), the sentence being heard, and whether
+    /// its final result has come.
+    private final class Kept {
+        let started = Date()
+        var end = -1.0, text = "", partial = "", heard: Double? = nil, done = false
+    }
+    private func keep(_ text: String, at start: Double) {
+        finals.append(Utterance(start: start, speaker: speaker, text: text))
+        finals.sort { $0.start < $1.start }
+    }
+    /// Whether most words of `part` are in `text`: the sentence being heard came back final.
+    static func covered(_ part: String, by text: String) -> Bool {
+        let words = Set(text.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }))
+        let heard = part.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+        return !heard.isEmpty && Double(heard.filter(words.contains).count) >= 0.5 * Double(heard.count)
+    }
+    private func begin() {
+        let r = SFSpeechAudioBufferRecognitionRequest()
+        r.shouldReportPartialResults = true
+        r.requiresOnDeviceRecognition = true
+        r.addsPunctuation = true
+        r.taskHint = .dictation
+        let offset = Date().timeIntervalSince(origin)
+        let kept = Kept()
+        // The on-device recognizer starts over after every pause: the request's final result
+        // holds only the last sentence. Each sentence ends with a result whose words carry
+        // their times; that one is kept, and words before what is already kept are skipped.
+        // A sentence cut off by a new request or by Stop may never come back final: what was
+        // heard of it is kept, at the time it was first heard.
+        let task = recognizer.recognitionTask(with: r) { [weak self] result, error in
+            guard let self else { return }
+            if let e = error as NSError?, e.domain == "kLSRErrorDomain", e.code == 201, !self.refused {
+                self.refused = true; self.onUnavailable?()
+            }
+            let turn: Bool = self.locked {
+                let now = Date().timeIntervalSince(self.origin)
+                let ending = error != nil || result?.isFinal == true
+                defer { if ending { kept.done = true } }
+                var timed = false
+                if let result {
+                    let t = result.bestTranscription
+                    timed = t.segments.contains { $0.duration > 0 }
+                    if kept.heard == nil { kept.heard = now }
+                    if timed {
+                        for u in Self.split(t, offset: offset, speaker: self.speaker, after: kept.end) { self.keep(u.text, at: u.start) }
+                        kept.end = max(kept.end, t.segments.map { $0.timestamp + $0.duration }.max() ?? kept.end)
+                        if Self.covered(kept.partial, by: t.formattedString) { kept.partial = "" }
+                        kept.text = t.formattedString; kept.heard = nil
+                    } else if result.isFinal, !t.formattedString.isEmpty, t.formattedString != kept.text {
+                        self.keep(t.formattedString, at: kept.heard ?? now)
+                        kept.partial = ""
+                    } else if !result.isFinal {
+                        kept.partial = t.formattedString
+                    }
+                }
+                if ending && !kept.partial.isEmpty { self.keep(kept.partial, at: kept.heard ?? now); kept.partial = "" }
+                if self.current === kept { self.partialText = timed || ending ? "" : kept.partial }
+                // A request the recognizer ended itself (an error after a silence, say) hears
+                // nothing more: a new one takes over at once instead of at the 58 s turn.
+                if ending && self.current === kept && !self.refused && Date().timeIntervalSince(kept.started) > 1 { return true }
+                return timed && self.current === kept && Date().timeIntervalSince(kept.started) > Self.turnSeconds
+            }
+            if turn { DispatchQueue.main.async { self.rotate(from: kept) } }
+        }
+        _ = task
+        locked { request = r; current = kept; live.removeAll { $0.done }; live.append(kept) }
+    }
+    /// A new request takes over the audio; the old one is ended and delivers its final result.
+    private func rotate(from old: Kept) {
+        let ended: SFSpeechAudioBufferRecognitionRequest? = locked { current === old ? request : nil }
+        guard let ended else { return }
+        begin()
+        ended.endAudio()
+    }
+    /// The words after `after` (seconds into the request) as utterances, split at pauses.
+    static func split(_ t: SFTranscription, offset: Double, speaker: String, after: Double = -1) -> [Utterance] {
+        var out: [Utterance] = []
+        var words: [String] = [], start = 0.0, end = 0.0
+        for s in t.segments where s.timestamp > after - 0.01 {
+            if !words.isEmpty && s.timestamp - end > pause {
+                out.append(Utterance(start: offset + start, speaker: speaker, text: words.joined(separator: " ")))
+                words = []
+            }
+            if words.isEmpty { start = s.timestamp }
+            words.append(s.substring); end = s.timestamp + s.duration
+        }
+        if !words.isEmpty { out.append(Utterance(start: offset + start, speaker: speaker, text: words.joined(separator: " "))) }
+        return out
+    }
+    private func stopTimer() { locked { defer { timer = nil }; return timer }?.invalidate() }
+    /// Ends the last request and waits up to eight seconds for every final result.
+    func finish() async {
+        DispatchQueue.main.async { self.stopTimer() }  // a Timer is invalidated on the thread it runs on
+        let r: SFSpeechAudioBufferRecognitionRequest? = locked { defer { request = nil; current = nil; partialText = "" }; return request }
+        r?.endAudio()
+        for _ in 0..<80 {
+            if !busy { break }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        // A final result that never came: keep what was heard of its sentence.
+        locked { for k in live where !k.done && !k.partial.isEmpty { keep(k.partial, at: k.heard ?? Date().timeIntervalSince(origin)); k.partial = "" } }
+    }
+}
+
+/// The default microphone through AVAudioEngine; restarts itself when the input device changes
+/// and says so when it cannot (`onLost`).
+final class MicCapture {
+    private let engine = AVAudioEngine()
+    private var observer: NSObjectProtocol?
+    var onBuffer: ((AVAudioPCMBuffer) -> Void)?
+    var onLost: (() -> Void)?
+    func start() throws {
+        let input = engine.inputNode
+        input.removeTap(onBus: 0)
+        input.installTap(onBus: 0, bufferSize: 4096, format: input.outputFormat(forBus: 0)) { [weak self] buffer, _ in self?.onBuffer?(buffer) }
+        engine.prepare()
+        try engine.start()
+        if observer == nil {
+            observer = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
+                guard let self else { return }
+                self.engine.stop(); self.restart(attempt: 1)
+            }
+        }
+    }
+    /// A new device can take a moment to come up: try again for five seconds.
+    private func restart(attempt: Int) {
+        guard observer != nil else { return }  // stopped meanwhile
+        do { try start() } catch {
+            guard attempt < 5 else { onLost?(); return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.restart(attempt: attempt + 1) }
+        }
+    }
+    func stop() {
+        if let observer { NotificationCenter.default.removeObserver(observer) }
+        observer = nil
+        engine.inputNode.removeTap(onBus: 0); engine.stop()
+    }
+}
+
+struct AudioError: LocalizedError {
+    let what: String; let status: OSStatus
+    var errorDescription: String? { "\(what) (\(status))" }
+}
+
+func audioProperty<T>(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector, _ value: inout T) -> OSStatus {
+    var address = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+    var size = UInt32(MemoryLayout<T>.size)
+    return withUnsafeMutablePointer(to: &value) { AudioObjectGetPropertyData(object, &address, 0, nil, &size, $0) }
+}
+
+func audioObjects(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector) -> [AudioObjectID] {
+    var address = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+    var size: UInt32 = 0
+    guard AudioObjectGetPropertyDataSize(object, &address, 0, nil, &size) == noErr, size > 0 else { return [] }
+    var ids = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+    guard AudioObjectGetPropertyData(object, &address, 0, nil, &size, &ids) == noErr else { return [] }
+    return ids
+}
+
+/// Everything this Mac plays, through a Core Audio process tap (macOS 14.2+): a private
+/// aggregate device around the tap, read by an IO block. macOS asks once for system audio
+/// recording. When the output device changes (headphones in or out) or its sample rate does
+/// (AirPods drop to 24 kHz once a call opens their microphone) the tap is built again;
+/// `onLost` says when it cannot be.
+@available(macOS 14.2, *)
+final class SystemAudioCapture {
+    private var tap = AudioObjectID(kAudioObjectUnknown)
+    private var aggregate = AudioObjectID(kAudioObjectUnknown)
+    private var clock = AudioObjectID(kAudioObjectUnknown), rate: Float64 = 0  // the output device the aggregate runs on, and its rate
+    private var proc: AudioDeviceIOProcID?
+    private let queue = DispatchQueue(label: "carry.meet.system", qos: .userInitiated)
+    private var listener: AudioObjectPropertyListenerBlock?
+    private static let outputs = [kAudioHardwarePropertyDefaultOutputDevice, kAudioHardwarePropertyDefaultSystemOutputDevice]
+    private static let rateAddress = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyNominalSampleRate, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+    var onBuffer: ((AVAudioPCMBuffer) -> Void)?
+    var onLost: (() -> Void)?
+
+    func start() throws {
+        guard listener == nil else { return }
+        listener = { [weak self] _, _ in
+            guard let self, self.listener != nil, self.stale else { return }
+            self.teardown()
+            do { try self.build() } catch { self.onLost?() }
+        }
+        do { try build() } catch { listener = nil; throw error }
+        for selector in Self.outputs {
+            var address = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+            AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, .main, listener!)
+        }
+    }
+    /// Whether the system output, or its sample rate, is no longer the one the tap was built on.
+    private var stale: Bool {
+        var output = AudioObjectID(kAudioObjectUnknown), now: Float64 = 0
+        guard audioProperty(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultSystemOutputDevice, &output) == noErr,
+              audioProperty(output, kAudioDevicePropertyNominalSampleRate, &now) == noErr else { return true }
+        return output != clock || now != rate
+    }
+    private func build() throws {
+        let description = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
+        description.uuid = UUID()
+        description.muteBehavior = .unmuted
+        description.isPrivate = true
+        description.name = "Carry Meet"
+        var status = AudioHardwareCreateProcessTap(description, &tap)
+        guard status == noErr else { throw AudioError(what: "process tap", status: status) }
+        var output = AudioObjectID(kAudioObjectUnknown)
+        status = audioProperty(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultSystemOutputDevice, &output)
+        var uid: CFString = "" as CFString
+        if status == noErr { status = audioProperty(output, kAudioDevicePropertyDeviceUID, &uid) }
+        guard status == noErr else { teardown(); throw AudioError(what: "output device", status: status) }
+        if let listener {
+            var address = Self.rateAddress
+            _ = audioProperty(output, kAudioDevicePropertyNominalSampleRate, &rate)
+            if AudioObjectAddPropertyListenerBlock(output, &address, .main, listener) == noErr { clock = output }
+        }
+        let settings: [String: Any] = [
+            kAudioAggregateDeviceNameKey: "Carry Meet",
+            kAudioAggregateDeviceUIDKey: UUID().uuidString,
+            kAudioAggregateDeviceMainSubDeviceKey: uid as String,
+            kAudioAggregateDeviceIsPrivateKey: true,
+            kAudioAggregateDeviceIsStackedKey: false,
+            kAudioAggregateDeviceTapAutoStartKey: true,
+            kAudioAggregateDeviceSubDeviceListKey: [[kAudioSubDeviceUIDKey: uid as String]],
+            kAudioAggregateDeviceTapListKey: [[kAudioSubTapDriftCompensationKey: true, kAudioSubTapUIDKey: description.uuid.uuidString]],
+        ]
+        status = AudioHardwareCreateAggregateDevice(settings as CFDictionary, &aggregate)
+        guard status == noErr else { teardown(); throw AudioError(what: "aggregate device", status: status) }
+        var stream = AudioStreamBasicDescription()
+        status = audioProperty(tap, kAudioTapPropertyFormat, &stream)
+        // The IO block runs at the aggregate's rate. Taken from the tap alone, a call on AirPods
+        // (24 kHz) came out at twice its speed, half of each second silence (measured 15 Oct).
+        var running: Float64 = 0
+        if status == noErr, audioProperty(aggregate, kAudioDevicePropertyNominalSampleRate, &running) == noErr, running > 0 { stream.mSampleRate = running }
+        guard status == noErr, let format = AVAudioFormat(streamDescription: &stream) else { teardown(); throw AudioError(what: "tap format", status: status) }
+        status = AudioDeviceCreateIOProcIDWithBlock(&proc, aggregate, queue) { [weak self] _, input, _, _, _ in
+            guard let self, let copy = Self.copy(input, format) else { return }
+            self.onBuffer?(copy)
+        }
+        guard status == noErr else { teardown(); throw AudioError(what: "io proc", status: status) }
+        status = AudioDeviceStart(aggregate, proc)
+        guard status == noErr else { teardown(); throw AudioError(what: "device start", status: status) }
+    }
+    /// The IO block's buffers live only during the call: copy them out.
+    private static func copy(_ list: UnsafePointer<AudioBufferList>, _ format: AVAudioFormat) -> AVAudioPCMBuffer? {
+        let source = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: list))
+        guard let first = source.first, first.mDataByteSize > 0 else { return nil }
+        let frames = first.mDataByteSize / max(format.streamDescription.pointee.mBytesPerFrame, 1)
+        guard frames > 0, let out = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames) else { return nil }
+        out.frameLength = frames
+        let target = UnsafeMutableAudioBufferListPointer(out.mutableAudioBufferList)
+        for (i, buffer) in source.enumerated() where i < target.count {
+            guard let from = buffer.mData, let to = target[i].mData else { continue }
+            memcpy(to, from, Int(min(buffer.mDataByteSize, target[i].mDataByteSize)))
+        }
+        return out
+    }
+    func stop() {
+        if let listener {
+            for selector in Self.outputs {
+                var address = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+                AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, .main, listener)
+            }
+        }
+        teardown()
+        listener = nil
+    }
+    private func teardown() {
+        if clock != kAudioObjectUnknown, let listener {
+            var address = Self.rateAddress
+            AudioObjectRemovePropertyListenerBlock(clock, &address, .main, listener)
+        }
+        clock = AudioObjectID(kAudioObjectUnknown); rate = 0
+        if aggregate != kAudioObjectUnknown {
+            if let proc { AudioDeviceStop(aggregate, proc); AudioDeviceDestroyIOProcID(aggregate, proc) }
+            AudioHardwareDestroyAggregateDevice(aggregate)
+        }
+        if tap != kAudioObjectUnknown { AudioHardwareDestroyProcessTap(tap) }
+        proc = nil; aggregate = AudioObjectID(kAudioObjectUnknown); tap = AudioObjectID(kAudioObjectUnknown)
+    }
+}
+
+/// Which other apps have the microphone open: Core Audio's process list on macOS 14.2+ (bundle
+/// IDs), else whether the default input device runs at all.
+enum MicUsers {
+    static func current() -> [String] {
+        let me = ProcessInfo.processInfo.processIdentifier
+        if #available(macOS 14.2, *) {
+            return audioObjects(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyProcessObjectList).compactMap { p in
+                var running: UInt32 = 0, pid: pid_t = 0
+                var bundle: CFString = "" as CFString
+                guard audioProperty(p, kAudioProcessPropertyIsRunningInput, &running) == noErr, running != 0,
+                      audioProperty(p, kAudioProcessPropertyPID, &pid) == noErr, pid != me else { return nil }
+                _ = audioProperty(p, kAudioProcessPropertyBundleID, &bundle)
+                return (bundle as String).isEmpty ? "pid:\(pid)" : bundle as String
+            }
+        }
+        var device = AudioObjectID(kAudioObjectUnknown), running: UInt32 = 0
+        guard audioProperty(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultInputDevice, &device) == noErr,
+              audioProperty(device, kAudioDevicePropertyDeviceIsRunningSomewhere, &running) == noErr else { return [] }
+        return running != 0 ? ["input"] : []
+    }
+    /// "Zoom", "Google Chrome": a helper's bundle ID (com.google.Chrome.helper) names its app.
+    static func appName(_ id: String) -> String? {
+        var parts = id.split(separator: ".").map(String.init)
+        while parts.count >= 2 {
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: parts.joined(separator: ".")) {
+                // A helper inside an app (Teams' "ModuleHost") is named by the app around it.
+                let components = url.pathComponents
+                let outer = components.firstIndex { $0.hasSuffix(".app") }.map { NSString.path(withComponents: Array(components[...$0])) } ?? url.path
+                return FileManager.default.displayName(atPath: outer).replacingOccurrences(of: ".app", with: "")
+            }
+            parts.removeLast()
+        }
+        return nil
+    }
+}
+
+func clock(_ seconds: Double) -> String {
+    let s = Int(seconds)
+    return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60) : String(format: "%02d:%02d", s / 60, s % 60)
+}
+
+/// Notifications for Carry Meet: "a meeting started, record it?", "did it end?", "summary ready".
+enum MeetingNotice {
+    /// Notifications need an app bundle; a bare binary has none and would crash here.
+    static var available: Bool { Bundle.main.bundleIdentifier != nil }
+    static func setUp(_ delegate: UNUserNotificationCenterDelegate) {
+        guard available else { return }
+        let center = UNUserNotificationCenter.current()
+        center.delegate = delegate
+        center.setNotificationCategories([
+            UNNotificationCategory(identifier: "meeting.start", actions: [UNNotificationAction(identifier: "start", title: T("Start recording", "Kaydı başlat"))], intentIdentifiers: []),
+            UNNotificationCategory(identifier: "meeting.end", actions: [UNNotificationAction(identifier: "stop", title: T("Stop recording", "Kaydı durdur"))], intentIdentifiers: []),
+        ])
+    }
+    static func post(_ id: String, _ title: String, _ body: String, category: String? = nil) {
+        guard available else { return }
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            guard granted else { return }
+            let content = UNMutableNotificationContent()
+            content.title = title; content.body = body
+            if let category { content.categoryIdentifier = category }
+            center.add(UNNotificationRequest(identifier: id, content: content, trigger: nil))
+        }
+    }
+}
+
+/// Opens Carry's window from the menu bar or a notification; the label view hands over the action.
+@MainActor enum MainWindow {
+    static var open: OpenWindowAction?
+    static func show() {
+        if let w = NSApp.windows.first(where: { $0.identifier?.rawValue.hasPrefix("main") == true && ($0.isVisible || $0.isMiniaturized) }) {
+            w.deminiaturize(nil); w.makeKeyAndOrderFront(nil)
+        } else { open?(id: "main") }
+        NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
+/// Carry stays in the menu bar and watches for meetings unless the owner turns it off.
+var meetingMenuBar: Bool { UserDefaults.standard.object(forKey: "meetingMenuBar") as? Bool ?? true }
+
+@MainActor final class MeetingRecorder: ObservableObject {
+    static let shared = MeetingRecorder()
+    @Published private(set) var recording = false
+    @Published private(set) var saving = false
+    @Published private(set) var elapsed: Double = 0
+    @Published private(set) var lines: [Utterance] = []
+    @Published private(set) var partials: [Utterance] = []
+    @Published private(set) var hearsSystem = false
+    @Published private(set) var unsaved: [String: Any]? = nil
+    @Published var title = ""
+    @Published var problem = ""
+    @Published var problemSettings = ""
+    @Published var notice = ""
+    @Published var openMeetings = 0  // bumped to bring the Meetings page forward
+    @Published var changed = 0       // bumped when a meeting was saved or its summary finished
+    private var started = Date()
+    private var mic: MicCapture?
+    private var system: AnyObject?
+    private var streams: [SpeechStream] = []
+    private var audio: URL?  // this meeting's WAV files, until carry.meet has transcribed them again
+    private var timer: Timer?
+    private var summaries: [String: String] = [:]  // path: title, while the summary runs
+    private var poll: Timer?
+    private var journaled = -1  // lines in the journal, written every 10 s while they change
+    private var savedWaiters: [() -> Void] = []
+    static let journalName = "transcript.json"
+    var workspace: String { ProcessInfo.processInfo.environment["CARRY_DESKTOP_WORKSPACE"] ?? UserDefaults.standard.string(forKey: "workspace") ?? "" }
+    static var locale: String { UserDefaults.standard.string(forKey: "meetingLocale") ?? (Lang.code == "tr" ? "tr-TR" : "en-US") }
+
+    func start(title: String? = nil) {
+        guard !recording, !saving else { return }
+        problem = ""; problemSettings = ""; notice = ""
+        if let title { self.title = title }
+        AVCaptureDevice.requestAccess(for: .audio) { micAllowed in
+            SFSpeechRecognizer.requestAuthorization { speech in
+                DispatchQueue.main.async { MainActor.assumeIsolated { self.begin(micAllowed, speech) } }
+            }
+        }
+    }
+    private func fail(_ message: String, settings: String = "") {
+        problem = message; problemSettings = settings
+        MeetingNotice.post("meeting.problem", T("Carry could not record", "Carry kayıt yapamadı"), message)
+    }
+    private func begin(_ micAllowed: Bool, _ speech: SFSpeechRecognizerAuthorizationStatus) {
+        guard !recording else { return }
+        guard micAllowed else {
+            return fail(T("Carry may not use the microphone. Allow it in System Settings › Privacy & Security › Microphone.",
+                          "Carry mikrofonu kullanamıyor. Sistem Ayarları › Gizlilik ve Güvenlik › Mikrofon bölümünden izin verin."),
+                        settings: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")
+        }
+        guard speech == .authorized else {
+            return fail(T("Carry may not transcribe speech. Allow it in System Settings › Privacy & Security › Speech Recognition.",
+                          "Carry konuşmayı yazıya dökemiyor. Sistem Ayarları › Gizlilik ve Güvenlik › Konuşma Tanıma bölümünden izin verin."),
+                        settings: "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition")
+        }
+        guard let me = SpeechStream(speaker: "me", locale: Self.locale) else {
+            return fail(T("This Mac cannot transcribe this language on the device. Choose another meeting language.",
+                          "Bu Mac bu dili cihaz üstünde yazıya dökemiyor. Başka bir toplantı dili seçin."))
+        }
+        var all = [me]
+        var tap: AnyObject? = nil
+        if #available(macOS 14.2, *), let others = SpeechStream(speaker: "others", locale: Self.locale) {
+            let capture = SystemAudioCapture()
+            capture.onBuffer = { others.append($0) }
+            tap = capture; all.append(others)
+        }
+        started = Date()
+        audio = keepAudio(all)
+        for s in all {
+            s.onUnavailable = { DispatchQueue.main.async { MainActor.assumeIsolated { MeetingRecorder.shared.dictationOff() } } }
+            s.start(origin: started)
+        }
+        let mic = MicCapture()
+        mic.onBuffer = { me.append($0) }
+        mic.onLost = { MainActor.assumeIsolated { MeetingRecorder.shared.lost(T("The microphone stopped after the input device changed. Carry still records the call audio; choose a microphone in System Settings › Sound.", "Giriş aygıtı değişince mikrofon durdu. Carry görüşmenin sesini kaydetmeye devam ediyor; Sistem Ayarları › Ses bölümünden bir mikrofon seçin.")) } }
+        do { try mic.start() } catch {
+            for s in all { Task { await s.finish() } }
+            dropAudio(all)
+            return fail(T("The microphone could not start: \(error.localizedDescription)", "Mikrofon açılamadı: \(error.localizedDescription)"))
+        }
+        hearsSystem = false
+        if #available(macOS 14.2, *), let capture = tap as? SystemAudioCapture {
+            capture.onLost = { MainActor.assumeIsolated {
+                MeetingRecorder.shared.hearsSystem = false
+                MeetingRecorder.shared.lost(T("The call audio stopped after the output device changed; only the microphone is recorded now.", "Çıkış aygıtı değişince görüşmenin sesi kesildi; artık yalnız mikrofon kaydediliyor."))
+            } }
+            do { try capture.start(); hearsSystem = true } catch {
+                let unheard = all.removeLast()  // the microphone alone still works
+                unheard.track?.close(); unheard.track = nil
+                if let audio { try? FileManager.default.removeItem(at: audio.appendingPathComponent("others.wav")) }
+                Task { await unheard.finish() }
+            }
+        }
+        self.mic = mic; system = hearsSystem ? tap : nil; streams = all
+        elapsed = 0; lines = []; partials = []; journaled = -1; recording = true
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in MainActor.assumeIsolated { MeetingRecorder.shared.tick() } }
+    }
+    /// A folder for this meeting's audio in the workspace, one WAV a side; nil when there is no
+    /// workspace or the files cannot be made (Apple's transcript still is).
+    private func keepAudio(_ all: [SpeechStream]) -> URL? {
+        guard !workspace.isEmpty else { return nil }
+        let folder = URL(fileURLWithPath: workspace).appendingPathComponent("meet-audio").appendingPathComponent(UUID().uuidString)
+        guard (try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)) != nil else { return nil }
+        for s in all { s.track = AudioTrack(url: folder.appendingPathComponent("\(s.speaker).wav"), origin: started) }
+        return folder
+    }
+    private func dropAudio(_ all: [SpeechStream]) {
+        for s in all { s.track?.close(); s.track = nil }
+        if let audio { try? FileManager.default.removeItem(at: audio) }
+        audio = nil
+    }
+    /// Part of the recording stopped mid-meeting: say so, the rest goes on.
+    private func lost(_ message: String) {
+        guard recording else { return }
+        problem = message; problemSettings = ""
+        MeetingNotice.post("meeting.lost", T("Part of the recording stopped", "Kaydın bir kısmı durdu"), message)
+    }
+    /// Tells a running Whisper job to pause: a call has the microphone, or Carry records. The
+    /// job reads the flag's age, so a quit app never leaves it paused.
+    func markBusy(_ busy: Bool) {
+        guard !workspace.isEmpty else { return }
+        let flag = URL(fileURLWithPath: workspace).appendingPathComponent("meet-busy").path
+        if busy { FileManager.default.createFile(atPath: flag, contents: nil) }
+        else if FileManager.default.fileExists(atPath: flag) { try? FileManager.default.removeItem(atPath: flag) }
+    }
+    private func tick() {
+        elapsed = Date().timeIntervalSince(started)
+        lines = streams.flatMap { $0.utterances }.sorted { $0.start < $1.start }
+        partials = streams.compactMap { s in s.partial.isEmpty ? nil : Utterance(start: elapsed, speaker: s.speaker, text: s.partial) }
+        if Int(elapsed) % 10 == 0, lines.count != journaled, let audio {
+            journal(saveRequest(lines, duration: elapsed, started: started, title: title, micOnly: !hearsSystem, audio: audio), in: audio)
+            journaled = lines.count
+        }
+    }
+    private func saveRequest(_ all: [Utterance], duration: Double, started: Date, title: String, micOnly: Bool, audio: URL?) -> [String: Any] {
+        let iso = ISO8601DateFormatter(); iso.timeZone = .current
+        // The note is in the language the meeting was transcribed in.
+        var request: [String: Any] = ["action": "meeting_save", "title": title, "started": iso.string(from: started), "duration": duration,
+                                      "language": MeetingRecorder.locale.hasPrefix("tr") ? "Turkish" : "English", "mic_only": micOnly,
+                                      "segments": all.map { ["start": $0.start, "speaker": $0.speaker, "text": $0.text] }]
+        if let audio { request["audio"] = audio.path }
+        return request
+    }
+    /// The transcript so far, next to the meeting's audio: a crash or a failed save loses nothing,
+    /// and the next launch offers it again.
+    private func journal(_ request: [String: Any], in folder: URL) {
+        guard let data = try? JSONSerialization.data(withJSONObject: request) else { return }
+        try? data.write(to: folder.appendingPathComponent(Self.journalName), options: .atomic)
+    }
+    private func dropJournal(_ request: [String: Any]) {
+        guard let path = request["audio"] as? String else { return }
+        try? FileManager.default.removeItem(atPath: URL(fileURLWithPath: path).appendingPathComponent(Self.journalName).path)
+    }
+    /// At launch: a meeting whose save never finished (Carry quit or crashed) waits to be saved again.
+    func recover() {
+        guard !workspace.isEmpty, unsaved == nil else { return }
+        let root = URL(fileURLWithPath: workspace).appendingPathComponent("meet-audio")
+        let folders = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
+        func modified(_ url: URL) -> Date { (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast }
+        let journals = folders.map { $0.appendingPathComponent(Self.journalName) }.filter { FileManager.default.fileExists(atPath: $0.path) }
+        guard let newest = journals.max(by: { modified($0) < modified($1) }), let data = try? Data(contentsOf: newest),
+              let request = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              !((request["segments"] as? [Any]) ?? []).isEmpty else { return }
+        unsaved = request
+        problem = T("A meeting was not saved when Carry last closed. Its transcript is kept; save it again.",
+                    "Carry son kapandığında bir toplantı kaydedilmemişti. Transkripti duruyor; yeniden kaydedin.")
+    }
+    /// Runs `done` once no save is under way.
+    func whenSaved(_ done: @escaping () -> Void) {
+        if saving { savedWaiters.append(done) } else { done() }
+    }
+    private func halt() {
+        timer?.invalidate(); timer = nil
+        mic?.stop(); mic = nil
+        if #available(macOS 14.2, *) { (system as? SystemAudioCapture)?.stop() }
+        system = nil
+        recording = false
+    }
+    /// Siri and Dictation are off: macOS refuses every recognition, so nothing would be saved.
+    func dictationOff() {
+        guard recording else { return }
+        halt(); dropAudio(streams); streams = []; lines = []; partials = []
+        fail(T("Turn on Dictation to transcribe meetings: System Settings › Keyboard › Dictation. Carry uses the recognizer on this Mac; no audio leaves it.",
+               "Toplantıları yazıya dökmek için Dikte'yi açın: Sistem Ayarları › Klavye › Dikte. Carry bu Mac'teki tanıyıcıyı kullanır; ses Mac'ten çıkmaz."),
+             settings: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension")
+    }
+    func stop(then done: (() -> Void)? = nil) {
+        guard recording else { done?(); return }
+        let duration = Date().timeIntervalSince(started), started = started, title = title, streams = streams
+        let micOnly = !hearsSystem, audio = audio
+        halt(); saving = true
+        Task {
+            for s in streams { await s.finish() }
+            for s in streams { s.track?.close(); s.track = nil }
+            let all = streams.flatMap { $0.utterances }.sorted { $0.start < $1.start }
+            await MainActor.run {
+                self.streams = []; self.lines = all; self.partials = []; self.audio = nil
+                // The live recognizer can hear nothing of a side the audio holds: the audio still
+                // goes to Whisper, which writes the transcript.
+                guard !all.isEmpty || audio != nil else {
+                    if let audio { try? FileManager.default.removeItem(at: audio) }
+                    self.saving = false
+                    self.notice = T("Nothing was heard, so nothing was saved.", "Hiçbir şey duyulmadı, bu yüzden bir şey kaydedilmedi.")
+                    done?(); return
+                }
+                let request = self.saveRequest(all, duration: duration, started: started, title: title, micOnly: micOnly, audio: audio)
+                if let audio { self.journal(request, in: audio) }
+                self.save(request, then: done)
+            }
+        }
+    }
+    /// Sends the transcript to be saved; on failure it stays here so it can be sent again.
+    func save(_ request: [String: Any], then done: (() -> Void)? = nil) {
+        saving = true; unsaved = nil
+        var request = request
+        request["workspace"] = workspace
+        let name = str(request, "title", "")
+        AppDelegate.worker.call(request) { result in
+            DispatchQueue.main.async { MainActor.assumeIsolated {
+                self.saving = false
+                switch result {
+                case .success(let value):
+                    self.dropJournal(request)
+                    let path = str(value, "path", "")
+                    self.title = ""; self.changed += 1
+                    self.notice = value["whisper"] as? Bool == true
+                        ? T("Saved to \(path). Carry now transcribes it again on this Mac, deletes the audio and has your connected assistant summarise it; the items will wait on the Review page.",
+                            "\(path) dosyasına kaydedildi. Carry şimdi bu Mac'te yeniden yazıya döküyor, sesi siliyor ve bağlı asistanınıza özetletiyor; maddeler İncele sayfasında sizi bekleyecek.")
+                        : T("Saved to \(path). Your connected assistant summarises it; the items will wait on the Review page.",
+                            "\(path) dosyasına kaydedildi. Bağlı asistanınız özetliyor; maddeler İncele sayfasında sizi bekleyecek.")
+                    self.follow(path, str(value, "title", name))
+                case .failure(let e) where (e as? UIError)?.message == "meeting_transcript_empty"
+                                            && ((request["segments"] as? [Any]) ?? []).isEmpty:
+                    self.dropJournal(request)  // no Whisper on this Mac, and the live recognizer heard nothing
+                    self.notice = T("Nothing was heard, so nothing was saved.", "Hiçbir şey duyulmadı, bu yüzden bir şey kaydedilmedi.")
+                case .failure(let e):
+                    self.unsaved = request
+                    self.problem = T("The transcript could not be saved: \(e.localizedDescription). It is kept until you save it again.",
+                                     "Transkript kaydedilemedi: \(e.localizedDescription). Yeniden kaydedene kadar burada tutuluyor.")
+                }
+                done?()
+                let waiters = self.savedWaiters; self.savedWaiters = []
+                waiters.forEach { $0() }
+            } }
+        }
+    }
+    /// Watches a running summary and says when it is done, even with the window closed.
+    func follow(_ path: String, _ title: String) {
+        summaries[path] = title
+        guard poll == nil else { return }
+        poll = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in MainActor.assumeIsolated { MeetingRecorder.shared.checkSummaries() } }
+    }
+    private func checkSummaries() {
+        AppDelegate.worker.call(["action": "meeting_list", "workspace": workspace]) { result in
+            DispatchQueue.main.async { MainActor.assumeIsolated {
+                guard case .success(let value) = result else { return }
+                for m in value["meetings"] as? [[String: Any]] ?? [] {
+                    let path = str(m, "path", "")
+                    guard let title = self.summaries[path], ["done", "failed", "raw"].contains(str(m, "status")) else { continue }
+                    self.summaries[path] = nil; self.changed += 1
+                    if str(m, "status") == "done" {
+                        MeetingNotice.post("meeting.done." + path, T("Meeting summary ready", "Toplantı özeti hazır"),
+                                           str(m, "digest", "") != "" ? T("\(title): its decisions and open items wait on the Review page.", "\(title): kararları ve açık işleri İncele sayfasında sizi bekliyor.")
+                                                                       : T("\(title): summary written to the meeting note.", "\(title): özet toplantı notuna yazıldı."))
+                    } else if str(m, "status") == "raw" {
+                        MeetingNotice.post("meeting.raw." + path, T("Meeting transcript saved", "Toplantı transkripti kaydedildi"),
+                                           T("\(title): no assistant is connected, so it was not summarised. Connect one under Settings › Assistants.",
+                                             "\(title): bağlı asistan olmadığı için özetlenmedi. Ayarlar › Asistanlar bölümünden bağlayın."))
+                    } else {
+                        MeetingNotice.post("meeting.failed." + path, T("No meeting summary", "Toplantı özeti çıkmadı"),
+                                           T("\(title): the transcript is saved. Retry the summary on the Meetings page.", "\(title): transkript kayıtlı. Özeti Toplantılar sayfasından yeniden deneyin."))
+                    }
+                }
+                if self.summaries.isEmpty { self.poll?.invalidate(); self.poll = nil }
+            } }
+        }
+    }
+}
+
+/// Asks when another app opens the microphone (a call is starting), and reminds when it
+/// closes it while Carry still records. Carry's own recording is never counted.
+@MainActor final class MeetingWatcher {
+    static let shared = MeetingWatcher()
+    private var timer: Timer?
+    private var last: [String] = []
+    private var heard = false, quiet = 0, reminded = false
+    func start() {
+        guard timer == nil else { return }
+        timer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { _ in MainActor.assumeIsolated { MeetingWatcher.shared.check() } }
+    }
+    private func check() {
+        let recorder = MeetingRecorder.shared
+        let users = MicUsers.current().filter { $0 != Bundle.main.bundleIdentifier }
+        defer { last = users }
+        recorder.markBusy(!users.isEmpty || recorder.recording)
+        guard meetingMenuBar else { return }
+        if recorder.recording {
+            if !users.isEmpty { heard = true; quiet = 0 } else if heard { quiet += 1 }
+            if quiet == 3 && !reminded {
+                reminded = true
+                MeetingNotice.post("meeting.end", T("Did the meeting end?", "Toplantı bitti mi?"),
+                                   T("No other app uses the microphone now. Carry is still recording.", "Mikrofonu artık başka bir uygulama kullanmıyor. Carry kayda devam ediyor."), category: "meeting.end")
+            }
+            return
+        }
+        heard = false; quiet = 0; reminded = false
+        guard last.isEmpty, let first = users.first, !recorder.saving else { return }
+        let app = MicUsers.appName(first)
+        MeetingNotice.post("meeting.start", T("A meeting started. Record it?", "Toplantı başladı, kaydedilsin mi?"),
+                           app.map { T("\($0) is using the microphone. Carry transcribes on this Mac; the audio never leaves it and is deleted once transcribed.", "\($0) mikrofonu kullanıyor. Carry bu Mac'te yazıya döker; ses Mac'ten çıkmaz, yazıya döküldükten sonra silinir.") }
+                               ?? T("An app is using the microphone. Carry transcribes on this Mac; the audio never leaves it and is deleted once transcribed.", "Bir uygulama mikrofonu kullanıyor. Carry bu Mac'te yazıya döker; ses Mac'ten çıkmaz, yazıya döküldükten sonra silinir."),
+                           category: "meeting.start")
+        pendingTitle = app.map { T("\($0) meeting", "\($0) toplantısı") } ?? ""
+    }
+    /// The title a recording started from the notification gets.
+    var pendingTitle = ""
+}
+
+struct MeetingsView: View {
+    @ObservedObject var model: Model
+    @ObservedObject var recorder = MeetingRecorder.shared
+    @State private var meetings: [[String: Any]] = []
+    @State private var source = ""  // the notes folder meetings are saved to
+    @AppStorage("meetingMenuBar") private var menuBar = true
+    @AppStorage("meetingLocale") private var locale = Lang.code == "tr" ? "tr-TR" : "en-US"
+    @AppStorage("whisperAsked") private var whisperAsked = false  // the download is offered once
+    @State private var whisper: [String: Any] = [:]
+    private let poll = Timer.publish(every: 4, on: .main, in: .common).autoconnect()
+    var running: Bool { meetings.contains { ["pending", "transcribing", "running"].contains(str($0, "status")) } || downloading }
+    var downloading: Bool { str(whisper["download"] as? [String: Any] ?? [:], "state") == "running" }
+    var body: some View {
+        HSplitView {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(pageName("Meetings")).font(.title.bold())
+                Text(T("Record a meeting on this Mac. Carry writes it down as it is said, from your microphone and, on macOS 14.2 or later, the sound of the call. When you stop, the transcript is saved to your notes; Whisper transcribes the audio again on this Mac, pausing while a call has the microphone, and the audio is deleted. Your connected assistant summarises it once. Its decisions, open items and facts wait for you on the Review page.",
+                       "Toplantıyı bu Mac'te kaydedin. Carry konuşulanı anında yazıya döker: mikrofonunuzdan ve macOS 14.2 ya da sonrasında görüşmenin sesinden. Durdurduğunuzda transkript notlarınıza kaydedilir; Whisper sesi bu Mac'te yeniden yazıya döker (mikrofon bir görüşmede açıkken bekler) ve ses silinir. Bağlı asistanınız bir kez özetler. Kararlar, açık işler ve bilgiler İncele sayfasında sizi bekler."))
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                whisperBox
+                if !recorder.problem.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(recorder.problem).fixedSize(horizontal: false, vertical: true)
+                        HStack {
+                            if !recorder.problemSettings.isEmpty, let url = URL(string: recorder.problemSettings) {
+                                Button(T("Open System Settings", "Sistem Ayarları'nı aç")) { NSWorkspace.shared.open(url) }
+                            }
+                            if let unsaved = recorder.unsaved { Button(T("Save again", "Yeniden kaydet")) { recorder.problem = ""; recorder.save(unsaved) } }
+                            Spacer()
+                            Button { recorder.problem = "" } label: { Image(systemName: "xmark") }.buttonStyle(.plain)
+                        }
+                    }.padding(10).foregroundStyle(.red).background(Color.red.opacity(0.07)).clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                if !recorder.notice.isEmpty && !recorder.recording {
+                    Text(recorder.notice).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+                recorderBox
+                Divider()
+                if meetings.isEmpty {
+                    Text(T("No meetings yet.", "Henüz toplantı yok.")).foregroundStyle(.secondary)
+                    Spacer()
+                } else {
+                    List {
+                        ForEach(meetings.map { str($0, "path") }, id: \.self) { path in
+                            row(meetings.first { str($0, "path") == path } ?? [:])
+                                .listRowBackground(str(model.note, "path", "") == path ? Color.accentColor.opacity(0.15) : Color.clear)
+                        }
+                    }.listStyle(.inset)
+                }
+                Toggle(T("Stay in the menu bar and ask when a meeting starts", "Menü çubuğunda kal, toplantı başlayınca sor"), isOn: $menuBar).font(.callout)
+            }.padding(18).frame(minWidth: 320, idealWidth: 380, maxWidth: 480)
+            if recorder.recording || recorder.saving { LiveTranscript(recorder: recorder).frame(minWidth: 380, maxWidth: .infinity) }
+            else { NoteView(model: model).frame(minWidth: 380, idealWidth: 480, maxWidth: .infinity) }
+        }
+        .onAppear(perform: load)
+        .onChange(of: recorder.changed) { load() }
+        .onReceive(poll) { _ in if running { load() } }
+    }
+    @ViewBuilder var recorderBox: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if recorder.recording {
+                HStack(spacing: 8) {
+                    Image(systemName: "record.circle.fill").foregroundStyle(.red)
+                    Text(clock(recorder.elapsed)).font(.title2.monospacedDigit().weight(.semibold))
+                    Spacer()
+                    Badge(text: recorder.hearsSystem ? T("Microphone + call audio", "Mikrofon + görüşme sesi") : T("Microphone only", "Yalnız mikrofon"))
+                }
+                TextField(T("Title, e.g. Weekly planning", "Başlık, örn. Haftalık planlama"), text: $recorder.title).textFieldStyle(.roundedBorder)
+                Button { recorder.stop() } label: { Label(T("Stop and save", "Durdur ve kaydet"), systemImage: "stop.fill").frame(maxWidth: .infinity) }
+                    .buttonStyle(.borderedProminent).tint(.red).controlSize(.large)
+            } else if recorder.saving {
+                HStack { ProgressView().controlSize(.small); Text(T("Saving the transcript…", "Transkript kaydediliyor…")) }
+            } else {
+                TextField(T("Title (optional)", "Başlık (isteğe bağlı)"), text: $recorder.title).textFieldStyle(.roundedBorder)
+                HStack {
+                    Button { recorder.start() } label: { Label(T("Start recording", "Kaydı başlat"), systemImage: "record.circle") }
+                        .buttonStyle(.borderedProminent).controlSize(.large)
+                    Spacer()
+                    Picker(T("Language", "Dil"), selection: $locale) { Text("Türkçe").tag("tr-TR"); Text("English").tag("en-US") }.frame(width: 170)
+                }
+                if #unavailable(macOS 14.2) {
+                    Text(T("On this macOS only your microphone is recorded; macOS 14.2 or later also hears the call.", "Bu macOS'ta yalnız mikrofonunuz kaydedilir; macOS 14.2 ve sonrası görüşmenin sesini de duyar."))
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }.padding(12).background(Color.secondary.opacity(0.06)).clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+    /// The Whisper model is offered once (874 MB); without it Apple's live transcript stays.
+    @ViewBuilder var whisperBox: some View {
+        let job = whisper["download"] as? [String: Any] ?? [:]
+        if whisper["installed"] as? Bool == true {
+            Label(T("Whisper is ready: each meeting is transcribed again on this Mac once it ends.", "Whisper hazır: her toplantı bitince bu Mac'te yeniden yazıya dökülür."),
+                  systemImage: "checkmark.seal.fill").font(.callout).foregroundStyle(.green).fixedSize(horizontal: false, vertical: true)
+        } else if whisper["runtime"] as? Bool == true, !whisperAsked || downloading {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(T("More accurate transcripts", "Daha doğru transkript")).fontWeight(.medium)
+                Text(T("Whisper transcribes each meeting again on this Mac once it ends, more accurately than the live transcript. It needs a one-time download of \(megabytes(whisper["bytes"])) MB; the audio never leaves this Mac and is deleted once transcribed.",
+                       "Whisper her toplantıyı bitince bu Mac'te yeniden, canlı transkriptten daha doğru yazıya döker. Bir kez \(megabytes(whisper["bytes"])) MB indirmesi gerekir; ses Mac'ten çıkmaz, yazıya döküldükten sonra silinir."))
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                if downloading {
+                    ProgressView(value: Double(megabytes(job["completed"])), total: Double(max(megabytes(job["total"]), 1)))
+                    Text(T("Downloading… \(megabytes(job["completed"])) of \(megabytes(job["total"])) MB", "İndiriliyor… \(megabytes(job["total"])) MB'ın \(megabytes(job["completed"])) MB'ı")).font(.caption).foregroundStyle(.secondary)
+                } else {
+                    if ["failed", "interrupted"].contains(str(job, "state")) {
+                        Text(T("The download did not finish. Try again.", "İndirme tamamlanmadı. Yeniden deneyin.")).font(.caption).foregroundStyle(.red)
+                    }
+                    HStack {
+                        Button(T("Download", "İndir")) { model.run("whisper_download") { _ in load() } }.buttonStyle(.borderedProminent)
+                        Button(T("Not now", "Şimdi değil")) { whisperAsked = true }
+                    }
+                }
+            }.padding(12).background(Color.accentColor.opacity(0.07)).clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+    }
+    func megabytes(_ value: Any?) -> Int { Int(((value as? NSNumber)?.doubleValue ?? 0) / 1_000_000) }
+    @ViewBuilder func row(_ m: [String: Any]) -> some View {
+        let status = str(m, "status")
+        VStack(alignment: .leading, spacing: 4) {
+            Button { model.openNote(str(m, "path"), source: source) } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(str(m, "title")).fontWeight(.medium).lineLimit(2)
+                    Text(dayLabel(String(str(m, "started").prefix(10))) + " " + String(str(m, "started").dropFirst(11).prefix(5)) + " · " + T("\(str(m, "minutes")) min", "\(str(m, "minutes")) dk"))
+                        .font(.caption).foregroundStyle(.secondary)
+                }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+            }.buttonStyle(.plain)
+            HStack(spacing: 8) {
+                switch status {
+                case "done":
+                    Badge(text: T("Summary ready", "Özet hazır"), color: .green)
+                    if str(m, "digest", "") != "" {
+                        Button(T("Review items", "Maddeleri incele")) { model.page = "Review"; model.openNote(str(m, "digest"), source: source) }.buttonStyle(.link).font(.caption)
+                    }
+                case "failed":
+                    Badge(text: T("No summary", "Özet çıkmadı"), color: .red)
+                    Button(T("Retry", "Yeniden dene")) { model.run("meeting_summarize", ["path": str(m, "path")]) { _ in load() } }.buttonStyle(.link).font(.caption)
+                case "raw":
+                    Badge(text: T("Transcript only", "Yalnız transkript"), color: .orange)
+                    Button(T("Summarise", "Özetle")) { model.run("meeting_summarize", ["path": str(m, "path")]) { _ in load() } }.buttonStyle(.link).font(.caption)
+                case "transcribing":
+                    ProgressView().controlSize(.mini)
+                    Text(T("Transcribing on this Mac…", "Bu Mac'te yazıya dökülüyor…")).font(.caption).foregroundStyle(.secondary)
+                default:
+                    ProgressView().controlSize(.mini)
+                    Text(T("Summarising…", "Özetleniyor…")).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            if status == "failed", str(m, "error", "") != "" { Text(meetingError(str(m, "error"))).font(.caption2).foregroundStyle(.secondary).lineLimit(3) }
+        }.padding(.vertical, 3)
+    }
+    func load() {
+        model.run("meeting_list", clearError: false, quiet: true) { value in
+            meetings = value["meetings"] as? [[String: Any]] ?? []; source = str(value, "source_id", "")
+        }
+        model.run("whisper_status", clearError: false, quiet: true) { whisper = $0 }
+    }
+}
+
+/// Why a summary did not come out, in words the owner can act on.
+func meetingError(_ error: String) -> String {
+    let nobody = T("No assistant is connected to summarise it: connect Claude Code or Codex under Settings › Assistants, then retry.",
+                   "Özetleyecek bağlı bir asistan yok: Ayarlar › Asistanlar bölümünden Claude Code ya da Codex'i bağlayın, sonra yeniden deneyin.")
+    if ["no_extraction_client", "no_connected_assistant"].contains(error) { return nobody }
+    guard error.hasPrefix("assistant_failed") else {
+        return error == "extraction_unparseable" ? T("Your assistant's answer could not be read. Retry.", "Asistanınızın cevabı okunamadı. Yeniden deneyin.") : error
+    }
+    let said = error.dropFirst("assistant_failed".count).trimmingCharacters(in: CharacterSet(charactersIn: ": "))
+    // Apple's on-device model, the last to try, is off: the owner's assistant is the way out.
+    let appleOff = said.contains("apple_model_unavailable") ? T(" Apple's model on this Mac is not available either (Apple Intelligence).",
+                                                                 " Apple'ın bu Mac'teki modeli de kullanılamıyor (Apple Intelligence).") : ""
+    if ["authenticate", "login", "logged in", "sign in"].contains(where: { said.lowercased().contains($0) }) {
+        return T("Your assistant is signed out. Open it in Terminal (claude or codex), sign in, then retry.",
+                 "Asistanınızın oturumu kapanmış. Terminal'de açıp (claude ya da codex) yeniden giriş yapın, sonra yeniden deneyin.") + appleOff
+    }
+    if !appleOff.isEmpty && !said.contains("|") { return nobody }
+    return T("Your assistant could not answer: \(said)", "Asistanınız cevap veremedi: \(said)")
+}
+
+/// What has been said so far, newest at the bottom; the line being heard is shown faded.
+struct LiveTranscript: View {
+    @ObservedObject var recorder: MeetingRecorder
+    func who(_ speaker: String) -> String { speaker == "me" ? T("Me", "Ben") : T("Others", "Karşı taraf") }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(T("Live transcript", "Canlı transkript")).font(.headline).padding(16)
+            Divider()
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 8) {
+                        ForEach(Array(recorder.lines.enumerated()), id: \.offset) { _, u in line(u, faded: false) }
+                        ForEach(Array(recorder.partials.enumerated()), id: \.offset) { _, u in line(u, faded: true) }
+                        Color.clear.frame(height: 1).id("end")
+                    }.padding(16)
+                }
+                .onChange(of: recorder.lines.count + recorder.partials.map(\.text.count).reduce(0, +)) { proxy.scrollTo("end", anchor: .bottom) }
+            }
+            if recorder.lines.isEmpty && recorder.partials.isEmpty {
+                Text(T("Listening… Words appear here a moment after they are said.", "Dinleniyor… Söylenenler birkaç saniye içinde burada görünür."))
+                    .foregroundStyle(.secondary).padding(16)
+            }
+        }
+    }
+    func line(_ u: Utterance, faded: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(clock(u.start)).font(.caption.monospacedDigit()).foregroundStyle(.secondary).frame(width: 46, alignment: .leading)
+            Text(who(u.speaker)).font(.caption.weight(.semibold)).foregroundStyle(u.speaker == "me" ? Color.accentColor : .orange).frame(width: 80, alignment: .leading)
+            Text(u.text).foregroundStyle(faded ? .secondary : .primary).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+        }
+    }
+}
+
+/// The menu bar item: record or stop a meeting, open Carry.
+struct MeetingMenu: View {
+    @ObservedObject var recorder = MeetingRecorder.shared
+    var body: some View {
+        if recorder.recording {
+            Text(T("Recording · ", "Kaydediliyor · ") + clock(recorder.elapsed))
+            Button(T("Stop and save", "Durdur ve kaydet")) { recorder.stop() }
+        } else if recorder.saving {
+            Text(T("Saving the transcript…", "Transkript kaydediliyor…"))
+        } else {
+            Button(T("Record a meeting", "Toplantı kaydet")) { recorder.start() }
+        }
+        Divider()
+        Button(T("Open Carry", "Carry'yi aç")) { MainWindow.show() }
+        Button(T("Meetings", "Toplantılar")) { MainWindow.show(); recorder.openMeetings += 1 }
+        Divider()
+        Button(T("Quit Carry", "Carry'den çık")) { NSApp.terminate(nil) }
+    }
+}
+
+/// The Carry logo for the menu bar: the rounded square with its C cut out, as a template
+/// image so macOS tints it for a light or dark menu bar.
+let menuBarLogo: NSImage = {
+    let image = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { rect in
+        NSBezierPath(roundedRect: rect.insetBy(dx: 1, dy: 1), xRadius: 3.6, yRadius: 3.6).fill()
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return true }
+        ctx.setBlendMode(.clear)
+        ctx.setLineWidth(2.5); ctx.setLineCap(.round)
+        let open = CGFloat.pi / 4.2  // the icon's own opening
+        ctx.addArc(center: CGPoint(x: 9, y: 9), radius: 4.4, startAngle: open, endAngle: -open, clockwise: false)
+        ctx.strokePath()
+        return true
+    }
+    image.isTemplate = true
+    return image
+}()
+
+/// The logo, and the elapsed time while a meeting is being recorded.
+struct MeetingMenuLabel: View {
+    @ObservedObject var recorder = MeetingRecorder.shared
+    @Environment(\.openWindow) private var openWindow
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(nsImage: menuBarLogo).accessibilityLabel("Carry")
+            if recorder.recording { Text(clock(recorder.elapsed)).monospacedDigit() }
+        }
+        .onAppear { MainWindow.open = openWindow }
     }
 }
 
 struct ContentView: View {
     @StateObject private var model = Model()
-    let pages = [("Overview", "house"), ("Review", "checkmark.circle"), ("Vault", "books.vertical"), ("Graph", "circle.hexagongrid"), ("Search", "magnifyingglass"), ("Settings", "gearshape")]
+    private let ticks = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
+    @Environment(\.openWindow) private var openWindow
+    let pages = [("Overview", "house"), ("Review", "checkmark.circle"), ("Meetings", "waveform"), ("Vault", "books.vertical"), ("Graph", "circle.hexagongrid"), ("Search", "magnifyingglass"), ("Settings", "gearshape")]
     var body: some View {
         Group { if model.onboarding { Onboarding(model: model) } else {
         NavigationSplitView {
@@ -3202,7 +4789,7 @@ struct ContentView: View {
                 List(selection: $model.page) {
                     ForEach(pages, id: \.0) { item in
                         Label(pageName(item.0), systemImage: item.1).tag(item.0).padding(.vertical, 4)
-                            .badge(item.0 == "Review" ? reviewable(model.files).count + model.pendingReview : 0)
+                            .badge(item.0 == "Review" ? model.reviewFiles.count + model.pendingReview : 0)
                     }
                 }.listStyle(.sidebar)
                 Button { model.showGuide = true } label: { Label(T("How Carry works", "Carry nasıl çalışır?"), systemImage: "questionmark.circle") }
@@ -3213,7 +4800,7 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 if !model.error.isEmpty { banner(model.error, color: .red) }
                 if !model.notice.isEmpty { banner(model.notice, color: .secondary) }
-                if str(model.job, "state") == "running" {
+                if model.jobBanner {
                     HStack {
                         ProgressView().controlSize(.small)
                         Text(L(str(model.job, "stage", "Preparing").replacingOccurrences(of: "_", with: " ").capitalized))
@@ -3229,7 +4816,8 @@ struct ContentView: View {
                     case "Vault": VaultView(model: model)
                     case "Graph": GraphView(model: model)
                     case "Search": Search(model: model).disabled(model.busy)
-                    case "Review": ReviewView(model: model)
+                    case "Review": ReviewView(model: model).onAppear { model.leaveReadOnlyVault() }
+                    case "Meetings": MeetingsView(model: model)
                     case "Proposals": Activity(model: model).disabled(model.busy)
                     case "Settings": SettingsView(model: model).disabled(model.busy)
                     default: Overview(model: model)
@@ -3250,10 +4838,12 @@ struct ContentView: View {
             }
         } } }.environment(\.locale, Lang.locale).frame(minWidth: 1020, minHeight: 680)
         .sheet(isPresented: $model.showGuide) { GuideSheet(model: model) }
-        .sheet(isPresented: $model.showNewNote) { NewNoteSheet(model: model) }.onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in model.tick() }.onAppear {
+        .sheet(isPresented: $model.showNewNote) { NewNoteSheet(model: model) }.onReceive(ticks) { _ in model.tick() }.onAppear {
             if ProcessInfo.processInfo.environment["CARRY_MEASURE_STARTUP"] == "1" { print("carry_ui_ready"); fflush(stdout) }
+            MainWindow.open = openWindow
             model.refresh()
         }
+        .onReceive(MeetingRecorder.shared.$openMeetings.dropFirst()) { _ in model.page = "Meetings" }
     }
     func banner(_ text: String, color: Color) -> some View {
         HStack(alignment: .top) {
@@ -3267,8 +4857,10 @@ struct ContentView: View {
 @main struct CarryApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     var body: some Scene {
-        WindowGroup("Carry") { ContentView() }.defaultSize(width: 1240, height: 820)
+        WindowGroup("Carry", id: "main") { ContentView() }.defaultSize(width: 1240, height: 820)
+        MenuBarExtra(isInserted: $menuBar) { MeetingMenu() } label: { MeetingMenuLabel() }
     }
+    @AppStorage("meetingMenuBar") private var menuBar = true
 }
 #endif
 
@@ -3292,7 +4884,7 @@ let TR: [String: String] = [
     "That source ID is already in use. Choose a different ID.": "Bu kaynak kimliği zaten kullanılıyor. Başka bir kimlik seçin.",
     "Use lowercase letters, numbers, hyphens or underscores for the source ID.": "Kaynak kimliğinde küçük harf, rakam, tire ya da alt çizgi kullanın.",
     "This folder overlaps an existing source. Choose a separate folder.": "Bu klasör mevcut bir kaynakla çakışıyor. Ayrı bir klasör seçin.",
-    "Keep Carry’s workspace folder outside your Markdown source folders.": "Carry'nin çalışma alanı klasörünü Markdown kaynak klasörlerinizin dışında tutun.",
+    "Keep Carry’s workspace folder at <notes folder>/.carry/state or outside your Markdown source folders.": "Carry'nin çalışma alanı klasörünü <not klasörü>/.carry/state içinde ya da Markdown kaynak klasörlerinizin dışında tutun.",
     "Settings changed after the preview. Refresh and review a new preview. If setup was interrupted, use its rollback entry.": "Önizlemeden sonra ayarlar değişti. Yenileyip yeni önizlemeyi inceleyin. Kurulum yarıda kaldıysa geri alma kaydını kullanın.",
     "Settings changed after setup. Rollback stopped to preserve those edits. Review the changed files before disconnecting.": "Kurulumdan sonra ayarlar değişti. O düzenlemeleri korumak için geri alma durduruldu. Bağlantıyı kesmeden önce değişen dosyaları inceleyin.",
     "This project already has a different Carry connection. Review or roll back that setup before replacing it.": "Bu projenin zaten farklı bir Carry bağlantısı var. Değiştirmeden önce o kurulumu inceleyin ya da geri alın.",
@@ -3307,11 +4899,12 @@ let TR: [String: String] = [
     "This vault is connected read-only. Prompt capture needs a writable vault source.": "Bu not klasörü yalnız okunur bağlı. İstem kaydı için Carry'nin yazabildiği bir klasör gerekir.",
     "Choose a language and whether to record prompts, then preview again.": "Bir dil ve istemlerin kaydedilip kaydedilmeyeceğini seçip yeniden önizleyin.",
     "The key could not be saved in the Keychain. Paste it again; it must not be empty.": "Anahtar Anahtar Zinciri'ne kaydedilemedi. Yeniden yapıştırın; boş olmamalı.",
+    "This is a read-only copy of a GitHub knowledge base. Change it on GitHub; Carry picks up the change at the next sync.": "Bu, GitHub bilgi bankasının salt okunur bir kopyası. Değişikliği GitHub'da yapın; Carry bir sonraki eşitlemede alır.",
     "This source folder is not available. Reconnect the drive or check the folder in Settings › Sources.": "Bu not klasörüne erişilemiyor. Diski yeniden bağlayın ya da Ayarlar › Not klasörleri'nden kontrol edin.",
     "That note no longer exists at this path. Refresh the vault list.": "Bu not artık bu yerde yok. Listeyi yenileyin.",
     "This file is too large to preview here. Open it in your editor.": "Bu dosya burada önizlemek için çok büyük. Editörünüzde açın.",
     "One of the values is outside its allowed range. Check the numbers and save again.": "Değerlerden biri izin verilen aralığın dışında. Sayıları kontrol edip yeniden kaydedin.",
-    "Choose a valid time for the nightly harvest.": "Gecelik çalışma için geçerli bir saat seçin.",
+    "Choose a valid time for the nightly harvest.": "Gecelik oturum özeti için geçerli bir saat seçin.",
     "Add a Markdown folder or vault in Settings › Sources first.": "Önce Ayarlar › Not klasörleri'nden bir not klasörü ekleyin.",
     "Semantic search · Jev judges": "En iyi (akıllı arama + Jev)",
     "Semantic search · your assistant checks": "Akıllı",
@@ -3347,16 +4940,16 @@ let TR: [String: String] = [
     "No notes found.": "Not bulunamadı.",
     "Folders": "Klasörler",
     "Open items from recent chats": "Son sohbetlerden açık işler",
-    "No open items. Harvest drafts them from finished chats.": "Açık iş yok. Harvest bunları biten sohbetlerden taslak olarak çıkarır.",
+    "No open items. Harvest drafts them from finished chats.": "Açık iş yok. Oturum özeti bunları biten sohbetlerden taslak olarak çıkarır.",
     "Recent decisions": "Son kararlar",
     "Recent commits (%d)": "Son commit'ler (%d)",
     "Open draft": "Taslağı aç",
-    "Nightly harvest": "Gecelik sohbet notları",
-    "Runs every evening at %@ · drafts in %@. Chats also harvest when they end.": "Her akşam %@'da çalışır · taslak dili: %@. Sohbet bittiğinde de not çıkarılır.",
-    "Not scheduled. Chats still harvest when they end if the client hooks are set up.": "Gecelik çalışma kapalı. Sohbet bittiğinde yine de not çıkarılır.",
-    "Run harvest now": "Sohbetlerden şimdi not çıkar",
-    "Harvest started in the background. New drafts appear in the inbox (+/).": "Sohbetlerden not çıkarma başladı. Yeni taslaklar Gelen kutusunda görünecek.",
-    "Harvest settings": "Sohbet notu ayarları",
+    "Nightly harvest": "Gecelik oturum özeti",
+    "Runs every evening at %@ · drafts in %@. Chats also harvest when they end.": "Her akşam %@'da çalışır · taslak dili: %@. Her sohbet bittiğinde de özetlenir.",
+    "Not scheduled. Chats still harvest when they end if the client hooks are set up.": "Gecelik özet kapalı. Her sohbet bittiğinde yine de özetlenir.",
+    "Run harvest now": "Oturum özetini şimdi çıkar",
+    "Harvest started in the background. New drafts appear in the inbox (+/).": "Oturum özeti başladı. Yeni taslaklar Gelen kutusunda görünecek.",
+    "Harvest settings": "Oturum özeti ayarları",
     "Filter by name, folder or summary": "Ada, klasöre ya da özete göre süz",
     "Show": "Göster",
     "All notes": "Tüm notlar",
@@ -3408,12 +5001,12 @@ let TR: [String: String] = [
     "Revert": "Geri al",
     "Carry reads finished Claude Code and Codex chats of your vault and drafts what deserves a note: decisions, facts, preferences and open items. Drafts land in the inbox (+/) for you to review; nothing is filed by itself.": "Carry, vault'unuzdaki biten Claude Code ve Codex sohbetlerini okur ve not olmayı hak edenleri taslak olarak çıkarır: kararlar, bilgiler, tercihler ve açık işler. Taslaklar incelemeniz için gelen kutusuna (+/) düşer; hiçbir şey kendiliğinden dosyalanmaz.",
     "Every evening": "Her akşam",
-    "Harvest finished chats every evening": "Günün sohbetlerinden her akşam not çıkar",
+    "Harvest finished chats every evening": "Günün sohbetlerini her akşam özetle",
     "Time": "Saat",
     "Language of drafts": "Taslakların dili",
     "Save schedule": "Kaydet",
-    "Nightly harvest scheduled.": "Gecelik çalışma ayarlandı.",
-    "Nightly harvest turned off.": "Gecelik çalışma kapatıldı.",
+    "Nightly harvest scheduled.": "Gecelik oturum özeti ayarlandı.",
+    "Nightly harvest turned off.": "Gecelik oturum özeti kapatıldı.",
     "Runs through launchd (%@) while you are logged in.": "Mac'inizde oturumunuz açıkken çalışır.",
     "When a chat ends": "Bir sohbet bittiğinde",
     "Claude Code and Codex call Carry when a chat in the vault ends, and the next chat starts with a short state pack of open items and decisions. These hooks are set up by `carry setup` or on the Clients tab; Codex asks you to approve each hook once.": "Not klasörünüzde bir sohbet bittiğinde Claude Code ve Codex Carry'ye haber verir; bir sonraki sohbet, açık işler ve kararlardan oluşan kısa bir özetle başlar. Bu otomatik kurulumla gelir (`carry setup`); Codex bunu ilk seferde bir kez onaylamanızı ister.",
@@ -3425,7 +5018,7 @@ let TR: [String: String] = [
     "Language, workspace, index maintenance and diagnostics.": "Dil, çalışma alanı, indeks bakımı ve tanılama.",
     "Language": "Dil",
     "App language": "Uygulama dili",
-    "Changes the app’s interface. Harvest drafts use the language set on the Harvest tab.": "Uygulamanın arayüzünü değiştirir. Harvest taslakları Harvest sekmesindeki dili kullanır.",
+    "Changes the app’s interface. Harvest drafts use the language set on the Harvest tab.": "Uygulamanın arayüzünü değiştirir. Oturum özetleri Oturum özeti sekmesindeki dili kullanır.",
     "Workspace": "Çalışma alanı",
     "Holds Carry’s settings and a disposable index. Your notes are never stored here.": "Carry'nin ayarlarını ve silinebilir indeksini tutar. Notlarınız asla burada saklanmaz.",
     "Open another workspace": "Başka bir çalışma alanı aç",
@@ -3584,14 +5177,14 @@ let TR: [String: String] = [
     "Model Ready": "Model hazır",
     "Finished": "Bitti",
     "Failed": "Başarısız",
-    "Harvest finished. New drafts, if any, are in the inbox (+/).": "Bitti. Yeni taslak çıktıysa Gelen kutusunda.",
-    "Harvest stopped with an error. See the log on the Harvest tab.": "Bir hata oluştu. Ayrıntı için Yakalama sekmesindeki kayda bakın.",
+    "Harvest finished. New drafts, if any, are in the inbox (+/).": "Bitti. Yeni özet çıktıysa Gelen kutusunda.",
+    "Harvest stopped with an error. See the log on the Harvest tab.": "Bir hata oluştu. Ayrıntı için Oturum özeti sekmesindeki kayda bakın.",
     "The open note was moved or deleted outside Carry, so it was closed.": "Açık not Carry dışında taşındığı ya da silindiği için kapatıldı.",
     "A harvest is already running.": "Zaten çalışıyor.",
     "Show all changes": "Tüm değişiklikleri göster",
-    "The nightly harvest on this Mac belongs to another Carry workspace.": "Bu Mac'teki gecelik çalışma başka bir Carry kurulumuna ait.",
-    "launchd has not loaded this job. Save the schedule again on the Harvest tab.": "Gecelik çalışma macOS tarafından başlatılmamış. Yakalama sekmesinden yeniden kaydedin.",
-    "Harvest running…": "Sohbetlerden not çıkarılıyor…",
+    "The nightly harvest on this Mac belongs to another Carry workspace.": "Bu Mac'teki gecelik özet başka bir Carry kurulumuna ait.",
+    "launchd has not loaded this job. Save the schedule again on the Harvest tab.": "Gecelik özet macOS tarafından başlatılmamış. Oturum özeti sekmesinden yeniden kaydedin.",
+    "Harvest running…": "Oturum özeti çıkarılıyor…",
     "Waiting to be indexed": "Değişti; arama birazdan güncellenecek",
     "Showing %d of %d notes. Narrow the filter to see the rest.": "%d / %d not gösteriliyor. Kalanlar için aramayı daraltın.",
     "This vault has more files than Carry lists (20,000).": "Bu klasörde Carry'nin gösterebildiğinden (20.000) fazla dosya var.",
@@ -3601,16 +5194,16 @@ let TR: [String: String] = [
     "waiting to be indexed": "arama birazdan güncellenecek",
     "Unsaved changes": "Kaydedilmemiş değişiklikler",
     "Discard": "Vazgeç",
-    "Draft language saved. It applies to every harvest: nightly, manual and at chat end.": "Taslak dili kaydedildi. Tüm sohbet notlarında geçerli.",
-    "Used by every harvest: nightly, manual and at chat end.": "Gecelik, elle başlatılan ve sohbet sonu tüm sohbet notlarında kullanılır.",
-    "The nightly harvest on this Mac belongs to another Carry workspace (%@). Saving here replaces it.": "Bu Mac'teki gecelik çalışma başka bir Carry kurulumuna ait (%@). Burada kaydederseniz onun yerini alır.",
-    "Replace the other workspace’s nightly harvest?": "Diğer kurulumun gecelik çalışması değiştirilsin mi?",
+    "Draft language saved. It applies to every harvest: nightly, manual and at chat end.": "Taslak dili kaydedildi. Tüm oturum özetlerinde geçerli.",
+    "Used by every harvest: nightly, manual and at chat end.": "Gecelik, elle başlatılan ve sohbet sonu tüm oturum özetlerinde kullanılır.",
+    "The nightly harvest on this Mac belongs to another Carry workspace (%@). Saving here replaces it.": "Bu Mac'teki gecelik özet başka bir Carry kurulumuna ait (%@). Burada kaydederseniz onun yerini alır.",
+    "Replace the other workspace’s nightly harvest?": "Diğer kurulumun gecelik özeti değiştirilsin mi?",
     "Replace": "Değiştir",
-    "There is one nightly harvest per Mac user. The other workspace stops harvesting at night; its chat-end hooks keep working.": "Her Mac kullanıcısı için tek bir gecelik çalışma olabilir. Diğer kurulum geceleri not çıkarmayı bırakır; sohbet sonu notları çalışmaya devam eder.",
+    "There is one nightly harvest per Mac user. The other workspace stops harvesting at night; its chat-end hooks keep working.": "Her Mac kullanıcısı için tek bir gecelik özet olabilir. Diğer kurulum geceleri özet çıkarmayı bırakır; sohbet sonu özetleri çalışmaya devam eder.",
     "Off: this source’s passages are never sent to Jev. Search results can still reach your connected assistant and the model it uses.": "Kapalıysa bu kaynağın pasajları Jev'e hiç gönderilmez. Arama sonuçları yine de bağlı asistanınıza ve onun kullandığı modele iletilebilir.",
     "Relevance %@": "Alaka puanı %@",
     "No decision proposals waiting for approval.": "Onay bekleyen karar önerisi yok.",
-    "Proposals come from connected clients (carry_propose). Harvest drafts and draft notes live in the vault instead.": "Öneriler bağlı asistanlardan gelir. Sohbet notları ve taslaklar ise Notlar sayfasında durur.",
+    "Proposals come from connected clients (carry_propose). Harvest drafts and draft notes live in the vault instead.": "Öneriler bağlı asistanlardan gelir. Oturum özetleri ve taslaklar ise Notlar sayfasında durur.",
     "Open vault drafts": "Taslakları aç",
     "Open inbox": "Gelen kutusunu aç",
     "Connect a client": "Asistan bağla",
@@ -3647,26 +5240,26 @@ let EN: [String: String] = [
     "Show in Vault": "Show in Notes",
     "Read in Vault": "Read in Notes",
     "Index": "Search",
-    "Nightly harvest": "Nightly chat notes",
-    "Harvest started in the background. New drafts appear in the inbox (+/).": "Started. New drafts will appear in your Inbox.",
-    "Harvest settings": "Chat notes settings",
+    "Nightly harvest": "Nightly session recap",
+    "Harvest started in the background. New drafts appear in the inbox (+/).": "Started. New recaps will appear in your Inbox.",
+    "Harvest settings": "Session recap settings",
     "Not indexed: excluded from search": "Left out of search",
     "not indexed": "left out of search",
     "indexed": "searchable",
     "waiting to be indexed": "search updates in a moment",
     "Waiting to be indexed": "Changed; search updates in a moment",
-    "Harvest finished chats every evening": "Take notes from the day's chats every evening",
-    "Run harvest now": "Take notes from chats now",
-    "Harvest running…": "Taking notes from chats…",
-    "Harvest finished. New drafts, if any, are in the inbox (+/).": "Done. New drafts, if any, are in your Inbox.",
-    "Harvest stopped with an error. See the log on the Harvest tab.": "Something went wrong. See the log on the Capture tab.",
-    "Runs every evening at %@ · drafts in %@. Chats also harvest when they end.": "Runs every evening at %@ · drafts in %@. Notes are also taken when a chat ends.",
-    "Not scheduled. Chats still harvest when they end if the client hooks are set up.": "The nightly run is off. Notes are still taken when a chat ends.",
+    "Harvest finished chats every evening": "Recap the day's chats every evening",
+    "Run harvest now": "Recap chats now",
+    "Harvest running…": "Recapping chats…",
+    "Harvest finished. New drafts, if any, are in the inbox (+/).": "Done. New recaps, if any, are in your Inbox.",
+    "Harvest stopped with an error. See the log on the Harvest tab.": "Something went wrong. See the log on the Session recap tab.",
+    "Runs every evening at %@ · drafts in %@. Chats also harvest when they end.": "Runs every evening at %@ · drafts in %@. Each chat is also recapped when it ends.",
+    "Not scheduled. Chats still harvest when they end if the client hooks are set up.": "The nightly recap is off. Chats are still recapped when they end.",
     "Runs through launchd (%@) while you are logged in.": "Runs while you are logged in to your Mac.",
     "Create a personal vault": "Create a new notes folder",
     "Create vault": "Create notes folder",
     "Choose or create an empty folder for your vault": "Choose or create an empty folder for your notes",
-    "Proposals come from connected clients (carry_propose). Harvest drafts and draft notes live in the vault instead.": "Proposals come from connected assistants. Chat notes and drafts are on the Notes page instead.",
+    "Proposals come from connected clients (carry_propose). Harvest drafts and draft notes live in the vault instead.": "Proposals come from connected assistants. Session recaps and drafts are on the Notes page instead.",
     "Open vault drafts": "Open drafts",
     "Connect a client": "Connect an assistant",
     "The index is not ready yet. Check the background task status.": "Search is not ready yet; Carry is reading your notes. Try again in a moment.",
@@ -3676,4 +5269,17 @@ let EN: [String: String] = [
     "Indexing": "Reading notes",
     "Client": "Assistant",
     "Save schedule": "Save",
+    "Choose a valid time for the nightly harvest.": "Choose a valid time for the nightly session recap.",
+    "No open items. Harvest drafts them from finished chats.": "No open items. The session recap drafts them from finished chats.",
+    "Nightly harvest scheduled.": "Nightly session recap scheduled.",
+    "Nightly harvest turned off.": "Nightly session recap turned off.",
+    "Changes the app’s interface. Harvest drafts use the language set on the Harvest tab.": "Changes the app’s interface. Session recaps use the language set on the Session recap tab.",
+    "A harvest is already running.": "A recap is already running.",
+    "The nightly harvest on this Mac belongs to another Carry workspace.": "The nightly recap on this Mac belongs to another Carry workspace.",
+    "launchd has not loaded this job. Save the schedule again on the Harvest tab.": "launchd has not loaded this job. Save the schedule again on the Session recap tab.",
+    "Draft language saved. It applies to every harvest: nightly, manual and at chat end.": "Draft language saved. It applies to every recap: nightly, by hand and at chat end.",
+    "Used by every harvest: nightly, manual and at chat end.": "Used by every recap: nightly, by hand and at chat end.",
+    "The nightly harvest on this Mac belongs to another Carry workspace (%@). Saving here replaces it.": "The nightly recap on this Mac belongs to another Carry workspace (%@). Saving here replaces it.",
+    "Replace the other workspace’s nightly harvest?": "Replace the other workspace’s nightly recap?",
+    "There is one nightly harvest per Mac user. The other workspace stops harvesting at night; its chat-end hooks keep working.": "There is one nightly recap per Mac user. The other workspace stops recapping at night; its chat-end hooks keep working.",
 ]

@@ -1,17 +1,20 @@
-"""A harvest digest, item by item: the owner accepts, fixes or skips each item.
+"""A session recap (a harvest digest before 0.14) or meeting digest, item by item: the owner
+accepts, fixes or skips each item.
 
 An accepted item goes to the day's log (`log/<chat date>.md`) with its quote and a link to the
 raw chat, so recall finds it under the day it was said. Accepting a conflict never edits the
 note it contradicts; the log line links it for conflict resolution. The digest line keeps the
 decision as a trailing HTML comment: Obsidian hides it and the state pack still reads the line.
 Already recorded, done and dropped items are folded and need no decision. A digest leaves the
-review queue (its draft flag is removed) once no item waits.
+review queue (its `status: draft` becomes `stable`, with the owner's check in `verified`) once
+no item waits.
 """
 import datetime
 import hashlib
 from pathlib import Path
 import re
 
+from . import okf
 from .errors import CarryError
 from .markdown import parse_frontmatter
 from .paths import resolve_within
@@ -21,7 +24,8 @@ from .vaultview import is_digest
 DECISIONS = ('accepted', 'fixed', 'skipped')
 MARK = re.compile(r'\s*<!-- carry: (accepted|fixed|skipped) (\d{4}-\d{2}-\d{2}) -->\s*$')
 ITEM = re.compile(r'^- \*\*(?P<tag>[^*]+?):\*\* (?P<statement>.+?)(?: ↔ (?P<match>\[\[[^\]]+\]\]))?$')
-QUOTE = re.compile(r'^\s+> (?P<quote>.*?) \*\(exchange (?P<exchange>\d+), (?P<speaker>[^,)]+)(?:, (?P<date>\d{4}-\d{2}-\d{2}))?\)\*\s*$')
+# A chat item cites its exchange, a meeting item (carry.meet) the transcript line it quotes.
+QUOTE = re.compile(r'^\s+> (?P<quote>.*?) \*\((?P<unit>exchange|segment) (?P<exchange>\d+), (?P<speaker>[^,)]+)(?:, (?P<date>\d{4}-\d{2}-\d{2}))?\)\*\s*$')
 NOTE_SIDE = re.compile(r'^\s+≠ (?P<text>.+)$')
 WHY = re.compile(r'^\s+∵ (?P<text>.+)$')
 FOLDED_ITEM = re.compile(r'^- (?P<statement>.+?) → (?P<match>\[\[[^\]]+\]\])\s*$')
@@ -29,6 +33,8 @@ ACTIONABLE = ('new', 'conflict', 'review')
 FOLDED = ('resolved', 'dropped', 'known')
 LOG_HEADING = dict(Turkish='Sohbetlerden', English='From chats')
 LOG_SUMMARY = dict(Turkish='{day}: sohbetlerden onaylanan maddeler.', English='{day}: items approved from chats.')
+MEETING_LOG_HEADING = dict(Turkish='Toplantılardan', English='From meetings')
+MEETING_LOG_SUMMARY = dict(Turkish='{day}: toplantılardan onaylanan maddeler.', English='{day}: items approved from meetings.')
 
 
 
@@ -78,7 +84,8 @@ def parse(text):
             items.append(dict(id=item_id(m['statement']), section=section, tag=m['tag'].strip(),
                               kind=m['tag'].split(' · ')[0].strip(), statement=m['statement'].strip(),
                               match=m['match'] or '', quote=q['quote'] if q else '',
-                              exchange=int(q['exchange']) if q else None, speaker=q['speaker'] if q else '',
+                              exchange=int(q['exchange']) if q else None, unit=q['unit'] if q else 'exchange',
+                              speaker=q['speaker'] if q else '',
                               date=(q['date'] if q else None) or str(front.get('created') or ''),
                               said=q['date'] if q and q['date'] else '',
                               match_text=side['text'].strip() if side else '', why=why['text'].strip() if why else '',
@@ -86,8 +93,13 @@ def parse(text):
         elif section in FOLDED and (m := FOLDED_ITEM.match(bare)):
             items.append(dict(id=item_id(m['statement']), section=section, statement=m['statement'].strip(),
                               match=m['match'], decision='folded', line=n))
-    raw = next((s for s in front.get('sources') or [] if isinstance(s, str)), '')
-    return dict(items=items, raw=raw, language=language or 'English', created=str(front.get('created') or ''))
+    # The raw chat (or meeting) the digest came from: its first `sources` entry. Log lines link
+    # it as a wikilink; a new log file's frontmatter keeps it as an OKF entry.
+    entries = okf.source_entries(front)
+    raw = okf.as_wikilink(entries[0]['resource']) if entries else ''
+    run = okf.run_record(front)
+    return dict(items=items, raw=raw, raw_entry=entries[0] if entries else None, language=language or 'English',
+                created=str(front.get('created') or ''), kind='meeting' if run.get('kind') == 'meeting' else 'chat')
 
 
 def _open(ws, source_id, relative):
@@ -141,13 +153,29 @@ def items(ws, source_id, relative):
         if it['match'] and it['decision'] is None:
             it['match_path'], it['match_text'] = note_side(ws, source_id, it)
     waiting = sum(1 for it in parsed['items'] if it['decision'] is None)
-    return dict(path=relative, items=parsed['items'], waiting=waiting, draft=front.get('draft') is True)
+    return dict(path=relative, items=parsed['items'], waiting=waiting, draft=okf.is_draft(front))
 
 
-def _append_log(root, day, language, entry, raw):
+def _log_source(root, raw_entry):
+    """The OKF `sources` entry of a new log file: the digest's raw as a bundle path. A legacy
+    digest names its raw as a [[wikilink]]; it is resolved only when exactly one file matches."""
+    if not raw_entry:
+        return []
+    resource = raw_entry['resource']
+    link = okf.WIKILINK.match(resource)
+    if link:
+        from .paths import walk_markdown
+        stem = link.group(1).strip()
+        found = [rel for rel, _ in walk_markdown(root) if Path(rel).stem == stem]
+        return [okf.entry(found[0])] if len(found) == 1 else [dict(resource=resource, title=stem)]
+    return [dict(raw_entry)]
+
+
+def _append_log(root, day, language, entry, raw_entry, kind='chat'):
     rel = f'log/{day}.md'
     path = root / rel
-    heading = f'## {LOG_HEADING.get(language, LOG_HEADING["English"])}'
+    headings, summaries = (MEETING_LOG_HEADING, MEETING_LOG_SUMMARY) if kind == 'meeting' else (LOG_HEADING, LOG_SUMMARY)
+    heading = f'## {headings.get(language, headings["English"])}'
     if path.exists():
         text = path.read_text(encoding='utf-8').rstrip('\n')
         headings = [l for l in text.split('\n') if l.startswith('## ')]
@@ -155,9 +183,10 @@ def _append_log(root, day, language, entry, raw):
             text += f'\n\n{heading}\n'
         text += '\n' + entry + '\n'
     else:
-        summary = LOG_SUMMARY.get(language, LOG_SUMMARY['English']).format(day=day)
-        text = (f'---\ntype: daily\nsummary: "{summary}"\ncreated: {day}\nsources:\n  - "{raw}"\n---\n\n'
-                f'# {day}\n\n{heading}\n\n{entry}\n')
+        summary = summaries.get(language, summaries['English']).format(day=day)
+        front = ['---', 'type: daily', f'description: {okf.flow(summary)}', f'created: {day}',
+                 f'generated: {okf.flow(okf.event(okf.carry_actor()))}'] + okf.source_lines(_log_source(root, raw_entry)) + ['---']
+        text = '\n'.join(front) + f'\n\n# {day}\n\n{heading}\n\n{entry}\n'
     atomic_text(path, text)
     return rel
 
@@ -169,6 +198,8 @@ def decide(ws, source_id, relative, item, action, text=None, today=None):
     statement = ' '.join((text or '').split())
     if action == 'fix' and not statement:
         raise CarryError('fix_needs_text')
+    from .vaultview import _editable
+    _editable(ws, source_id)
     root, path, body, front = _open(ws, source_id, relative)
     if front.get('lock') is True:
         raise CarryError('note_locked')
@@ -191,17 +222,19 @@ def decide(ws, source_id, relative, item, action, text=None, today=None):
     if action != 'skip':
         said = statement or found['statement']
         where = f" ↔ {found['match']}" if found['match'] else ''
-        source = f"{parsed['raw']}, exchange {found['exchange']}" if found['exchange'] else parsed['raw']
+        source = f"{parsed['raw']}, {found['unit']} {found['exchange']}" if found['exchange'] else parsed['raw']
         entry = f"- **{found['tag']}:** {said}{where} ({source})"
         if found['quote']:
             entry += f"\n  > {found['quote']}"
-        logged = _append_log(root, found['date'] or parsed['created'] or today, parsed['language'], entry, parsed['raw'])
+        logged = _append_log(root, found['date'] or parsed['created'] or today, parsed['language'], entry,
+                             parsed['raw_entry'], parsed['kind'])
     atomic_text(path, '\n'.join(lines))
     waiting = sum(1 for it in parse('\n'.join(lines))['items'] if it['decision'] is None)
     done = False
-    if waiting == 0 and front.get('draft') is True:
+    if waiting == 0 and okf.is_draft(front):
+        # Every item decided by the owner: the digest is human-reviewed (OKF §5.3).
         from .vaultview import clear_draft
-        done = clear_draft(path, relative).get('changed', False)
+        done = clear_draft(path, relative, actor=okf.owner(ws.state_dir)).get('changed', False)
     return dict(item=item, decision=decision, logged=logged, waiting=waiting, done=done)
 
 
@@ -217,7 +250,7 @@ def _item_lines(it, match, note_text='', why=''):
     at = f", {it['said']}" if it.get('said') else ''  # only a date the digest had, never the fallback
     out = [f"- **{it['tag']}:** {it['statement']}" + (f' ↔ {match}' if match else '')]
     if it.get('quote'):
-        out.append(f"  > {it['quote']} *(exchange {it['exchange']}, {it['speaker']}{at})*")
+        out.append(f"  > {it['quote']} *({it.get('unit', 'exchange')} {it['exchange']}, {it['speaker']}{at})*")
     if note_text:
         out.append(f'  ≠ {note_text}')
     if why:

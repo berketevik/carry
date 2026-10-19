@@ -9,7 +9,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from . import sidecar, store
+from . import okf, sidecar, store
 from .errors import CarryError, RevisionConflict, SourceError
 from .markdown import parse_frontmatter
 from .mask import mask
@@ -234,7 +234,7 @@ def _unchanged(item):
 
 def _description(item):
     result = {k: item[k] for k in ('record_id', 'revision', 'state', 'source_id', 'path')}
-    result['title'] = str(item['metadata'].get('summary') or item['path'])
+    result['title'] = okf.description(item['metadata']) or item['path']
     result.update(current=item['current'], superseded_by=item['superseded_by'])
     for key in ('created', 'updated', 'reviewed_at'):
         if item['metadata'].get(key):
@@ -277,7 +277,7 @@ def propose(workspace, content, event_id, source_refs=(), *, title='Proposed dec
             if not path.is_file():
                 raise SourceError('source_ref_not_found')
         if item:
-            refs = list(dict.fromkeys([*item['metadata'].get('sources', []), *refs]))
+            refs = list(dict.fromkeys([*okf.carry_refs(item['metadata']), *refs]))
         # A request hash allows exact retries after a commit/receipt interruption,
         # including after acceptance. It is distinct from native event identity.
         request_hash = digest(json.dumps([content, title, refs, target_id, expected_revision,
@@ -306,8 +306,10 @@ def propose(workspace, content, event_id, source_refs=(), *, title='Proposed dec
             _archive(source, item)
             path = item['absolute']
             fm = dict(item['metadata'], carry_revision=item['revision'] + 1)
+        fm.pop('summary', None)
         fm.update(carry_proposal_hash=request_hash, carry_proposal=True, updated=now(),
-                  summary=title, sources=refs, carry_synthesis='client' if client != 'cli' else 'manual')
+                  description=title, sources=okf.ref_entries(refs, source.source_id), carry_source_refs=refs,
+                  carry_synthesis='client' if client != 'cli' else 'manual')
         fm.pop('carry_target', None)
         if target:
             fm['carry_target'] = json.dumps(target, sort_keys=True)
@@ -334,7 +336,7 @@ def review(workspace, record_id):
                 old_body = _find(files, target['record_id'], target['source_id'])['body']
             except (SourceError, RevisionConflict) as exc:
                 conflict = str(exc)
-        return dict(_description(item), content=item['body'], sources=item['metadata'].get('sources', []),
+        return dict(_description(item), content=item['body'], sources=okf.carry_refs(item['metadata']),
                     target=target, conflict=conflict, review_token=item['digest'],
                     diff=''.join(difflib.unified_diff(old_body.splitlines(True), item['body'].splitlines(True),
                         fromfile='current target' if target else 'new decision', tofile='proposed decision')))

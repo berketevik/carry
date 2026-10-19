@@ -1,7 +1,7 @@
-"""`carry context`: the state pack a new thread starts from (Continuity 1c).
+"""`carry session start` (`carry context` before 0.14): the state pack a new thread starts from (Continuity 1c).
 
 At most about 2k tokens: recent commits, open items and decisions from recent
-harvest drafts (items shown as done are left out), what waits for review, and
+session recaps (items shown as done are left out), what waits for review, and
 index health. Claude Code runs it as a SessionStart hook in a Carry vault; Codex
 is told to run it first. Read-only: it writes nothing.
 """
@@ -32,6 +32,10 @@ SKIP_SECTIONS = ('Yapılmış görünüyor', 'Apparently done', 'Vazgeçilmiş g
 
 
 def workspace_for(root):
+    """The state for a vault: its own `.carry/state`, else the `.carry/local.json` pointer."""
+    own = Path(root) / '.carry' / 'state'
+    if (own / 'workspace.json').is_file():
+        return str(own)
     try:
         return json.loads((Path(root) / LOCAL).read_text(encoding='utf-8')).get('workspace')
     except (OSError, ValueError):
@@ -42,7 +46,9 @@ def _digests(root, days=DAYS, today=None):
     today = today or datetime.date.today()
     inbox = Path(root) / '+'
     found = []
-    for p in sorted(inbox.glob('* — harvest *.md'), reverse=True):
+    # Session recaps: `<day> — session …` since 0.14, `<day> — harvest …` before it.
+    recaps = [*inbox.glob('* — session *.md'), *inbox.glob('* — harvest *.md')]
+    for p in sorted(recaps, key=lambda p: p.name, reverse=True):
         try:
             day = datetime.date.fromisoformat(p.name[:10])
         except ValueError:
@@ -53,11 +59,14 @@ def _digests(root, days=DAYS, today=None):
 
 
 def _still_draft(path):
+    """A digest still waits while it is `status: draft` (or carries the legacy `draft: true`)."""
+    from . import okf
+    from .markdown import parse_frontmatter
     try:
-        head = path.read_text(encoding='utf-8', errors='ignore').split('\n---', 1)[0]
+        front, _ = parse_frontmatter(path.read_text(encoding='utf-8', errors='ignore'))
     except OSError:
         return False
-    return bool(re.search(r'(?m)^draft:\s*true\s*$', head))
+    return okf.is_draft(front)
 
 
 def _items(path):
@@ -80,6 +89,10 @@ def _items(path):
 
 def pack(root, workspace=None, language=None, max_chars=MAX_CHARS, today=None):
     root = Path(root).resolve()
+    if language is None:
+        # The vault's shared settings first, then the template stamp.
+        from . import shared
+        language = shared.read(root / '.carry' / 'settings.json')[0].get('language')
     if language is None:
         try:
             language = json.loads((root / '.carry/vault.json').read_text(encoding='utf-8')).get('language', 'English')

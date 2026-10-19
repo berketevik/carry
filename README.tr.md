@@ -6,7 +6,7 @@
 
 Bilgi bankası, Markdown (`.md`) notlarından oluşan bir klasördür: sizin notlarınız (örneğin bir Obsidian vault'u), ekibinizin GitHub'daki notları ya da ikisi. Carry onu bilgisayarınızda dizinler ve asistanınıza onda arama yapacağı tek bir araç verir: `carry_recall`. Eylülde bir müşterinizin user ID'lerinin hatalı olduğunu bulup not alıyorsunuz. Kasımda onları düzeltmeye oturup asistanınıza soruyorsunuz: bilgi bankasında arar, ne bulduğunuzu söyler ve yazdığınız notun bağlantısını verir. Notlarınız olduğu yerde kalır; Carry onları okur, siz onaylamadan hiçbir şey yazılmaz.
 
-**Sürüm 0.11.0 · macOS 14+ · pilot**
+**Sürüm 0.16.0 · macOS 14+ · pilot**
 
 ## Başlayın
 
@@ -25,17 +25,23 @@ Kurulum iki şey sorar: hangi bilgi bankasının bağlanacağını (kendi notlar
 
 ## Nasıl çalışır?
 
-![Carry nasıl çalışır: Carry bilgi bankanızı bilgisayarınızda dizinler; asistanınız carry_recall ile kelimeyle ve anlamla arar, cevaplayan parçaları seçer ve cevabın her kısmının hangi nottan geldiğini gösterir; isteğe bağlı olarak sohbetler onaylayacağınız taslaklara dönüşür](assets/how-it-works.tr.svg)
+![Carry nasıl çalışır: Carry bilgi bankanızı bilgisayarınızda dizinler; asistanınız carry_recall ile kelimeyle ve anlamla arar, cevaplayan parçaları seçer ve cevabın her kısmının hangi nottan geldiğini gösterir; isteğe bağlı olarak sohbetler ve toplantılar onaylayacağınız taslaklara dönüşür](assets/how-it-works.tr.svg)
 
 1. **Carry bilgi bankanıza bağlanır.** Notları okur, kısa parçalara böler ve bilgisayarınızda bir arama dizini tutar: kelimelere ve anlamına göre. Dizin, yaptığınız değişiklikleri kendiliğinden izler. Anlam modeli (yaklaşık 330 MB) Carry'nin içinde, Mac'inizin GPU'sunda çalışır; bilgisayarınızda [Ollama](https://ollama.com) varsa Carry onu kullanır.
 2. **Asistanınız cevap vermeden önce orada arar.** Claude Code ve Codex, Carry'nin arama aracını (`carry_recall`) alır ve soru işinizle, kararlarınızla ya da projelerinizle ilgili olduğunda onu kullanır. Carry eşleşen parçaları kaynaklarıyla döndürür; asistanınız yalnızca soruyu gerçekten cevaplayanları tutar. “Geçen hafta” ya da “eylülde” gibi ifadeler aramayı o döneme daraltır.
 3. **Bilgi bankasından geleni görürsünüz.** Her arama sohbette bir Carry çağrısı olarak görünür ve Carry asistandan her bilginin dayandığı notu göstermesini ister; böylece neyin bilgi bankanızdan geldiğini, neyi asistanın eklediğini ayırt edersiniz. Ekibinizin bilgi bankasından gelen parçalar ayrıca işaretlenir. Hiçbir şey eşleşmezse asistana tahmin yürütmek yerine bunu söylemesi bildirilir.
 
-**İsteğe bağlı ekler.** Henüz notunuz yok mu? Carry, asistanınız için hazırlanmış yeni bir not klasörü oluşturabilir. O klasörde her sohbet son kararların ve yarım kalan işlerin kısa bir özetiyle açılır; sohbet bitince Carry kararları ve açık işleri klasörün `+/` gelen kutusuna taslak olarak yazar. Carry uygulamasında her maddeyi kabul eder, düzeltir ya da atlarsınız; kabul edilenler o günün log'una yazılır, siz onaylamadan hiçbir şey kaydedilmez.
+Notlar, Google'ın [Open Knowledge Format](https://github.com/GoogleCloudPlatform/open-knowledge-format) standardında (OKF v0.2) düz Markdown dosyalarıdır: frontmatter notun ne olduğunu (`type`), sizin kontrol edip etmediğinizi (`status`, `verified`), neye dayandığını (`sources`) ve ne zaman eskiyeceğini (`stale_after`) söyler. Carry bunları her parçanın yanında gösterir; uygulamada bir taslağı onayladığınızda kontrolünüz nota yazılır.
+
+**İsteğe bağlı ekler.**
+
+- **Yeni bir not klasörü.** Henüz notunuz yok mu? Carry, asistanınız için hazırlanmış bir not klasörü oluşturabilir.
+- **Her sohbet bir özetle açılır ve onayladığınız bir oturum özetiyle biter.** Açılış özeti son kararları ve yarım kalan işleri listeler. Sohbet bitince Carry kararları ve açık işleri not klasörünüzdeki `+/` gelen kutusuna taslak olarak yazar (`carry session end`; asistanın sohbet sonu hook'u çalıştırır). Uzun bir sohbet, Claude Code ya da Codex bağlamı sıkıştırmadan önce de özetlenir (`carry session checkpoint`); sohbet sonu yalnız sonrasını özetler. Önceden sahip olduğunuz bir not klasörü için bu hook'ları bu Mac'te `carry session hooks --install` açar. Carry uygulamasında her maddeyi kabul eder, düzeltir ya da atlarsınız; kabul edilenler o günün log'una yazılır, siz onaylamadan hiçbir şey kaydedilmez.
+- **Toplantılar da nota dönüşür.** Uygulamadaki Toplantılar sayfasından ya da bir görüşme mikrofonu açtığında menü çubuğundan Carry toplantıyı kaydeder ve konuşulanı o anda yazıya döker: mikrofonunuz ve macOS 14.2 ve sonrasında görüşmenin sesi, Mac'inizde yazıya dökülür. Durdur'a basınca transkript `sources/carry/meet/` altına kaydedilir. Apple Silicon bir Mac'te ardından Whisper (large-v3-turbo, bir kez yaklaşık 875 MB indirilir) her iki tarafın sesini Mac'inizin GPU'sunda yeniden ve daha doğru yazıya döker; mikrofon bir görüşmede açıkken bekler, bitince ses silinir. Sonra bağlı asistanınız toplantıyı bir kez özetler; kararlar, açık işler ve bilgiler söylendikleri satırla birlikte oturum özetleri gibi İncele'ye gelir. Bağlı asistan yoksa transkript olduğu gibi kalır.
 
 ## Verileriniz
 
-Carry notlarınızı hiçbir yere yüklemez ve kendine ait bir çevrimiçi hizmet kullanmaz. Asistanınızın okuduğu parçalar yalnızca o asistana gider (kendi hesabınızla Claude Code ya da Codex); sohbet taslakları da onun üzerinden çıkarılır.
+Carry notlarınızı hiçbir yere yüklemez ve kendine ait bir çevrimiçi hizmet kullanmaz. Asistanınızın okuduğu parçalar yalnızca o asistana gider (kendi hesabınızla Claude Code ya da Codex); oturum özetleri de onun üzerinden çıkarılır. Toplantılar Mac'inizde yazıya dökülür: canlı olarak Apple'ın tanıyıcısıyla (Dikte'nin açık olması gerekir), sonra Whisper ile. Ses yalnız Whisper yazıya dökene kadar Carry'nin çalışma klasöründe kalır, Mac'inizden çıkmaz, ardından silinir. Özet için bağlı asistanınıza yalnızca transkript gider; bağlı asistan yoksa toplantıdan hiçbir şey Mac'inizden çıkmaz.
 
 <details>
 <summary><b>Sonra gerekirse</b></summary>
@@ -43,13 +49,36 @@ Carry notlarınızı hiçbir yere yüklemez ve kendine ait bir çevrimiçi hizme
 | Ne için | Komut |
 |---|---|
 | Ekibinizin bilgi bankasını sonradan eklemek | `carry setup --team sahip/depo` |
-| Ekip deposunun arama dizinini depoyla birlikte göndermek, böylece ekip arkadaşları hemen arar (deponun klonunda çalıştırıp commit ve push edin) | `carry github pack --id team --out <klon>/.carry/index.db` |
-| Sohbet taslaklarını her akşam 21:30'da almak | `carry harvest --install-schedule` |
+| Eski bir kurulumun dosyalarını not klasörüne taşımak (aşağıda; `--dry-run` her adımı gösterir) | `carry state move --vault <not klasörü>` |
+| İsteğe bağlı, standardın parçası değil: büyük bir ekip deposunun vektörlerini depoyla göndermek, böylece ekip arkadaşları yeniden hesaplamaz (klonda çalıştırıp commit ve push edin) | `carry github pack --id team --out <klon>/.carry/index.db` |
+| Sohbet sonu hook'unun kaçırdığı olursa diye her akşam 21:30'da biten sohbetleri de özetlemek | `carry session schedule --install` |
 | Anlamına göre aramayı açıp kapatmak | `carry search --semantic on` (ya da `off`) |
+| Onayladığınız taslaklara adınızı yazdırmak (`verified: human:<ad>`) | `carry owner --set <ad>` |
 | Carry'yi güncellemek | `carry update`, ardından `carry app install` |
 | Her şeyin çalıştığını kontrol etmek | `carry status --probe` |
 
-Notları okuyan komutlar Carry'nin kendi klasörünü ister: `export CARRY_WORKSPACE="$HOME/CarryState"` ya da `carry --workspace <klasör> …`. Diğerleri için `carry <komut> --help`.
+Not klasörünün içinde her komut Carry'nin dosyalarını kendisi bulur; başka bir yerden `carry --workspace <not klasörü>/.carry/state …` ya da `export CARRY_WORKSPACE=…` ile gösterin. Diğerleri için `carry <komut> --help`.
+
+</details>
+
+<details>
+<summary><b>Carry dosyalarını nerede tutar</b></summary>
+
+Carry'nin bir not klasörü için tuttuğu her şey o klasörün `.carry/` klasöründedir; her cihazda ve ekibin her üyesinde aynıdır:
+
+| | Ne | Git'te |
+|---|---|---|
+| `.carry/settings.json` | her cihazın aynı aramak zorunda olduğu şeyler: özetlerin dili, aramanın dışında kalan klasörler, sıralama ayarları, embedding modeli | commit edilir |
+| `.carry/vault.json` | şablon damgası (Carry'nin yazdığı dosyalar) | commit edilir |
+| `.carry/.gitignore` | Carry yazar: yalnız yukarıdakiler commit edilir | commit edilir |
+| `.carry/state/` | bu cihazın: arama dizini, kilitler, durum, özet durumu, GitHub kopyaları, toplantı dosyaları, sahip kimliğiniz | asla |
+| `.carry/local.json` | bu cihazın durumuna giden işaretçi | asla |
+
+Bir cihazda yapılan değişiklik (örneğin `carry search --semantic off`) `settings.json`'a yazılır; klasör eşitlenince diğer cihazlar da onunla arar. Sağlayıcı (Ollama ya da Carry'nin kendi modeli), adresi ve bütün yollar cihaza özel kalır. Standartta vektör paketi yok: her cihaz dizinini notlardan kendisi kurar, bir kerelik birkaç dakika.
+
+Not klasörü iCloud Drive'da, bir bulut depolama klasöründe (OneDrive, Dropbox, Google Drive) ya da `~/Dropbox` içindeyse `state/` dışarıda, `~/CarryState` içinde kalır: sürekli yazılan bir veritabanı dosya eşitlemesine dayanmaz. `settings.json` yine klasöre yazılır.
+
+Eski bir kurulum durumunu `~/CarryState` içinde tutar. `carry state move --vault <not klasörü>` önce `.carry/.gitignore`'u yazar (git klasöründe cihaz dosyalarının gerçekten yok sayıldığını kontrol eder), hiçbir dizin kurulumu çalışmıyorken durumu `.carry/state`'e taşır, eski yolda bir sembolik bağ bırakır (o yolu gösteren her hook, MCP ayarı ve zamanlanmış iş çalışmaya devam eder), `settings.json`'ı yazar (başka bir cihaz önce taşındıysa onu benimser) ve Carry'nin kendi bağlantılarını yeni yere yöneltir. `--shared-only` yalnız `.gitignore` ile `settings.json`'ı yazar; cihazlar taşınmadan önce commit etmek için.
 
 </details>
 
@@ -78,7 +107,10 @@ Python 3.11+ ister. Anlamına göre arama `llama-cpp-python` (llama.cpp; kurulum
 
 - **Pilot:** uygulama Mac'inizde derlenir ve ad-hoc imzalanır; noter onaylı sürüm yoktur.
 - Claude Code ve Codex ile çalışır. Yalnız `.md` dosyalarını okur.
-- Arama ve sohbet taslakları eksik ya da yanlış olabilir; taslakları kaynaklarıyla kontrol edin.
+- Arama ve oturum özetleri eksik ya da yanlış olabilir; taslakları kaynaklarıyla kontrol edin.
+- `carry session` 0.14'ten önce `carry harvest` idi (`carry session start` da `carry context`); eski adlar çalışmaya devam eder, önceden yazılan özetler `— harvest —` dosya adlarını korur.
+- Toplantı transkripti yalnızca sizi karşı taraftan ayırır, her konuşmacıyı ayrı ayrı göstermez. Hoparlörle görüşürken mikrofonunuz görüşmenin sesini de duyar; Carry bu yankıları ayıklar ama en temiz transkript kulaklıkla çıkar.
+- Özetin yedeği olan Apple'ın cihazdaki modeli Claude ya da Codex'ten daha az madde yakalar ve maddeleri notlarınızla karşılaştırmaz; her madde yine alıntısıyla gelir, İncele'de kontrol edin.
 - Gizli bilgi maskeleme kusursuz değildir.
 
 </details>

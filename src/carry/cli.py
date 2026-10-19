@@ -86,8 +86,59 @@ def cmd_status(args):
              f"sources: {len(payload['workspace']['sources'])}",
              f"capture: {payload['capture']['state']}",
              f"degradation: {', '.join(payload['degradation']) or 'none'}"]
+    for sid, c in payload.get("okf", {}).items():
+        if not c.get("available"):
+            continue
+        gaps = [f"{c[k]} {k.replace('_', ' ')}" for k in ("no_frontmatter", "no_type", "reserved_misuse",
+                                                            "invalid_status", "legacy_keys") if c.get(k)]
+        lines.append(f"okf {sid}: {'conformant' if c['conformant'] else 'not conformant'} "
+                     f"({c['files']} files{', ' + ', '.join(gaps) if gaps else ''})")
+    st = payload.get("state") or {}
+    if st:
+        where = 'in the vault' if st.get('in_vault') else 'outside the vault'
+        lines.append(f"state: {where}; shared settings: {'yes' if st.get('shared') else 'no'}"
+                     + (f" ({len(st['differ'])} differ on this device)" if st.get('differ') else ''))
     _print(payload, args.json, lines)
     return EXIT_OK if payload["ok"] else EXIT_FAILED
+
+
+def cmd_owner(args):
+    """Who the owner is in OKF `verified` (`human:<id>`), written when they approve a draft."""
+    from . import okf
+    workspace = open_workspace(args.workspace)
+    actor = okf.set_owner(workspace.state_dir, args.set) if args.set else okf.owner(workspace.state_dir)
+    hint = [] if actor != okf.DEFAULT_OWNER else ["set it with: carry owner --set <short id, not an email>"]
+    _print(dict(actor=actor), args.json, [f"owner: {actor}"] + hint)
+    return EXIT_OK
+
+
+def cmd_team(args):
+    from . import team
+    workspace = open_workspace(args.workspace)
+    if args.apply:
+        result = team.apply_settings(workspace)
+        applied = result["applied"]
+        lines = ([f"applied {k} = {v}" for k, v in applied.items()] or ["already matches the team settings"]
+                 if result["report"] else ["no team settings (.carry/team.json) in any team source"])
+        _print(result, args.json, lines)
+        return EXIT_OK
+    report = team.settings_report(workspace)
+    if not report:
+        _print(dict(report=None), args.json, ["no team settings (.carry/team.json) in any team source"])
+        return EXIT_OK
+    lines = [f"team sources: {', '.join(report['sources']) or 'none'}"]
+    lines += [f"{k}: team {v['team']}, this workspace {v['local']}" for k, v in report["differ"].items()]
+    if report["conflict"]:
+        lines.append("team sources disagree; nothing can be applied")
+    if report["too_old"]:
+        lines.append(f"Carry {report['carry_version']} is older than the team minimum {report['min_carry_version']}: carry update")
+    lines += [f"warning: {w}" for w in report["warnings"]]
+    if report["apply"]:
+        lines.append("apply with: " + report["apply"])
+    elif not report["differ"] and not report["conflict"]:
+        lines.append("search settings match the team")
+    _print(report, args.json, lines)
+    return EXIT_OK
 
 
 def cmd_eval(args):
@@ -267,14 +318,69 @@ def cmd_model(args):
     return EXIT_FAILED if result.get('status') == 'failed' else EXIT_OK
 
 
+def _vault_workspace(args):
+    """(workspace, note) for `vault init`: the one given; else the vault's own `.carry/state` when it
+    has one, or when the folder is new (the standard place); else none (template only)."""
+    if args.workspace or getattr(args, 'no_workspace', False):
+        return args.workspace, None
+    from . import statedir
+    target = Path(args.path).expanduser().resolve()
+    own = target / '.carry' / 'state'
+    if (own / 'workspace.json').is_file():
+        return str(own), None
+    fresh = not (target / vault_module.STAMP).exists() and (not target.exists() or not any(
+        p for p in target.iterdir() if p.name not in vault_module.IGNORED_WHEN_EMPTY))
+    if not fresh:
+        return None, None
+    cloud = statedir.cloud_service(target)
+    if cloud:
+        return None, (f"note\t{cloud} syncs {target}: Carry's state stays out of it; "
+                      "create one with --workspace <folder outside the cloud>")
+    return str(own), None
+
+
+def cmd_state(args):
+    from . import statedir
+    if args.state_command == 'show':
+        ws = open_workspace(args.workspace)
+        info = statedir.describe(ws)
+        lines = [f"state: {info['state_dir']} ({'in the vault' if info['in_vault'] else 'outside the vault'})",
+                 f"shared settings: {info['settings'] or 'none'}"]
+        lines += [f"  differs on this device: {k} = {v['device']} (shared: {v['shared']})" for k, v in info['differ'].items()]
+        lines += [f"  warning: {w}" for w in info['warnings']]
+        if not info['in_vault'] and info.get('vault'):
+            lines.append(f"move it into the vault: carry state move --vault \"{info['vault']}\"")
+        _print(info, args.json, lines)
+        return EXIT_OK
+    ws = open_workspace(args.workspace)
+    printed = []
+    report = statedir.move(ws, args.vault, dry_run=args.dry_run, shared_only=args.shared_only, wait=args.wait,
+                           out=None if args.json else printed.append, language=args.language)
+    lines = list(printed)
+    if args.dry_run:
+        lines += ['', '.carry/settings.json:', shared_render(report['settings']).rstrip()]
+    elif report.get('moved'):
+        lines += [f"state is now {report['state_dir']}; restart Claude Code, Codex and the app to use the new path "
+                  "(the old one still works through the symlink)"]
+    _print(report, args.json, lines)
+    return EXIT_OK
+
+
+def shared_render(settings):
+    from . import shared
+    return shared.render(settings)
+
+
 def cmd_vault(args):
     if args.vault_command == 'rollback':
         result = vault_module.rollback(Path(args.path).expanduser().resolve(), args.id)
         _print(result, args.json, [f"rolled back {args.id}"])
         return EXIT_OK
-    plan = vault_module.plan(args.path, language=args.language, workspace=args.workspace,
+    workspace, note = _vault_workspace(args)
+    plan = vault_module.plan(args.path, language=args.language, workspace=workspace,
                              capture=args.capture)
     lines = [f"{c['status']}\t{c['rel']}" for c in plan['changes']] + [f"conflict\t{r}" for r in plan['conflicts']]
+    lines += [note] if note else []
     # Conflicting files are never written; the rest still applies, and the exit code reports them.
     status = EXIT_FAILED if plan['conflicts'] else EXIT_OK
     if args.dry_run or not (plan['changes'] or plan['capture']):
@@ -366,43 +472,148 @@ def cmd_search(args):
     return EXIT_OK
 
 
-def cmd_harvest(args):
+def _session_hook(args, command='end'):
+    """SessionEnd (`end`) or PreCompact (`checkpoint`) from Claude Code or Codex: start the recap
+    in the background; never fail the client, never block it. Silent and always exit 0: a
+    PreCompact hook that exits 2 or prints a block decision stops the compaction."""
     from . import harvest
-    if args.from_hook:
-        # SessionEnd from Claude Code or Codex: never fail the client, never block it.
-        try:
-            ws = open_workspace(args.workspace)
-            harvest.spawn_from_hook(ws.state_dir, harvest.hook_payload(sys.stdin), harvest.vault_root(ws, args.vault),
-                                    language=args.language)
-        except Exception:
-            pass
-        return EXIT_OK
+    try:
+        ws = open_workspace(args.workspace)
+        harvest.spawn_from_hook(ws.state_dir, harvest.hook_payload(sys.stdin), harvest.vault_root(ws, args.vault),
+                                language=args.language, command=command)
+    except Exception:
+        pass
+    return EXIT_OK
+
+
+def _session_hook_end(args):
+    return _session_hook(args, 'end')
+
+
+def _session_hooks(args, action):
+    """Turn the session hooks (start, end, checkpoint) on or off for the vault on this device."""
+    from . import harvest, vault
     ws = open_workspace(args.workspace)
-    if (args.install_schedule or args.remove_schedule) and sys.platform not in ('darwin', 'win32'):
-        import shutil
-        line = f"30 21 * * * {shutil.which('carry') or 'carry'} --workspace {ws.state_dir} harvest"
-        _print(dict(cron=line), args.json, ['nightly harvest is scheduled on macOS and Windows; add this line with `crontab -e`:', line])
-        return EXIT_OK
-    if args.install_schedule or args.remove_schedule:
-        import shutil
-        if args.remove_schedule:
-            harvest.remove_schedule()
-            _print(dict(schedule='removed'), args.json, ['nightly harvest removed'])
+    root = harvest.vault_root(ws, args.vault)
+    clients = ('claude', 'codex') if args.client == 'both' else (args.client,)
+    if action == 'status':
+        result = vault.session_hooks_status(root, clients)
+    else:
+        result = vault.set_session_hooks(ws.state_dir, root, clients, on=action == 'install')
+    lines = []
+    for client in clients:
+        info = result[client]
+        state = ', '.join(f"{name} {'on' if info['hooks'].get(name) else 'off'}" for name in ('start', 'end', 'checkpoint'))
+        lines.append(f"{client}: {state}" + (f" ({info['path']})" if info.get('path') else '') +
+                     (f" · {info['note']}" if info.get('note') else ''))
+    _print(result, args.json, lines)
+    return EXIT_OK
+
+
+def _session_schedule(args, action):
+    """The nightly sweep: install, remove or show it (one launchd job or Windows task per user)."""
+    from . import harvest
+    ws = open_workspace(args.workspace)
+    if action == 'status':
+        status = harvest.schedule_status()
+        if not status.get('installed'):
+            _print(status, args.json, ['nightly sweep: not scheduled'])
             return EXIT_OK
-        carry_bin = shutil.which('carry') or os.path.abspath(sys.argv[0])
-        harvest.install_schedule(carry_bin, ws.state_dir, vault=args.vault, language=args.language)
-        plist = harvest.schedule_path()
-        _print(dict(schedule=str(plist)), args.json, [f'nightly harvest at 21:30: {plist}'])
+        when = f"{status.get('hour')}:{int(status.get('minute') or 0):02d}"
+        _print(status, args.json, [f"nightly sweep at {when}: {status.get('path')}" + ('' if status.get('loaded') else ' (not loaded by launchd)')])
         return EXIT_OK
-    report = harvest.run(ws, root=args.vault, dry_run=args.dry_run, include_filed=args.include_filed,
-                         limit=args.limit, min_idle=args.min_idle, language=args.language, which=args.extractor,
-                         thread=args.thread, min_exchanges=args.min_exchanges,
-                         progress=(lambda m: None) if args.json else print)
-    stamp = time.strftime('%Y-%m-%d %H:%M ') if args.thread else ''  # hook runs share one log
-    _print(report, args.json, [f"{stamp}threads {report['threads']}: harvested {report['harvested']}, "
+    if sys.platform not in ('darwin', 'win32'):
+        import shutil
+        line = f"30 21 * * * {shutil.which('carry') or 'carry'} --workspace {ws.state_dir} session sweep"
+        _print(dict(cron=line), args.json, ['the nightly sweep is scheduled on macOS and Windows; add this line with `crontab -e`:', line])
+        return EXIT_OK
+    if action == 'remove':
+        harvest.remove_schedule()
+        _print(dict(schedule='removed'), args.json, ['nightly sweep removed'])
+        return EXIT_OK
+    import shutil
+    carry_bin = shutil.which('carry') or os.path.abspath(sys.argv[0])
+    harvest.install_schedule(carry_bin, ws.state_dir, vault=args.vault, language=args.language)
+    plist = harvest.schedule_path()
+    _print(dict(schedule=str(plist)), args.json, [f'nightly sweep at 21:30: {plist}'])
+    return EXIT_OK
+
+
+def _session_run(args, thread=None, trigger=None):
+    """Recap one transcript (`session end --thread`, `session checkpoint --thread`) or every idle
+    thread of the vault (`session sweep`)."""
+    from . import harvest
+    ws = open_workspace(args.workspace)
+    opt = lambda name, default=None: getattr(args, name, default)
+    report = harvest.run(ws, root=args.vault, dry_run=opt('dry_run', False), include_filed=opt('include_filed', False),
+                         limit=opt('limit'), min_idle=opt('min_idle', harvest.MIN_IDLE_MINUTES), language=args.language,
+                         which=opt('extractor'), thread=thread, min_exchanges=opt('min_exchanges'),
+                         progress=(lambda m: None) if args.json else print, trigger=trigger)
+    stamp = time.strftime('%Y-%m-%d %H:%M ') if thread else ''  # chat-end runs share one log
+    # The app reads `threads N:` and the `draft:` lines back from the log (desktop._harvest_result).
+    busy = f", busy {report['busy']}" if report.get('busy') else ''
+    _print(report, args.json, [f"{stamp}threads {report['threads']}: recapped {report['harvested']}, "
                                f"already filed {report['skipped_filed']}, active {report['skipped_active']}, "
-                               f"pending {report['pending']}"] + [f'draft: {d}' for d in report['digests']])
+                               f"pending {report['pending']}{busy}"] + [f'draft: {d}' for d in report['digests']])
     return EXIT_FAILED if report['pending'] else EXIT_OK
+
+
+def cmd_session(args):
+    """`carry session start | end | checkpoint | sweep | schedule | hooks`: the state pack a thread
+    starts from, the recap of a finished thread, the recap so far before a chat compacts, the
+    nightly sweep of idle threads, that sweep's schedule, and the hooks that run them."""
+    command = args.session_command
+    if command == 'start':
+        return cmd_context(args)
+    if command in ('end', 'checkpoint'):
+        if args.thread:
+            return _session_run(args, thread=args.thread, trigger=command)
+        if sys.stdin is None or sys.stdin.isatty():
+            hook = 'SessionEnd' if command == 'end' else 'PreCompact'
+            _print(dict(status='error', error=f'session_{command}_needs_hook_input'), args.json,
+                   [f'carry session {command} reads the {hook} hook JSON on stdin; by hand use --thread <transcript.jsonl>'])
+            return EXIT_FAILED
+        return _session_hook(args, command)
+    if command == 'sweep':
+        return _session_run(args)
+    action = 'install' if args.install else 'remove' if args.remove else 'status'
+    if command == 'hooks':
+        return _session_hooks(args, action)
+    return _session_schedule(args, action)
+
+
+def cmd_harvest(args):
+    """`carry harvest`, the name before 0.14: --from-hook is `session end`, --thread and a plain run
+    are `session end --thread` and `session sweep`, the schedule flags are `session schedule`."""
+    if args.from_hook:
+        return _session_hook_end(args)
+    if args.install_schedule or args.remove_schedule:
+        return _session_schedule(args, 'remove' if args.remove_schedule else 'install')
+    return _session_run(args, thread=args.thread)
+
+
+def cmd_meet(args):
+    from . import meet
+    ws = open_workspace(args.workspace)
+    if args.meet_command == 'list':
+        found = meet.listing(ws, args.vault)
+        _print(found, args.json, [f"{m['started'][:16].replace('T', ' ')}  {m['status']:<8} {m['title']}" for m in found['meetings']]
+               or ['no meetings yet'])
+        return EXIT_OK
+    if args.meet_command == 'download-whisper':
+        from . import whisper_model
+        report = meet.download_whisper(ws)
+        _print(report, args.json, [f"Whisper model ready: {whisper_model.model_dir()}"])
+        return EXIT_OK
+    report = meet.summarize(ws, args.path, root=args.vault, language=args.language, which=args.extractor, audio=args.audio)
+    stamp = time.strftime('%Y-%m-%d %H:%M ')  # app runs share one log
+    if report['raw']:
+        _print(report, args.json, [f"{stamp}meeting {report['path']}: no assistant connected, the transcript stays raw"])
+        return EXIT_OK
+    _print(report, args.json, [f"{stamp}meeting {report['path']}: {report['points']} points, {report['items']} items, "
+                               f"{report['dropped']} without a verbatim quote"]
+           + ([f"draft: {report['digest']}"] if report['digest'] else []))
+    return EXIT_OK
 
 
 def cmd_share(args):
@@ -505,6 +716,14 @@ def build_parser():
     st = sub.add_parser("status", help="integration and index status")
     st.add_argument("--probe", action="store_true", help="contact the embedding provider")
     st.set_defaults(func=cmd_status)
+
+    ow = sub.add_parser("owner", help="the owner's id in OKF `verified` (human:<id>), written when they approve a draft")
+    ow.add_argument("--set", metavar="ID", help="a short id such as your first name; never an email address")
+    ow.set_defaults(func=cmd_owner)
+
+    tm = sub.add_parser("team", help="the team knowledge base's shared search settings (.carry/team.json)")
+    tm.add_argument("--apply", action="store_true", help="write the team's search settings into this workspace")
+    tm.set_defaults(func=cmd_team)
 
     rc = sub.add_parser("recall", help="retrieve cited evidence")
     rc.add_argument("query")
@@ -616,11 +835,28 @@ def build_parser():
     vinit.add_argument('--language', default='Turkish', help='language of human-facing notes')
     vinit.add_argument('--no-git', action='store_true', help='do not run git init')
     vinit.add_argument('--capture', action='store_true',
-                       help='opt in to whole-prompt capture into sources/carry (needs --workspace)')
+                       help='opt in to whole-prompt capture into sources/carry (needs a workspace)')
+    vinit.add_argument('--no-workspace', action='store_true',
+                       help="template only: a new folder otherwise gets Carry's state in <vault>/.carry/state")
     vrb = vsub.add_parser('rollback', help='undo one init by its journal id')
     vrb.add_argument('path')
     vrb.add_argument('--id', required=True)
     vlt.set_defaults(func=cmd_vault)
+
+    sta = sub.add_parser("state", help="where this workspace's files are: <vault>/.carry/ (shared settings.json, "
+                                       "this device's state/)")
+    stasub = sta.add_subparsers(dest="state_command", required=True)
+    stasub.add_parser("show", help="where the state is, the shared settings file, and what differs on this device")
+    mv = stasub.add_parser("move", help="move this workspace's state into <vault>/.carry/state, leave a symlink at "
+                                        "the old path, write or adopt .carry/settings.json")
+    mv.add_argument("--vault", required=True, help="the vault (a personal source of this workspace)")
+    mv.add_argument("--dry-run", action="store_true", help="print every step and the settings.json, change nothing")
+    mv.add_argument("--shared-only", action="store_true",
+                    help="write only .carry/.gitignore and .carry/settings.json; the state stays where it is")
+    mv.add_argument("--wait", type=float, default=10.0, help="seconds to wait for a running index build")
+    mv.add_argument("--language", choices=("Turkish", "English"),
+                    help="the recaps' language in settings.json (default: the one this device recorded, else none)")
+    sta.set_defaults(func=cmd_state)
 
     cn = sub.add_parser("connect", help="connect Claude Code or Codex in a project folder to this workspace")
     cnsub = cn.add_subparsers(dest="connect_command", required=True)
@@ -638,11 +874,58 @@ def build_parser():
     cnsub.add_parser("undo", help="roll back one connection").add_argument("id")
     cn.set_defaults(func=cmd_connect)
 
-    cx = sub.add_parser("context", help="state pack for a new thread: recent commits, open items, drafts to review")
-    cx.add_argument("--vault", help="vault folder (default: current directory)")
-    cx.add_argument("--max-chars", type=int, default=7000)
-    cx.add_argument("--language", choices=("Turkish", "English"))
-    cx.add_argument("--from-hook", action="store_true", help="SessionStart hook: read the client's JSON on stdin")
+    def start_options(p):
+        p.add_argument("--vault", help="vault folder (default: current directory)")
+        p.add_argument("--max-chars", type=int, default=7000)
+        p.add_argument("--language", choices=("Turkish", "English"))
+        p.add_argument("--from-hook", action="store_true", help="SessionStart hook: read the client's JSON on stdin")
+
+    def run_options(p, sweep):
+        p.add_argument("--vault", help="vault folder (default: the workspace's vault source)")
+        p.add_argument("--language", choices=("Turkish", "English"), help="language of the recaps (default: the vault's)")
+        p.add_argument("--extractor", help="claude:<model> or codex:<model> (default: claude:sonnet, else codex:gpt-6-astra)")
+        p.add_argument("--min-exchanges", type=int, help="skip threads shorter than this (default 2)")
+        if sweep:
+            p.add_argument("--dry-run", action="store_true")
+            p.add_argument("--include-filed", action="store_true", help="also threads that already wrote notes")
+            p.add_argument("--limit", type=int, help="at most this many threads per run")
+            p.add_argument("--min-idle", type=int, default=30, help="skip threads written to in the last N minutes")
+
+    ss = sub.add_parser("session", help="a chat session with Carry: the state pack it starts from, its recap "
+                                        "when it ends, and the nightly sweep of idle chats")
+    sssub = ss.add_subparsers(dest="session_command", required=True)
+    start_options(sssub.add_parser("start", help="state pack for a new thread: recent commits, open items, recaps to review "
+                                                 "(the SessionStart hook)"))
+    se_end = sssub.add_parser("end", help="recap a finished thread into +/ for review: reads the SessionEnd hook's JSON on "
+                                          "stdin and works in the background, or recaps --thread now")
+    run_options(se_end, sweep=False)
+    se_end.add_argument("--thread", help="recap this transcript file now, without waiting")
+    se_cp = sssub.add_parser("checkpoint", help="recap a running thread so far, before Claude Code or Codex compacts it: "
+                                                "reads the PreCompact hook's JSON on stdin and works in the background, "
+                                                "or recaps --thread now; the chat end recaps only what comes after")
+    run_options(se_cp, sweep=False)
+    se_cp.add_argument("--thread", help="recap this transcript file so far, now")
+    run_options(sssub.add_parser("sweep", help="recap every finished, idle thread of the vault (what the nightly job runs)"),
+                sweep=True)
+    sch = sssub.add_parser("schedule", help="the nightly sweep at 21:30 (launchd; Task Scheduler on Windows); shows it by default")
+    what = sch.add_mutually_exclusive_group()
+    what.add_argument("--install", action="store_true")
+    what.add_argument("--remove", action="store_true")
+    what.add_argument("--status", action="store_true")
+    sch.add_argument("--vault", help="vault folder the sweep writes to (default: the workspace's vault source)")
+    sch.add_argument("--language", choices=("Turkish", "English"))
+    hk = sssub.add_parser("hooks", help="turn the session hooks (start, end, checkpoint) on or off for the vault on this "
+                                        "device; shows them by default")
+    what = hk.add_mutually_exclusive_group()
+    what.add_argument("--install", action="store_true")
+    what.add_argument("--remove", action="store_true")
+    what.add_argument("--status", action="store_true")
+    hk.add_argument("--vault", help="vault folder (default: the workspace's vault source)")
+    hk.add_argument("--client", choices=("claude", "codex", "both"), default="both")
+    ss.set_defaults(func=cmd_session)
+
+    cx = sub.add_parser("context", help="old name of `carry session start`")
+    start_options(cx)
     cx.set_defaults(func=cmd_context)
 
     se = sub.add_parser("search", help="switch semantic search (embeddinggemma via Ollama) on or off and choose the judge")
@@ -651,20 +934,28 @@ def build_parser():
     se.add_argument("--install-ollama", action="store_true", help="install Ollama with Homebrew if it is missing")
     se.set_defaults(func=cmd_search)
 
-    hv = sub.add_parser("harvest", help="draft notes from finished Claude Code / Codex threads of the vault")
-    hv.add_argument("--vault", help="vault folder (default: the workspace's vault source)")
-    hv.add_argument("--dry-run", action="store_true")
-    hv.add_argument("--include-filed", action="store_true", help="also threads that already wrote notes")
-    hv.add_argument("--limit", type=int, help="at most this many threads per run")
-    hv.add_argument("--min-idle", type=int, default=30, help="skip threads written to in the last N minutes")
-    hv.add_argument("--language", choices=("Turkish", "English"), help="language of the drafts (default: the vault's)")
-    hv.add_argument("--thread", help="harvest only this transcript file (no idle wait)")
-    hv.add_argument("--from-hook", action="store_true", help="SessionEnd hook: read the client's JSON on stdin, harvest in the background")
-    hv.add_argument("--min-exchanges", type=int, help="skip threads shorter than this (default 2)")
-    hv.add_argument("--extractor", help="claude:<model> or codex:<model> (default: claude:sonnet, else codex:gpt-6-astra)")
-    hv.add_argument("--install-schedule", action="store_true", help="run every evening at 21:30 (launchd; Task Scheduler on Windows)")
-    hv.add_argument("--remove-schedule", action="store_true")
+    hv = sub.add_parser("harvest", help="old name of `carry session sweep` (--thread: `session end --thread`, "
+                                        "--from-hook: `session end`, the schedule flags: `session schedule`)")
+    run_options(hv, sweep=True)
+    hv.add_argument("--thread", help="old form of `carry session end --thread`")
+    hv.add_argument("--from-hook", action="store_true", help="old form of `carry session end` (hooks written before 0.14)")
+    hv.add_argument("--install-schedule", action="store_true", help="old form of `carry session schedule --install`")
+    hv.add_argument("--remove-schedule", action="store_true", help="old form of `carry session schedule --remove`")
     hv.set_defaults(func=cmd_harvest)
+
+    mt = sub.add_parser("meet", help="meetings recorded in the app: list them, summarise one again, get the Whisper model")
+    mtsub = mt.add_subparsers(dest="meet_command", required=True)
+    mtsub.add_parser("list", help="meetings in the vault, newest first, with their summary state")
+    ms = mtsub.add_parser("summarize", help="summarise a saved meeting with your assistant (the app does this at Stop)")
+    ms.add_argument("--path", required=True, help="the meeting inside the vault, e.g. 'sources/carry/meet/… .md'")
+    ms.add_argument("--language", choices=("Turkish", "English"), help="language of the summary (default: the drafts')")
+    ms.add_argument("--extractor", help="claude:<model>, codex:<model> or apple:on-device (default: the connected assistant, "
+                                        "claude:sonnet, else codex:gpt-6-astra)")
+    ms.add_argument("--audio", help="the app's audio folder under <workspace>/meet-audio/: transcribe it with Whisper first, then delete it")
+    mtsub.add_parser("download-whisper", help="download the Whisper model (874 MB) that transcribes meetings again after they end")
+    for each in (mtsub.choices["list"], ms):
+        each.add_argument("--vault", help="vault folder (default: the workspace's own notes, never a team's)")
+    mt.set_defaults(func=cmd_meet)
 
     sh = sub.add_parser("share", help="share an approved chat item into a team repo's inbox")
     shsub = sh.add_subparsers(dest="share_command", required=True)
@@ -716,9 +1007,21 @@ def build_parser():
     return parser
 
 
+def _is_checkpoint_hook(argv):
+    """`session checkpoint` without --thread: Carry run as a PreCompact hook."""
+    words = list(sys.argv[1:] if argv is None else argv)
+    return 'session' in words and 'checkpoint' in words[words.index('session') + 1:] and '--thread' not in words
+
+
 def main(argv=None):
     use_utf8()
-    args = build_parser().parse_args(argv)
+    try:
+        args = build_parser().parse_args(argv)
+    except SystemExit as exc:
+        # argparse exits 2 on a usage error, and a PreCompact hook that exits 2 blocks the compaction.
+        if exc.code == 2 and _is_checkpoint_hook(argv):
+            return EXIT_OK
+        raise
     try:
         return args.func(args)
     except RevisionConflict as exc:

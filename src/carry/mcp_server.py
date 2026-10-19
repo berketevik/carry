@@ -7,13 +7,18 @@ core and formats the result.
 
 Read tools are always available. Optional draft proposals require an explicit
 per-client switch and a server-bound client identity; no MCP tool accepts drafts.
+
+A server started with `--scope team` (or CARRY_SCOPE) serves only the sources of
+that scope: recall, catalog and status never reach another source, a hidden source
+answers like an unknown one, and proposals are not offered. With no source in the
+scope every read fails closed.
 """
 import json
 import os
 import sys
 
 from . import __version__, lifecycle
-from .config import open_workspace
+from .config import SCOPES, open_workspace
 from .console import use_utf8
 from .errors import CarryError
 from .recall import recall
@@ -35,7 +40,10 @@ GROUNDING = (
     "If GitHub sync failed or the index is stale, disclose that the current remote state "
     "is not verified. Use the commit-pinned GitHub URL when provided. "
     "A passage marked TEAM KNOWLEDGE BASE comes from a shared team source, not the "
-    "user's own notes: when the answer uses one, say so in the answer itself."
+    "user's own notes: when the answer uses one, say so in the answer itself. "
+    "Passage metadata follows the Open Knowledge Format: status draft means the owner has not "
+    "checked the text, trust says whether anyone verified it (unverified, machine-confirmed, "
+    "human-reviewed), and stale true means it is past its stale_after date: say so when it matters."
 )
 
 TOOLS = [
@@ -79,9 +87,9 @@ TOOLS = [
     {
         "name": "carry_catalog",
         "description": (
-            "List every searchable file with its one-line summary (or title), like a "
+            "List every searchable file with its one-line description (or title), like a "
             "folder index. Use it when carry_recall found nothing that answers: pick the "
-            "files whose summary fits, then call carry_recall with their terms. Returns "
+            "files whose description fits, then call carry_recall with their terms. Returns "
             "no note bodies."),
         "inputSchema": {"type": "object", "properties": {
             "source_ids": {"type": "array", "items": {"type": "string"},
@@ -113,8 +121,8 @@ PROPOSE_TOOL = {
         "required": ["content", "event_id", "source_refs"]}}
 
 
-def available_tools(state_dir=None, client=None):
-    if client:
+def available_tools(state_dir=None, client=None, scope=None):
+    if client and not scope:
         try:
             if lifecycle.client_enabled(_workspace(state_dir), client):
                 return [*TOOLS, PROPOSE_TOOL]
@@ -127,13 +135,23 @@ def _workspace(state_dir=None):
     return open_workspace(state_dir or os.environ.get("CARRY_WORKSPACE"))
 
 
+def _visible(workspace, scope):
+    """Source ids a server bound to `scope` may read; None when the server is not scoped."""
+    if scope is None:
+        return None
+    return [s.source_id for s in workspace.sources if s.scope == scope]
+
+
 # What an assistant acts on. The judge's internals and the index's build record stay in
 # `carry status` and the core result; every character here is paid for on every recall.
 STATE_KEYS = ("warnings", "pending_proposals", "unmatched_terms", "semantic", "answerability",
               "relevance_gate", "reranker", "mode", "timeframe", "best_confidence", "candidates", "budget")
 # Front matter worth reading next to a passage. `sources` is left out: a long provenance
 # list the assistant can open in the note itself.
-PASSAGE_METADATA = ("type", "summary", "created", "date", "updated", "provenance", "confidence",
+# OKF v0.2 (description, lifecycle `status`, trust tier, staleness, generated, verified) first;
+# `summary`, `draft` and `valid_until` remain for notes written before it.
+PASSAGE_METADATA = ("type", "description", "summary", "status", "status_unknown", "trust", "stale", "stale_after",
+                    "generated", "verified", "intensity", "created", "date", "updated", "provenance", "confidence",
                     "sensitivity", "draft", "valid_until", "review_by")
 
 
@@ -169,9 +187,14 @@ def _format_recall(result):
         header = (f"[{number}] {team}{item['citation']} > {item['heading']} "
                   f"[record {item['record_id']} rev {item['revision']} state {item['state']}]")
         body = header + ("\nSource URL: " + item["url"] if item.get("url") else "")
+        if item.get("committed_at"):
+            # When the file last changed in its repository, not when it reached this computer.
+            body += "\nLast commit to this file: " + item["committed_at"]
         # A document's front matter once, with its first passage.
         key = (item["source_id"], item["path"])
         metadata = {k: v for k, v in (item.get("metadata") or {}).items() if k in PASSAGE_METADATA}
+        if metadata.get("description") and metadata.get("summary") == metadata["description"]:
+            metadata.pop("summary")     # a legacy summary is already the description
         if metadata and key not in described:
             body += "\n" + json.dumps(metadata, ensure_ascii=False, default=str)
         described.add(key)
@@ -179,13 +202,15 @@ def _format_recall(result):
     return "\n\n".join(parts), False
 
 
-def call_tool(name, arguments, state_dir=None, client=None):
+def call_tool(name, arguments, state_dir=None, client=None, scope=None):
     """Dispatch one tool call. Returns (text, is_error)."""
     arguments = arguments or {}
     try:
         if not isinstance(arguments, dict):
             return "Invalid request: arguments must be an object.", True
         if name == "carry_propose":
+            if scope:
+                return "Proposals are not available on a scoped server.", True
             if not client:
                 return "Proposal writes require a server-bound client identity.", True
             allowed = set(PROPOSE_TOOL['inputSchema']['properties'])
@@ -217,7 +242,8 @@ def call_tool(name, arguments, state_dir=None, client=None):
                 return "Invalid request: queries must be an array of strings.", True
             result = recall(workspace, query, source_ids=source_ids, budget=budget, queries=queries or (),
                             include_history=bool(arguments.get("include_history")),
-                            include_drafts=bool(arguments.get("include_drafts")))
+                            include_drafts=bool(arguments.get("include_drafts")),
+                            visible=_visible(workspace, scope))
             result.setdefault("diagnostics", {})["refresh"] = refresh
             return _format_recall(result)
         if name == "carry_catalog":
@@ -229,11 +255,12 @@ def call_tool(name, arguments, state_dir=None, client=None):
             if folder is not None and not isinstance(folder, str):
                 return "Invalid request: folder must be a string.", True
             workspace = _workspace(state_dir)
-            known = {s.source_id for s in workspace.sources}
+            visible = _visible(workspace, scope)
+            known = {s.source_id for s in workspace.sources} if visible is None else set(visible)
             if source_ids and set(source_ids) - known:
                 return "Invalid request: unknown source ids.", True
             from .recall import catalog_entries
-            result = catalog_entries(workspace, source_ids=source_ids, folder=folder)
+            result = catalog_entries(workspace, source_ids=source_ids, folder=folder, visible=visible)
             if not result["ok"]:
                 return "Catalog unavailable: " + result["error"], True
             lines = [f"{e['source_id']}:{e['path']} — {e['summary']}" for e in result["entries"]]
@@ -241,7 +268,9 @@ def call_tool(name, arguments, state_dir=None, client=None):
                     if result["truncated"] else "")
             return (GROUNDING + "\n\n" + "\n".join(lines) + tail), False
         if name == "carry_status":
-            payload = status(_workspace(state_dir), probe_provider=bool(arguments.get("probe")))
+            workspace = _workspace(state_dir)
+            payload = status(workspace, probe_provider=bool(arguments.get("probe")),
+                             visible=_visible(workspace, scope))
             return json.dumps(payload, ensure_ascii=False, indent=2, default=str), False
         return f"Unknown tool: {name}", True
     except CarryError as exc:
@@ -250,7 +279,7 @@ def call_tool(name, arguments, state_dir=None, client=None):
         return f"Carry failed: {type(exc).__name__}", True
 
 
-def handle_message(message, state_dir=None, client=None):
+def handle_message(message, state_dir=None, client=None, scope=None):
     """Map one JSON-RPC message to a response, or None for notifications."""
     if (not isinstance(message, dict) or message.get("jsonrpc") != "2.0"
             or not isinstance(message.get("method"), str)
@@ -282,15 +311,15 @@ def handle_message(message, state_dir=None, client=None):
     if method == "ping":
         return ok({})
     if method == "tools/list":
-        return ok({"tools": available_tools(state_dir, client)})
+        return ok({"tools": available_tools(state_dir, client, scope)})
     if method == "tools/call":
-        text, is_error = call_tool(params.get("name"), params.get("arguments"), state_dir, client)
+        text, is_error = call_tool(params.get("name"), params.get("arguments"), state_dir, client, scope)
         return ok({"content": [{"type": "text", "text": text}], "isError": is_error})
     return {"jsonrpc": "2.0", "id": message_id,
             "error": {"code": -32601, "message": "Method not found: " + str(method)}}
 
 
-def serve(stdin=None, stdout=None, state_dir=None, client=None):
+def serve(stdin=None, stdout=None, state_dir=None, client=None, scope=None):
     stdin = stdin or sys.stdin
     stdout = stdout or sys.stdout
     for line in stdin:
@@ -307,12 +336,12 @@ def serve(stdin=None, stdout=None, state_dir=None, client=None):
         if message == []:
             message = None
         if isinstance(message, list):  # batch
-            responses = [r for r in (handle_message(m, state_dir, client) for m in message) if r]
+            responses = [r for r in (handle_message(m, state_dir, client, scope) for m in message) if r]
             if responses:
                 stdout.write(json.dumps(responses, ensure_ascii=False) + "\n")
                 stdout.flush()
             continue
-        response = handle_message(message, state_dir, client)
+        response = handle_message(message, state_dir, client, scope)
         if response is not None:
             stdout.write(json.dumps(response, ensure_ascii=False, default=str) + "\n")
             stdout.flush()
@@ -333,6 +362,20 @@ def main(argv=None):
     if client is not None and client not in lifecycle.CLIENTS:
         print('carry-mcp: invalid client identity', file=sys.stderr)
         return 1
+    scope = os.environ.get('CARRY_SCOPE') or None
+    if '--scope' in argv:
+        position = argv.index('--scope')
+        scope = argv[position + 1] if position + 1 < len(argv) else ''
+    if scope is not None and scope not in SCOPES:
+        print('carry-mcp: invalid scope (expected one of: %s)' % ', '.join(SCOPES), file=sys.stderr)
+        return 1
+    if scope:
+        try:
+            if not _visible(_workspace(state_dir), scope):
+                print(f'carry-mcp: no source has scope {scope!r}; every read will fail until one is added',
+                      file=sys.stderr)
+        except (CarryError, OSError, ValueError):
+            pass  # read tools report configuration problems themselves
     import threading
     stopped = threading.Event()
     def maintain():
@@ -346,7 +389,7 @@ def main(argv=None):
     thread = threading.Thread(target=maintain, daemon=True)
     thread.start()
     try:
-        return serve(state_dir=state_dir, client=client)
+        return serve(state_dir=state_dir, client=client, scope=scope)
     finally:
         stopped.set()
 

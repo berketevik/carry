@@ -12,6 +12,7 @@ import sqlite3
 import time
 from contextlib import closing
 
+from . import okf
 from .embedding import build_provider
 from .errors import ProviderUnavailable
 from .index import db_is_usable, fingerprint, health, open_readonly, read_manifest, unpack
@@ -19,8 +20,11 @@ from .index import db_is_usable, fingerprint, health, open_readonly, read_manife
 MAX_QUERY_CHARS = 2000
 BUDGET_LIMITS = {"top_k": (1, 20), "max_chars": (200, 20000), "max_per_document": (1, 10)}
 
-METADATA_KEYS = ("type", "summary", "created", "date", "updated", "sources", "provenance",
-                 "confidence", "sensitivity", "draft", "valid_until", "review_by")
+# OKF v0.2 fields (description, status, generated, verified, stale_after) next to the keys
+# notes written before OKF still carry (summary, draft, valid_until).
+METADATA_KEYS = ("type", "description", "summary", "created", "date", "updated", "sources", "provenance",
+                 "confidence", "sensitivity", "status", "draft", "generated", "verified", "stale_after",
+                 "valid_until", "review_by", "intensity")
 
 try:  # optional acceleration
     import numpy as _np
@@ -57,24 +61,29 @@ def fts_match_string(query, prefix=None):
     return " OR ".join(terms) if terms else ""
 
 
-def unmatched_terms(con, query, limit=12):
+def unmatched_terms(con, query, limit=12, allowed=None):
     """Query terms that appear nowhere in the corpus.
 
     A caller asking about something the corpus never mentions deserves to see
     that fact next to the passages, so a partial keyword match is not mistaken
-    for an answer.
+    for an answer. With `allowed` (chunk ids), only those chunks count: a search
+    scoped to some sources must not reveal which words the other sources contain.
     """
     missing = []
     for token in dict.fromkeys(re.findall(r"\w{3,}", query.lower(), flags=re.UNICODE)):
         if len(missing) >= limit:
             break
         try:
-            row = con.execute(
-                "SELECT 1 FROM chunks_fts WHERE chunks_fts MATCH ? LIMIT 1",
-                (f'"{token}"',)).fetchone()
+            if allowed is None:
+                found = con.execute(
+                    "SELECT 1 FROM chunks_fts WHERE chunks_fts MATCH ? LIMIT 1",
+                    (f'"{token}"',)).fetchone() is not None
+            else:
+                found = any(r[0] in allowed for r in con.execute(
+                    "SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH ?", (f'"{token}"',)))
         except sqlite3.Error:
             return missing
-        if row is None:
+        if not found:
             missing.append(token)
     return missing
 
@@ -130,7 +139,7 @@ def _candidates(workspace, query, con, limit, source_ids=None, diagnostics=None,
                 "SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH ? ORDER BY rank LIMIT ?",
                 (match, -1))
                 if r[0] in allowed][:retrieval.branch_candidates]
-            diagnostics["unmatched_terms"] = unmatched_terms(con, query)
+            diagnostics["unmatched_terms"] = unmatched_terms(con, query, allowed=allowed if source_ids else None)
         except sqlite3.Error:
             diagnostics["warnings"].append("fts_unavailable")
 
@@ -176,11 +185,12 @@ def is_secret(metadata):
 
 
 def is_pending_digest(metadata):
-    """A chat digest waits for review like a proposal until approval clears its draft flag,
-    wherever it lands: a folder that does not exclude +/ must not serve it as an accepted note."""
+    """A session recap (`session:`, or `harvest:` before 0.14) waits for review like a proposal
+    until the owner's decisions move it out of `status: draft` (or the legacy `draft: true`),
+    wherever it lands: a folder that does not exclude +/ must not serve it as an accepted note.
+    Any other draft stays searchable."""
     metadata = metadata or {}
-    return (isinstance(metadata.get("harvest"), dict) and "extractor" in metadata["harvest"]
-            and metadata.get("draft") in (True, "true"))
+    return okf.is_recap(metadata) and okf.is_draft(metadata)
 
 
 def _local_only(workspace, files, row):
@@ -250,18 +260,35 @@ def _file_records(con, source_ids=None):
             metadata = json.loads(row[2])
         except (TypeError, ValueError):
             metadata = {}
+        # OKF consumer view (§5.3-5.5): `status` is the lifecycle (a value outside OKF's set is
+        # kept as `status_unknown`), plus the trust tier and staleness, from the spec's fields.
+        kept = {k: metadata[k] for k in METADATA_KEYS if k in metadata}
+        kept.update(okf.view(metadata))
         result[(row[0], row[1])] = dict(
-            metadata={k: metadata[k] for k in METADATA_KEYS if k in metadata},
+            metadata=kept,
             pending_digest=is_pending_digest(metadata),
             record_id=row[3], revision=row[4], state=row[5],
             current=bool(row[6]), superseded_by=row[7] or "", digest=row[8])
     return result
 
 
-def _evidence_date(row, record):
+def _evidence_date(row, record, committed=None):
     from .timeframe import row_date
-    day = row.get("date") or row_date(row.get("heading"), row["path"], record.get("metadata"))
+    day = row.get("date") or row_date(row.get("heading"), row["path"], record.get("metadata"), committed=committed)
     return day.isoformat() if day else None
+
+
+class _History(dict):
+    """Each source's commit dates (commits.for_source), read the first time one is needed."""
+
+    def __init__(self, workspace):
+        super().__init__()
+        self.workspace = workspace
+
+    def __missing__(self, source_id):
+        from .commits import for_source
+        self[source_id] = for_source(self.workspace.source(source_id))
+        return self[source_id]
 
 
 def citation(source_id, path, title):
@@ -298,9 +325,28 @@ def _eligible(workspace, files, include_drafts=False, include_history=False, dia
 CATALOG_MAX_CHARS = 120000
 
 
-def catalog_entries(workspace, source_ids=None, folder=None, max_chars=CATALOG_MAX_CHARS):
+def visible_sources(source_ids, visible):
+    """The sources a scoped caller may read: (source_ids, error).
+
+    `visible` None means no scope (every configured source); a list is the whole of
+    what the caller may see. An empty list fails closed rather than falling through to
+    "all", and a hidden source is reported exactly like an unknown one."""
+    if visible is None:
+        return source_ids, None
+    visible = list(dict.fromkeys(visible))
+    if not visible:
+        return None, "no_visible_sources"
+    if source_ids and set(source_ids) - set(visible):
+        return None, "unknown_source_ids"
+    return list(dict.fromkeys(source_ids)) if source_ids else visible, None
+
+
+def catalog_entries(workspace, source_ids=None, folder=None, max_chars=CATALOG_MAX_CHARS, visible=None):
     """One line per servable file (path and summary, else title): the index an agent
     reads when keyword search cannot reach a note. Same eligibility as recall."""
+    source_ids, error = visible_sources(source_ids, visible)
+    if error:
+        return dict(ok=False, error=error, entries=[])
     if not db_is_usable(workspace.db_path):
         return dict(ok=False, error="index_unavailable", entries=[])
     folder = (folder or "").strip().strip("/")
@@ -330,7 +376,7 @@ def catalog_entries(workspace, source_ids=None, folder=None, max_chars=CATALOG_M
 LISTING_TEXT = 600  # per passage when a time range is listed, so more of the range fits the budget
 
 
-def _dated_rows(con, eligible, files, frame):
+def _dated_rows(con, eligible, files, frame, history):
     """Passages of eligible files that belong to the frame, with the date they belong to."""
     from .timeframe import row_date
     out = []
@@ -340,13 +386,13 @@ def _dated_rows(con, eligible, files, frame):
         if key not in eligible:
             continue
         metadata = files.get(key, {}).get("metadata")
-        day = row_date(heading, path, metadata, frame)
+        day = row_date(heading, path, metadata, frame, committed=history[sid].get(path))
         if frame.contains(day):
             out.append(dict(id=cid, source_id=sid, path=path, title=title, heading=heading, text=text, date=day, metadata=metadata))
     return out
 
 
-RAW_TYPES = ("chat-raw", "source", "clip")
+RAW_TYPES = ("chat-raw", "source", "clip", "meeting")
 
 
 def _written(row):
@@ -396,12 +442,21 @@ def _listing(rows):
                  truncated=len(r["text"]) > LISTING_TEXT) for r in ordered], len(best)
 
 
-def recall(workspace, query, source_ids=None, budget=None, include_history=False, include_drafts=False, queries=(), today=None):
-    """Return cited evidence, or an explicit no-evidence / unavailable state."""
+def recall(workspace, query, source_ids=None, budget=None, include_history=False, include_drafts=False, queries=(), today=None,
+           visible=None):
+    """Return cited evidence, or an explicit no-evidence / unavailable state.
+
+    `visible` limits a scoped caller to those sources (see visible_sources)."""
     started = time.monotonic()
     workspace.validate()
     query = (query or "").strip()[:MAX_QUERY_CHARS]
     known = {s.source_id for s in workspace.sources}
+    if visible is not None:
+        requested = source_ids
+        source_ids, error = visible_sources(source_ids, visible)
+        if error:
+            return dict(ok=False, status="invalid_request", error=error,
+                        detail=list(requested or []), evidence=[], sources=[], diagnostics={})
     if source_ids:
         source_ids = list(dict.fromkeys(source_ids))
         unknown = [s for s in source_ids if s not in known]
@@ -422,6 +477,7 @@ def recall(workspace, query, source_ids=None, budget=None, include_history=False
                     diagnostics=dict(index=health(workspace)))
 
     diagnostics = {}
+    history = _History(workspace)
     try:
         with closing(open_readonly(workspace.db_path)) as con:
             index_health = health(workspace, con)
@@ -438,7 +494,7 @@ def recall(workspace, query, source_ids=None, budget=None, include_history=False
                                     queries=queries or (), files=files)
             else:
                 # A named time: only passages dated inside it may answer.
-                dated = _dated_rows(con, eligible, files, frame)
+                dated = _dated_rows(con, eligible, files, frame, history)
                 in_range = {(r["source_id"], r["path"]) for r in dated}
                 dated_ids = {r["id"]: r["date"] for r in dated}
                 diagnostics["timeframe"] = dict(frame.to_json(), documents=len(in_range))
@@ -491,6 +547,7 @@ def recall(workspace, query, source_ids=None, budget=None, include_history=False
     for row in hits:
         record = files.get((row["source_id"], row["path"]), {})
         source = workspace.source(row["source_id"])
+        committed = history[row["source_id"]].get(row["path"])
         evidence.append(dict(
             scope=source.scope, repository=(source.github or {}).get("repository"),
             source_id=row["source_id"], path=row["path"], title=row["title"],
@@ -498,7 +555,7 @@ def recall(workspace, query, source_ids=None, budget=None, include_history=False
             citation=citation(row["source_id"], row["path"], row["title"]),
             url=citation_url(workspace.source(row["source_id"]), row["path"]),
             relevance_score=row.get("relevance_score"), vector_score=row.get("vector_score"),
-            date=_evidence_date(row, record), in_range=row.get("in_range"),
+            date=_evidence_date(row, record, committed), committed_at=committed, in_range=row.get("in_range"),
             record_id=record.get("record_id", ""), revision=record.get("revision", 1),
             state=record.get("state", "imported"), current=record.get("current", True),
             superseded_by=record.get("superseded_by", ""),
@@ -519,6 +576,10 @@ def recall(workspace, query, source_ids=None, budget=None, include_history=False
                        returned_chars=sum(len(e["text"]) for e in evidence),
                        candidates=len(candidates), scoped_to=source_ids or "all")
     diagnostics.setdefault("semantic", False)
+    if any(e["metadata"].get("status_unknown") for e in evidence):
+        diagnostics["warnings"].append("okf_unknown_status_read_as_stable")
+    if any(e["metadata"].get("stale") for e in evidence):
+        diagnostics["warnings"].append("stale_evidence")
     if not diagnostics["semantic"]:
         diagnostics["warnings"].append("results_are_lexical_only")
     if index_health.get("state") != "fresh":

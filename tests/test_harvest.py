@@ -78,13 +78,17 @@ class HarvestTest(unittest.TestCase):
         self.assertEqual(report['harvested'], 1)
         digest = (self.root / report['digests'][0]).read_text(encoding='utf-8')
         self.assertTrue(report['digests'][0].startswith('+/'))
-        self.assertIn('draft: true', digest)
+        self.assertIn('\nstatus: draft\n', digest)
+        self.assertNotIn('draft: true', digest)
         self.assertIn('The pilot ships on 15 October.', digest)
         self.assertNotIn('1M', digest)
         self.assertIn('"dropped_without_quote": 1', digest)
-        raws = list((self.root / 'sources/carry/harvest').glob('*.md'))
+        raws = list((self.root / 'sources/carry/session').glob('*.md'))
         self.assertEqual(len(raws), 1)
         self.assertIn('type: chat-raw', raws[0].read_text(encoding='utf-8'))
+        self.assertRegex(report['digests'][0], r'^\+/\d{4}-\d{2}-\d{2} — session claude [0-9a-f]{8}\.md$')
+        self.assertIn('\nsession: {', digest)
+        self.assertNotIn('\nharvest:', digest)
 
     def test_assistant_suggestion_is_not_filed_as_the_owners_decision(self):
         self.thread('bbbb2222', [('What should we do about ECC?', 'I recommend installing only selected skills.')])
@@ -166,7 +170,7 @@ class HarvestTest(unittest.TestCase):
         self.assertNotIn(digest, served())
         self.assertIn(digest, served(include_drafts=True))
         path = self.root / digest
-        path.write_text(path.read_text(encoding='utf-8').replace('draft: true\n', ''), encoding='utf-8')
+        path.write_text(path.read_text(encoding='utf-8').replace('status: draft\n', 'status: stable\n'), encoding='utf-8')
         build(self.ws)
         self.assertIn(digest, served())
 
@@ -424,6 +428,33 @@ class ClientLaunchTest(unittest.TestCase):
                 patch.object(harvest.subprocess, 'run', return_value=reply) as run:
             harvest.ask_agent('SYSTEM', 'line one\nline & two', which, 'items')
         return run.call_args
+
+    def test_a_signed_out_client_is_named_as_the_cause(self):
+        signed_out = mock.Mock(stdout=json.dumps(dict(type='result', is_error=True, result='Failed to authenticate: OAuth session expired')))
+        with patch.object(harvest, '_client', side_effect=lambda name: ['/bin/' + name]), \
+                patch.object(harvest.subprocess, 'run', return_value=signed_out):
+            with self.assertRaisesRegex(CarryError, 'assistant_failed: Failed to authenticate'):
+                harvest.ask_agent('SYSTEM', 'body', 'claude:sonnet', 'items')
+        refused = mock.Mock(stdout='', stderr='Error: not logged in\n', returncode=1)
+        with patch.object(harvest, '_client', side_effect=lambda name: ['/bin/' + name]), \
+                patch.object(harvest.subprocess, 'run', return_value=refused):
+            with self.assertRaisesRegex(CarryError, 'assistant_failed: Error: not logged in'):
+                harvest.ask_agent('SYSTEM', 'body', 'codex:gpt-5', 'items')
+
+    def test_apple_s_on_device_model_gets_the_request_on_stdin(self):
+        answer = mock.Mock(stdout=json.dumps(dict(items=[dict(statement='x')])), stderr='', returncode=0)
+        with patch.object(harvest, 'apple_model', return_value=Path('/Apps/carry-model')), \
+                patch.object(harvest.subprocess, 'run', return_value=answer) as run:
+            self.assertEqual(harvest.ask_agent('SYSTEM', 'line one', 'apple:on-device', 'items'), [dict(statement='x')])
+        args, options = run.call_args
+        self.assertEqual(args[0], ['/Apps/carry-model'])
+        self.assertEqual(json.loads(options['input']), dict(instructions='SYSTEM', prompt='line one'))
+        off = mock.Mock(stdout='', stderr='apple_model_unavailable: appleIntelligenceNotEnabled\n', returncode=69)
+        with patch.object(harvest, 'apple_model', return_value=Path('/Apps/carry-model')), \
+                patch.object(harvest.subprocess, 'run', return_value=off) as run:
+            with self.assertRaisesRegex(CarryError, 'assistant_failed: apple_model_unavailable: appleIntelligenceNotEnabled'):
+                harvest.ask_agent('SYSTEM', 'body', 'apple:on-device', 'items')
+        self.assertEqual(run.call_count, 1)  # a model that is off is not asked twice
 
     def test_the_chat_goes_through_stdin_on_windows_and_as_an_argument_elsewhere(self):
         for which in ('claude:sonnet', 'codex:gpt-5'):

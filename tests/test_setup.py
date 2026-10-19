@@ -88,7 +88,7 @@ class SetupTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertTrue((self.base / 'Vault' / 'LLM-GUIDE.md').exists())
         self.assertIn('carry connect claude', out.getvalue())
-        self.assertIn('carry harvest --install-schedule', out.getvalue())
+        self.assertIn('carry session schedule --install', out.getvalue())
 
     def team_copy(self):
         clone = self.base / 'okb'; clone.mkdir()
@@ -101,6 +101,15 @@ class SetupTest(unittest.TestCase):
             code = setup_wizard.run(state_dir=str(self.base / 'ws'), animation=False, stream=io.StringIO('\n'.join(answers) + '\n'),
                                     semantic_default=False, app=False, **options)
         return code, out.getvalue(), Workspace.load(self.base / 'ws')
+
+    def test_team_settings_are_applied_after_the_search_preset(self):
+        clone = self.team_copy()
+        (clone / '.carry').mkdir()
+        (clone / '.carry' / 'team.json').write_text('{"retrieval": {"top_k": 5, "max_chars": 9000}}', encoding='utf-8')
+        code, out, ws = self.run_team(['2', '2', str(clone)])
+        self.assertEqual(code, 0)
+        self.assertEqual((ws.retrieval.top_k, ws.retrieval.max_chars), (5, 9000))
+        self.assertIn('ortak arama ayarları uygulandı', out)
 
     def test_team_only_connects_the_existing_copy_read_only_as_team_knowledge(self):
         clone = self.team_copy()
@@ -198,6 +207,49 @@ class AppInstallTest(unittest.TestCase):
                 with self.assertRaisesRegex(CarryError, 'app_path_taken'):
                     app_install.install(target=other.parent)
             self.assertTrue((other / 'Info.plist').exists())
+
+    def test_the_app_declares_why_it_records_meetings(self):
+        from carry import app_install
+        import plistlib, subprocess
+        done = subprocess.CompletedProcess([], 0, '', '')
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(app_install, 'swiftc', return_value='/usr/bin/swiftc'), patch.object(app_install.sys, 'platform', 'darwin'), \
+                    patch.object(app_install.subprocess, 'run', return_value=done):
+                target = app_install.install(target=Path(tmp) / 'Carry.app')
+            with open(target / 'Contents' / 'Info.plist', 'rb') as f:
+                info = plistlib.load(f)
+        for key in ('NSMicrophoneUsageDescription', 'NSSpeechRecognitionUsageDescription', 'NSAudioCaptureUsageDescription'):
+            self.assertIn('Carry', info[key])
+
+    def test_a_new_install_outranks_older_builds(self):
+        """macOS opens the highest bundle version with Carry's ID; old pilot builds say 7."""
+        from carry import app_install
+        import plistlib, subprocess
+        done = subprocess.CompletedProcess([], 0, '', '')
+        versions = []
+        with tempfile.TemporaryDirectory() as tmp:
+            for now in (1_792_000_000, 1_792_000_060):
+                with patch.object(app_install, 'swiftc', return_value='/usr/bin/swiftc'), patch.object(app_install.sys, 'platform', 'darwin'), \
+                        patch.object(app_install.subprocess, 'run', return_value=done), patch.object(app_install.time, 'time', return_value=now):
+                    target = app_install.install(target=Path(tmp) / 'Carry.app')
+                with open(target / 'Contents' / 'Info.plist', 'rb') as f:
+                    versions.append(int(plistlib.load(f)['CFBundleVersion']))
+        self.assertGreater(versions[0], 7)
+        self.assertGreater(versions[1], versions[0])
+
+    def test_the_app_brings_apple_s_on_device_model_for_meetings(self):
+        from carry import app_install
+        from importlib import resources
+        import subprocess
+        done = subprocess.CompletedProcess([], 0, '', '')
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(app_install, 'swiftc', return_value='/usr/bin/swiftc'), patch.object(app_install.sys, 'platform', 'darwin'), \
+                    patch.object(app_install.subprocess, 'run', return_value=done) as run:
+                app_install.install(target=Path(tmp) / 'Carry.app')
+        built = [c.args[0] for c in run.call_args_list if c.args[0][0] == '/usr/bin/swiftc']
+        self.assertEqual([Path(b[-3]).name for b in built], ['CarryApp.swift', 'CarryModel.swift'])
+        self.assertTrue(built[1][-1].endswith('Contents/MacOS/carry-model'))
+        self.assertIn('FoundationModels', (resources.files('carry') / 'app' / 'CarryModel.swift').read_text(encoding='utf-8'))
 
     def test_build_failure_shows_the_first_errors_and_a_known_fix(self):
         from carry import app_install
