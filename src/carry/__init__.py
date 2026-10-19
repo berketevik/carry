@@ -1,4 +1,4 @@
-"""Carry: portable local memory for coding agents.
+"""Carry: connects coding agents to Markdown knowledge bases.
 
 Markdown stays canonical; the SQLite index is derived and disposable. Every
 entry point takes an explicit Workspace, so two workspaces on one machine never

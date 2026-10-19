@@ -1,8 +1,8 @@
 """Carry command line.
 
 Every command takes an explicit workspace, either with --workspace or through
-CARRY_WORKSPACE. There is no implicit default folder: an agent memory tool that
-guesses where to write is a bug.
+CARRY_WORKSPACE. There is no implicit default folder: a tool that connects agents to a knowledge
+base and guesses where to write is a bug.
 """
 import argparse
 import json
@@ -687,7 +687,7 @@ def cmd_setup(args):
 
 
 def build_parser():
-    parser = argparse.ArgumentParser(prog="carry", description="Portable local memory")
+    parser = argparse.ArgumentParser(prog="carry", description="Connect Claude Code and Codex to your knowledge base")
     parser.add_argument("--workspace", default=os.environ.get("CARRY_WORKSPACE"),
                         help="workspace state directory (or CARRY_WORKSPACE)")
     parser.add_argument("--json", action="store_true", help="machine-readable output")

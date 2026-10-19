@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "carry"
 version = "0.16.0"
 authors = [{ name = "Berke Tevik" }]
-description = "Portable local memory for coding agents: Markdown sources, a derived index and an MCP interface."
+description = "Connects coding agents (Claude Code, Codex) to Markdown knowledge bases: a local search index and an MCP recall tool that cites its sources."
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
