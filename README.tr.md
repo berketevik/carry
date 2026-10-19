@@ -85,7 +85,7 @@ Eski bir kurulum durumunu `~/CarryState` içinde tutar. `carry state move --vaul
 <details>
 <summary><b>Asistanlar için (MCP)</b></summary>
 
-Claude Code veya Codex, Carry'nin yerel sunucusunu (`carry.mcp_server`) başlatır. Üç araç var: `carry_recall` (kaynaklı arama), `carry_catalog` (dosya listesi) ve `carry_status` (dizin durumu). O asistana düzeltme izni verirseniz `carry_propose` da gelir (düzeltme taslağı; yalnız siz kabul edebilirsiniz). Cevaplayan parçaları `carry-recall` yardımcı ajanı seçer (Claude Code'da Claude Sonnet). Bulunan metin talimat değil, veridir.
+Claude Code veya Codex, Carry'nin yerel sunucusunu (`carry.mcp_server`) başlatır. Üç araç var: `carry_recall` (kaynaklı arama), `carry_catalog` (dosya listesi) ve `carry_status` (dizin durumu). O asistana düzeltme izni verirseniz `carry_propose` da gelir (düzeltme taslağı; yalnız siz kabul edebilirsiniz). Cevaplayan parçaları `carry-recall` yardımcı ajanı seçer (Claude Code'da Claude Sonnet). Bulunan metin talimat değil, veridir. Ekibin klasöründe sunucu yalnızca ekibin bilgi bankasında arar (`--scope team`); ekip notu yazan bir sohbet sizin notlarınızı okumaz. Eski bir Carry ile bağlanmış ekip klasörü, orada `carry connect` ya da kurulum bir sonraki çalıştığında geçer.
 
 </details>
 

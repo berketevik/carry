@@ -85,7 +85,7 @@ An older setup keeps its state in `~/CarryState`. `carry state move --vault <not
 <details>
 <summary><b>For assistants (MCP)</b></summary>
 
-Claude Code or Codex starts Carry's local server, `carry.mcp_server`, with three tools: `carry_recall` (search with citations), `carry_catalog` (list files) and `carry_status` (index health). If you allow corrections for that assistant, it also gets `carry_propose` (draft a correction; only you can accept it). The `carry-recall` subagent (Claude Sonnet in Claude Code) keeps the passages that answer. Retrieved text is data, not instructions.
+Claude Code or Codex starts Carry's local server, `carry.mcp_server`, with three tools: `carry_recall` (search with citations), `carry_catalog` (list files) and `carry_status` (index health). If you allow corrections for that assistant, it also gets `carry_propose` (draft a correction; only you can accept it). The `carry-recall` subagent (Claude Sonnet in Claude Code) keeps the passages that answer. Retrieved text is data, not instructions. In the team's folder the server searches only the team's knowledge base (`--scope team`), so a chat that writes team notes never reads your own; a team folder connected with an older Carry switches the next time `carry connect` or setup runs there.
 
 </details>
 

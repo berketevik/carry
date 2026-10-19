@@ -469,6 +469,7 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
     say()
     if own and team_root:
         say(paint(f'  Ekip bilgi bankası her iki klasörde de aranır; ona yazmak için Claude\'u {team_root} içinde aç.', DIM))
+        say(paint('  Orada yalnızca ekibin notları aranır; kendi notların ekip klasöründeki sohbete girmez.', DIM))
     say()
     say(paint('  İstersen sonra:', DIM))
     if own:
