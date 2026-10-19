@@ -87,6 +87,40 @@ class TeamCloneTest(WorkspaceCase):
         self.assertEqual((result["status"], result["reason"]), ("failed", "git_failed"))
         self.assertIn("member draft", (self.clone / "Note.md").read_text(encoding="utf-8"))
 
+    def test_the_app_never_writes_into_a_team_clone(self):
+        from carry import digest
+        from carry.errors import CarryError
+        draft = self.clone / "+" / "Draft.md"
+        draft.parent.mkdir()
+        draft.write_text("---\ntype: thing\nstatus: draft\n---\n\n# Draft\n\nbody\n", encoding="utf-8")
+        before = draft.read_text(encoding="utf-8")
+        for write in (lambda: vaultview.create_note(self.workspace, "team", "New"),
+                      lambda: vaultview.approve_note(self.workspace, "team", "+/Draft.md"),
+                      lambda: vaultview.approve_many(self.workspace, "team", ["+/Draft.md"]),
+                      lambda: digest.decide(self.workspace, "team", "+/Draft.md", "x", "accept"),
+                      lambda: digest.recheck(self.workspace, "team", "+/Draft.md")):
+            with self.assertRaisesRegex(CarryError, "team_source_read_only"):
+                write()
+        self.assertEqual(draft.read_text(encoding="utf-8"), before)
+        self.assertEqual(git(self.clone, "status", "--porcelain", "--untracked-files=no"), "")
+
+    def test_own_notes_come_first_and_recaps_never_go_to_the_team(self):
+        from carry import desktop
+        from carry.errors import CarryError
+        # Only the team connected: the app still shows it, but a recap has nowhere of the owner's to go.
+        self.assertEqual(vaultview.default_vault(self.workspace), "team")
+        with self.assertRaisesRegex(CarryError, "harvest_needs_own_notes"):
+            desktop.harvest_vault(self.workspace, None)
+        with self.assertRaisesRegex(CarryError, "harvest_vault_not_a_source"):
+            desktop.harvest_vault(self.workspace, str(self.clone))
+        own = self.base / "notes"
+        own.mkdir()
+        both = Workspace.create(self.base / "state3", sources=[SourceConfig("team", self.clone, scope="team"),
+                                                               SourceConfig("notes", own, writable=True)],
+                                embedding=HASHING, retrieval=RetrievalConfig(auto_refresh=False))
+        self.assertEqual(vaultview.default_vault(both), "notes")
+        self.assertEqual(desktop.harvest_vault(both, None), str(own.resolve()))
+
     def test_unpushed_commits_are_never_touched(self):
         self.publish("The heron budget is fifty units.")
         (self.clone / "Note.md").write_text("# Note\n\nmine\n", encoding="utf-8")
