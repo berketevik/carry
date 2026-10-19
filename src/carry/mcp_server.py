@@ -17,7 +17,7 @@ import json
 import os
 import sys
 
-from . import __version__, lifecycle
+from . import __version__, confirm, lifecycle
 from .config import SCOPES, open_workspace
 from .console import use_utf8
 from .errors import CarryError
@@ -122,13 +122,20 @@ PROPOSE_TOOL = {
 
 
 def available_tools(state_dir=None, client=None, scope=None):
+    tools = TOOLS
     if client and not scope:
         try:
             if lifecycle.client_enabled(_workspace(state_dir), client):
-                return [*TOOLS, PROPOSE_TOOL]
+                tools = [*TOOLS, PROPOSE_TOOL]
         except (CarryError, OSError, ValueError):
             pass
-    return TOOLS
+    # Searching and proposing ask the owner on every call (carry.confirm); a workspace that
+    # cannot be opened asks too.
+    try:
+        on = confirm.enabled(_workspace(state_dir).state_dir)
+    except (CarryError, OSError, ValueError):
+        on = True
+    return confirm.marked(tools, on)
 
 
 def _workspace(state_dir=None):

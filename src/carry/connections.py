@@ -13,7 +13,7 @@ import sys
 import tomllib
 import uuid
 
-from . import capture, lifecycle
+from . import capture, confirm, lifecycle
 from .errors import CarryError
 from .persistence import atomic_text, writer_lock
 
@@ -143,9 +143,13 @@ def preview(workspace, client, project, source_id=None, prompts=False, proposals
         after = _excluded(before, '\r\n' if before and '\r\n' in before else '\n')
         if after is not None:
             change(exclude, after)
+    # Claude Code's settings.local.json can take both the capture hook and the ask rules: one
+    # read, one change, or apply would see its own first write as someone else's edit.
+    ask = client == 'claude' and confirm.enabled(workspace.state_dir)
+    hook_data = _object(_read(hook_path)) if prompts or ask else {}
+    hook_dirty = False
     if prompts:
-        data = _object(_read(hook_path))
-        handlers = data.setdefault('hooks', {}).setdefault('UserPromptSubmit', [])
+        handlers = hook_data.setdefault('hooks', {}).setdefault('UserPromptSubmit', [])
         if not isinstance(handlers, list):
             raise CarryError('invalid_hook_settings')
         command = shlex.join([sys.executable, '-I', '-m', 'carry.hook', '--workspace', str(workspace.state_dir), '--client', client])
@@ -154,7 +158,13 @@ def preview(workspace, client, project, source_id=None, prompts=False, proposals
             if any('carry.hook' in json.dumps(h) for h in handlers):
                 raise CarryError('existing_carry_hook_conflict')
             handlers.append(handler)
-        change(hook_path, _json(data))
+        hook_dirty = True
+    if ask:
+        hook_data, added = confirm.with_rules(hook_data, True)
+        hook_dirty = hook_dirty or added
+    if hook_dirty:
+        change(hook_path, _json(hook_data))
+    if prompts:
         conf = capture._config(workspace)
         prior = conf['clients'].get(client, {})
         conf['clients'][client] = dict(source_id=source.source_id, opt_in=True,
