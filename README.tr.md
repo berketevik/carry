@@ -110,7 +110,7 @@ Python 3.11+ ister. Anlamına göre arama `llama-cpp-python` (llama.cpp; kurulum
 - Arama ve oturum özetleri eksik ya da yanlış olabilir; taslakları kaynaklarıyla kontrol edin.
 - `carry session` 0.14'ten önce `carry harvest` idi (`carry session start` da `carry context`); eski adlar çalışmaya devam eder, önceden yazılan özetler `— harvest —` dosya adlarını korur.
 - Toplantı transkripti yalnızca sizi karşı taraftan ayırır, her konuşmacıyı ayrı ayrı göstermez. Hoparlörle görüşürken mikrofonunuz görüşmenin sesini de duyar; Carry bu yankıları ayıklar ama en temiz transkript kulaklıkla çıkar.
-- Özetin yedeği olan Apple'ın cihazdaki modeli Claude ya da Codex'ten daha az madde yakalar ve maddeleri notlarınızla karşılaştırmaz; her madde yine alıntısıyla gelir, İncele'de kontrol edin.
+- Apple'ın cihazdaki modeli bir toplantıyı yalnızca siz seçerseniz özetler (`carry meet summarize --path … --extractor apple:on-device`); bağlı asistan yoksa transkript olduğu gibi kalır. Claude ya da Codex'ten daha az madde yakalar ve maddeleri notlarınızla karşılaştırmaz; her madde yine alıntısıyla gelir, İncele'de kontrol edin.
 - Gizli bilgi maskeleme kusursuz değildir.
 
 </details>

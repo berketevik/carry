@@ -4687,7 +4687,7 @@ func meetingError(_ error: String) -> String {
         return error == "extraction_unparseable" ? T("Your assistant's answer could not be read. Retry.", "Asistanınızın cevabı okunamadı. Yeniden deneyin.") : error
     }
     let said = error.dropFirst("assistant_failed".count).trimmingCharacters(in: CharacterSet(charactersIn: ": "))
-    // Apple's on-device model, the last to try, is off: the owner's assistant is the way out.
+    // Apple's on-device model (used only when chosen by hand) is off: the owner's assistant is the way out.
     let appleOff = said.contains("apple_model_unavailable") ? T(" Apple's model on this Mac is not available either (Apple Intelligence).",
                                                                  " Apple'ın bu Mac'teki modeli de kullanılamıyor (Apple Intelligence).") : ""
     if ["authenticate", "login", "logged in", "sign in"].contains(where: { said.lowercased().contains($0) }) {

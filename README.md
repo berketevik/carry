@@ -110,7 +110,7 @@ Needs Python 3.11+. Search by meaning uses `llama-cpp-python` (llama.cpp, built 
 - Search and session recaps can miss or misread things; check drafts against their sources.
 - `carry session` was `carry harvest` (and `carry session start` was `carry context`) before 0.14; the old names still work, and recaps written before keep their `— harvest —` file names.
 - Meeting transcripts tell only you from the other side, not each speaker. On speakers your microphone also hears the call; Carry drops those echoes, but headphones give the cleanest transcript.
-- Apple's on-device model, the summary's fallback, catches fewer items than Claude or Codex and does not compare them with your notes; every item still carries its quote, so check it in Review.
+- Apple's on-device model summarises a meeting only when you choose it (`carry meet summarize --path … --extractor apple:on-device`); with no assistant connected the transcript stays as it is. It catches fewer items than Claude or Codex and does not compare them with your notes; every item still carries its quote, so check it in Review.
 - Secret masking is best effort.
 
 </details>
