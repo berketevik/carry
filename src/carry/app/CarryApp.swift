@@ -1831,13 +1831,13 @@ struct RecentChats: View {
             GroupBox(T("Unfinished work from your chats", "Sohbetlerinizden yarım kalan işler")) {
                 VStack(alignment: .leading, spacing: 10) {
                     if opens.isEmpty { Text(T("Carry has not found any to-dos in your chats yet.", "Carry henüz sohbetlerinizden yapılacak iş çıkarmadı.")).foregroundStyle(.secondary) }
-                    ForEach(opens.indices, id: \.self) { i in item(opens[i], icon: "circle", color: .orange) }
+                    list(opens, icon: "circle", color: .orange)
                 }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
             }
             if !decisions.isEmpty {
                 GroupBox(T("Recent decisions from your chats", "Sohbetlerinizden son kararlar")) {
                     VStack(alignment: .leading, spacing: 10) {
-                        ForEach(decisions.indices, id: \.self) { i in item(decisions[i], icon: "checkmark.seal", color: .green) }
+                        list(decisions, icon: "checkmark.seal", color: .green)
                     }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
@@ -1848,15 +1848,38 @@ struct RecentChats: View {
             return .handled
         })
     }
+    /// "Today", "Yesterday" or "19 Oct" for a recap's day.
+    func dayTitle(_ iso: String) -> String {
+        let parse = DateFormatter(); parse.locale = Locale(identifier: "en_US_POSIX"); parse.dateFormat = "yyyy-MM-dd"
+        guard let day = parse.date(from: iso) else { return iso }
+        if Calendar.current.isDateInToday(day) { return T("Today", "Bugün") }
+        if Calendar.current.isDateInYesterday(day) { return T("Yesterday", "Dün") }
+        let out = DateFormatter(); out.locale = Lang.locale; out.setLocalizedDateFormatFromTemplate("d MMM")
+        return out.string(from: day)
+    }
+    /// At most five items, two lines each (the whole text on hover); a day is written once, above its items.
+    func list(_ entries: [[String: Any]], icon: String, color: Color) -> some View {
+        let shown = Array(entries.prefix(5))
+        return VStack(alignment: .leading, spacing: 8) {
+            ForEach(shown.indices, id: \.self) { i in
+                let day = str(shown[i], "day", "")
+                if i == 0 || day != str(shown[i - 1], "day", "") {
+                    Text(dayTitle(day)).font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.top, i == 0 ? 0 : 4)
+                }
+                item(shown[i], icon: icon, color: color)
+            }
+            if entries.count > shown.count {
+                Text(T("\(entries.count - shown.count) more", "\(entries.count - shown.count) madde daha")).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
     func item(_ entry: [String: Any], icon: String, color: Color) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: icon).foregroundStyle(color).font(.caption)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(inline(str(entry, "text"))).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 8) {
-                    Text(str(entry, "day")).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                    if let digest = entry["digest"] as? String { Button(T("Where it came from", "Nereden geldi?")) { model.openNote(digest) }.buttonStyle(.link).font(.caption) }
-                }
+            Text(inline(str(entry, "text"))).lineLimit(2).help(str(entry, "text", "")).frame(maxWidth: .infinity, alignment: .leading)
+            if let digest = entry["digest"] as? String {
+                Button { model.openNote(digest) } label: { Image(systemName: "doc.text").foregroundStyle(.secondary) }
+                    .buttonStyle(.plain).help(T("Where it came from", "Nereden geldi?"))
             }
         }
     }
