@@ -66,6 +66,27 @@ class TeamCloneTest(WorkspaceCase):
         self.assertEqual((result["status"], result["reason"], result["behind"]), ("skipped", "local_changes", 1))
         self.assertIn("member draft", (self.clone / "Heron.md").read_text(encoding="utf-8"))
 
+    def test_untracked_connection_files_do_not_hold_the_clone_back(self):
+        # `carry setup --team` writes these into the clone; they are untracked, not the member's edits.
+        head = self.publish("The heron budget is fifty units.")
+        (self.clone / ".mcp.json").write_text("{}\n", encoding="utf-8")
+        (self.clone / ".claude" / "agents").mkdir(parents=True)
+        (self.clone / ".claude" / "agents" / "carry-recall.md").write_text("agent\n", encoding="utf-8")
+        result = team.pull(self.source)
+        self.assertEqual(result["status"], "pulled")
+        self.assertEqual(git(self.clone, "rev-parse", "HEAD"), head)
+        self.assertTrue((self.clone / ".mcp.json").is_file())
+
+    def test_an_untracked_file_the_upstream_also_adds_is_never_overwritten(self):
+        (self.author / "Note.md").write_text("# Note\n\nteam\n", encoding="utf-8")
+        git(self.author, "add", "-A")
+        git(self.author, "commit", "-q", "-m", "note")
+        git(self.author, "push", "-q", "origin", "HEAD:main")
+        (self.clone / "Note.md").write_text("# Note\n\nmember draft\n", encoding="utf-8")
+        result = team.pull(self.source)
+        self.assertEqual((result["status"], result["reason"]), ("failed", "git_failed"))
+        self.assertIn("member draft", (self.clone / "Note.md").read_text(encoding="utf-8"))
+
     def test_unpushed_commits_are_never_touched(self):
         self.publish("The heron budget is fifty units.")
         (self.clone / "Note.md").write_text("# Note\n\nmine\n", encoding="utf-8")
