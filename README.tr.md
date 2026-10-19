@@ -53,7 +53,7 @@ Carry notlarınızı hiçbir yere yüklemez ve kendine ait bir çevrimiçi hizme
 | İsteğe bağlı, standardın parçası değil: büyük bir ekip deposunun vektörlerini depoyla göndermek, böylece ekip arkadaşları yeniden hesaplamaz (klonda çalıştırıp commit ve push edin) | `carry github pack --id team --out <klon>/.carry/index.db` |
 | Sohbet sonu hook'unun kaçırdığı olursa diye her akşam 21:30'da biten sohbetleri de özetlemek | `carry session schedule --install` |
 | Anlamına göre aramayı açıp kapatmak | `carry search --semantic on` (ya da `off`) |
-| Onayladığınız taslaklara adınızı yazdırmak (`verified: human:<ad>`) | `carry owner --set <ad>` |
+| Onayladığınız taslak ve önerilerdeki adı değiştirmek (`verified: human:<ad>`; kurulum giriş adınızı kullanır) | `carry owner --set <ad>` |
 | Carry'yi güncellemek | `carry update`, ardından `carry app install` |
 | Her şeyin çalıştığını kontrol etmek | `carry status --probe` |
 

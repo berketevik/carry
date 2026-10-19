@@ -53,7 +53,7 @@ Carry doesn't upload your notes anywhere and uses no online service of its own. 
 | Optional, not part of the standard: ship a large team repo's vectors with it, so teammates skip embedding it (run in the clone, then commit and push) | `carry github pack --id team --out <clone>/.carry/index.db` |
 | Also recap every finished chat each evening at 21:30, in case a chat-end hook missed one | `carry session schedule --install` |
 | Turn search by meaning on or off | `carry search --semantic on` (or `off`) |
-| Put your name on the drafts you approve (`verified: human:<name>`) | `carry owner --set <name>` |
+| Change the name on the drafts and proposals you approve (`verified: human:<name>`; setup uses your login name) | `carry owner --set <name>` |
 | Update Carry | `carry update`, then `carry app install` |
 | Check that everything works | `carry status --probe` |
 

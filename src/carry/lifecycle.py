@@ -239,6 +239,8 @@ def _description(item):
     for key in ('created', 'updated', 'reviewed_at'):
         if item['metadata'].get(key):
             result[key] = str(item['metadata'][key])
+    if item['metadata'].get('carry_reviewed_by'):
+        result['reviewed_by'] = str(item['metadata']['carry_reviewed_by'])
     return result
 
 
@@ -368,7 +370,12 @@ def _finish(workspace, record_id, expected_revision, review_token, state):
             if current['digest'] != target['digest']:
                 raise RevisionConflict('target_content_changed')
         _archive(source, item)
-        changed = dict(fm, carry_state=state, carry_review_token=review_token, reviewed_at=now(), updated=now())
+        # Who decided, as the owner's OKF actor; an accepted proposal is human-reviewed (OKF §5.3).
+        reviewer = okf.owner(workspace.state_dir)
+        changed = dict(fm, carry_state=state, carry_review_token=review_token, reviewed_at=now(), updated=now(),
+                       carry_reviewed_by=reviewer)
+        if state == 'accepted':
+            changed['verified'] = okf.event(reviewer)
         if state == 'accepted' and target:
             changed.update(carry_supersedes=target['record_id'], carry_revision=max(item['revision'], target['revision'] + 1))
         _unchanged(item)
