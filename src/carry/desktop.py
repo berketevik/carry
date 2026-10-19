@@ -204,6 +204,9 @@ class Bridge:
             return maintenance.start(ws, action, source_id=request['source_id'])
         if action == 'model_setup':
             return maintenance.start(ws, action, model=request['model'])
+        if action == 'trello':
+            from . import trello
+            return trello.view(ws.state_dir)
         if action == 'maintenance_status':
             maintenance.automatic(ws)
             return maintenance.job_status(ws)

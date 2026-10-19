@@ -264,8 +264,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     @Published var historyIndex = -1
     private var noteToken = 0
     private var lastJob = ""  // state and start time of the job last seen
+    @Published var trello: [String: Any] = [:]
+    private var trelloAsked = Date.distantPast
+    /// The owner's open Trello cards: Carry answers from its cache at once and fetches them
+    /// again in the background, so asking every minute costs nothing.
+    func loadTrello() {
+        trelloAsked = Date()
+        run("trello", clearError: false, quiet: true) { value in if !same(value, self.trello) { self.trello = value } }
+    }
     func tick() {
         guard !workspace.isEmpty, !busy else { return }
+        if Date().timeIntervalSince(trelloAsked) > 60 { loadTrello() }
         if ["starting", "waiting_for_browser"].contains(str(githubLogin, "state")) {
             run("github_login_status", clearError: false, quiet: true) { value in
                 self.githubLogin = value
@@ -377,7 +386,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             self.snapshot = $0
             if self.sources.isEmpty { self.onboarding = true }
             self.loadAssistants()
-            self.loadSettings(); self.loadVault(); self.reloadNote()
+            self.loadSettings(); self.loadVault(); self.reloadNote(); self.loadTrello()
             self.run("harvest_status", clearError: false, quiet: true) { self.harvest = $0 }
             if ProcessInfo.processInfo.environment["CARRY_MEASURE_STARTUP"] == "1" { print("carry_workspace_ready"); fflush(stdout) }
         }
@@ -1627,7 +1636,10 @@ struct Overview: View {
                                    detail: T("Write something your assistant should know", "Asistanınızın bilmesini istediğiniz bir şey yazın")) { model.showNewNote = true }
                     }
                     HStack(alignment: .top, spacing: 18) {
-                        RecentChats(model: model).frame(maxWidth: .infinity)
+                        VStack(alignment: .leading, spacing: 18) {
+                            TrelloCards(model: model)
+                            RecentChats(model: model)
+                        }.frame(maxWidth: .infinity)
                         GroupBox(T("Recently changed", "Son değişenler")) {
                             VStack(alignment: .leading, spacing: 6) {
                                 let recent = Array((model.vault["recent"] as? [[String: Any]] ?? []).prefix(6))
@@ -1710,6 +1722,49 @@ func folderLabel(_ name: String) -> String {
     case "(root)": return T("Main folder", "Ana klasör")
     case "workbench": return T("workbench (background work)", "workbench (arka plan işleri)")
     default: return name
+    }
+}
+
+/// "20 Oct" for a Trello due date, and whether it has passed.
+func trelloDue(_ iso: String) -> (text: String, late: Bool)? {
+    let parse = ISO8601DateFormatter(); parse.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    guard let date = parse.date(from: iso) else { return nil }
+    let out = DateFormatter(); out.locale = Lang.locale; out.setLocalizedDateFormatFromTemplate("d MMM")
+    return (out.string(from: date), date < Date())
+}
+
+/// The open Trello cards assigned to the owner, nearest due date first; a click opens the card in Trello.
+struct TrelloCards: View {
+    @ObservedObject var model: Model
+    var body: some View {
+        let cards = model.trello["cards"] as? [[String: Any]] ?? []
+        GroupBox(T("Your cards in Trello", "Trello'da üzerimdeki işler")) {
+            VStack(alignment: .leading, spacing: 8) {
+                if model.trello["connected"] as? Bool != true {
+                    Text(T("Not connected. To see the open cards assigned to you, run carry trello connect in Terminal.",
+                           "Bağlı değil. Size atanmış açık kartları görmek için Terminal'de carry trello connect çalıştırın.")).foregroundStyle(.secondary)
+                } else if cards.isEmpty {
+                    Text(T("No open cards are assigned to you.", "Size atanmış açık kart yok.")).foregroundStyle(.secondary)
+                }
+                ForEach(Array(cards.prefix(8).enumerated()), id: \.offset) { _, card in
+                    Button { if let url = URL(string: str(card, "url")) { NSWorkspace.shared.open(url) } } label: {
+                        HStack(alignment: .firstTextBaseline) {
+                            Image(systemName: "square.stack").foregroundStyle(.blue)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(str(card, "name")).lineLimit(2)
+                                Text(str(card, "board")).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                            Spacer()
+                            if let due = trelloDue(str(card, "due")) { Text(due.text).font(.caption).foregroundStyle(due.late ? .red : .secondary) }
+                        }.contentShape(Rectangle())
+                    }.buttonStyle(.plain)
+                }
+                if cards.count > 8 { Text(T("\(cards.count - 8) more in Trello", "Trello'da \(cards.count - 8) kart daha")).font(.caption).foregroundStyle(.secondary) }
+                if let error = model.trello["error"] as? String, !error.isEmpty {
+                    Text(T("Trello could not be reached; these are the cards seen last.", "Trello'ya ulaşılamadı; son görülen kartlar.")).font(.caption).foregroundStyle(.orange)
+                }
+            }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 }
 
