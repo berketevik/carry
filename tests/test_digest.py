@@ -257,3 +257,13 @@ class ReviewHelpTest(unittest.TestCase):
         self.assertEqual(items['The Mac mini has 16 GB.'], None)
         self.assertEqual(items['Invite two colleagues to the repository.'], 'accepted')
         self.assertIn('Invite two colleagues', (self.root / 'log' / '2026-09-28.md').read_text(encoding='utf-8'))
+
+    def test_accept_all_leaves_an_item_marked_to_review_for_the_owner(self):
+        # harvest puts an item it scores as probably withdrawn under To review: one click must not accept it.
+        doubtful = DIGEST.replace('## Already recorded', '## To review\n\n- **open item:** Move the demo to Friday.\n'
+                                  '  > move the demo to Friday *(exchange 5, owner)*\n\n## Already recorded')
+        (self.root / self.rel).write_text(doubtful, encoding='utf-8')
+        result = digest.accept_all(self.ws, self.sid, self.rel)
+        self.assertEqual((result['accepted'], result['waiting']), (3, 2))
+        items = {it['statement']: it['decision'] for it in digest.items(self.ws, self.sid, self.rel)['items']}
+        self.assertIsNone(items['Move the demo to Friday.'])

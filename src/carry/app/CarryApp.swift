@@ -1515,7 +1515,7 @@ struct DigestItemsView: View {
     @State private var showFolded = false
     var open: [[String: Any]] { items.filter { str($0, "decision", "") == "" } }
     /// What one click accepts: every waiting item but the conflicts, which need the owner to choose.
-    var plain: [[String: Any]] { open.filter { str($0, "section") != "conflict" } }
+    var plain: [[String: Any]] { open.filter { !["conflict", "review"].contains(str($0, "section")) } }
     func isOpenItem(_ it: [String: Any]) -> Bool { ["open item", "açık iş"].contains(str(it, "kind", "").lowercased()) }
     /// The item's kind in the app's language; recaps written before the language changed keep English tags.
     func tagName(_ it: [String: Any]) -> String {
@@ -1569,7 +1569,7 @@ struct DigestItemsView: View {
                 HStack(spacing: 10) {
                     Button(T("Accept all \(plain.count)", "\(plain.count) maddenin hepsini kabul edin")) { acceptAll() }.buttonStyle(.borderedProminent)
                     if plain.count < open.count {
-                        Text(T("Conflicts with your notes stay for you to choose.", "Notlarınızla çelişenler sizin seçmeniz için kalır.")).font(.caption).foregroundStyle(.secondary)
+                        Text(T("Conflicts with your notes and items marked To review stay for you to choose.", "Notlarınızla çelişenler ve İncelenecek maddeler sizin seçmeniz için kalır.")).font(.caption).foregroundStyle(.secondary)
                     }
                 }
             }

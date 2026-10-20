@@ -190,9 +190,10 @@ def items(ws, source_id, relative):
 
 
 def accept_all(ws, source_id, relative, today=None):
-    """Accept every item that waits, except conflicts with a note: those need the owner to choose."""
+    """Accept every item that waits, except conflicts with a note and items marked To review
+    (probably withdrawn): those need the owner to choose."""
     _, _, text, _ = _open(ws, source_id, relative)
-    plain = [it['id'] for it in parse(text)['items'] if it['decision'] is None and it['section'] != 'conflict']
+    plain = [it['id'] for it in parse(text)['items'] if it['decision'] is None and it['section'] not in ('conflict', 'review')]
     result = dict(waiting=sum(1 for it in parse(text)['items'] if it['decision'] is None), done=False, logged=None)
     for item in plain:
         result = decide(ws, source_id, relative, item, 'accept', today=today)
