@@ -185,8 +185,10 @@ class _Handler(BaseHTTPRequestHandler):
             body = None
         if not isinstance(body, dict):
             return self._send(400, '{}')
-        self._reply(*login.receive(body))
-        login.stop()
+        try:
+            self._reply(*login.receive(body))
+        finally:
+            login.stop()
 
 
 class _Server(socketserver.ThreadingTCPServer):
@@ -241,15 +243,15 @@ class Login:
             self.result = dict(state='checking')
         try:
             member = connect(self.state_dir, self.key, token)
-        except CarryError as exc:
-            self.result = dict(state='failed', error=str(exc))
+        except Exception as exc:  # anything else must not leave the app at checking for good
+            self.result = dict(state='failed', error=str(exc) if isinstance(exc, CarryError) else 'trello_connect_failed')
             return 502, self.text['failed']
         self.result = dict(state='connected', username=member['username'], name=member['name'])
         return 200, self.text['connected']
 
     def _expire(self):
         with self._lock:
-            if self.result['state'] == 'waiting':
+            if self.result['state'] in ('waiting', 'checking'):
                 self.result = dict(state='failed', error='trello_timeout')
         self.stop()
 

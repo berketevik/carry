@@ -252,6 +252,14 @@ class LoginTest(unittest.TestCase):
         self.assertEqual((status, json.loads(body)['message']), (502, trello.LOGIN_TEXT['tr']['failed']))
         self.assertEqual(self.login.result, dict(state='failed', error='trello_unauthorized'))
 
+    def test_an_unexpected_failure_while_checking_still_ends_the_sign_in(self):
+        # Anything else (a payload Trello never sent before, a full disk) must not leave it at checking.
+        self.connect.side_effect = TypeError('unexpected payload')
+        status, body, _ = self.call('POST', self.login.path + '/token', dict(token='a' * 64))
+        self.assertEqual((status, json.loads(body)['message']), (502, trello.LOGIN_TEXT['tr']['failed']))
+        self.assertEqual(self.login.result, dict(state='failed', error='trello_connect_failed'))
+        self.assertTrue(self.closed(self.login))
+
     def test_cancel_and_the_time_limit_close_the_listener(self):
         self.login.cancel()
         self.assertEqual(self.login.result, dict(state='cancelled'))

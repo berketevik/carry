@@ -127,6 +127,7 @@ struct UIError: LocalizedError {
         case "profile_invalid_email": return T("Enter your company mail, like name@company.com.", "Şirket mailinizi girin, örneğin ad@sirket.com.")
         case "profile_name_required": return T("Choose your name, or write it if it is not in the list.", "Adınızı seçin; listede yoksa yazın.")
         case "profile_email_domain": return T("Use your company mail; this one is not on your team's domain.", "Şirket mailinizi kullanın; bu mail ekibinizin alan adında değil.")
+        case "trello_connect_failed": return T("Carry could not keep the Trello connection. Try again.", "Carry Trello bağlantısını kaydedemedi. Tekrar deneyin.")
         case "trello_unauthorized": return T("Trello no longer accepts Carry's permission. Connect again.", "Trello, Carry'ye verilen izni artık kabul etmiyor. Yeniden bağlanın.")
         case "trello_keychain_failed", "trello_needs_keychain": return T("Trello's permission could not be saved in the Keychain. Try again.", "Trello izni Anahtar Zinciri'ne kaydedilemedi. Tekrar deneyin.")
         case "trello_team_key_missing": return T("Your team's Trello connection is not set up yet: its key is not in the team notes. Once it is, you connect in one click.", "Ekibin Trello bağlantısı henüz kurulmamış: anahtarı ekip notlarında (OKB) yok. Eklenince tek tıkla bağlanırsınız.")
