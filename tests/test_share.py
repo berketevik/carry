@@ -201,6 +201,19 @@ class SendTest(ShareTest):
         log = (self.root / 'log' / '2026-09-27.md').read_text()
         self.assertIn('The pilot ships on 15 October. → ekibe paylaşıldı: https://github.com/acme/kb/blob/main/x.md', log)
 
+    def test_a_share_starts_the_day_log_when_there_is_none(self):
+        self.enable()
+        planned = self.planned()
+        (self.root / 'log' / '2026-09-27.md').unlink()  # moved or deleted since the item was approved
+        calls, call = self.fake()
+        with patch.object(share, '_call', side_effect=call):
+            share.send(self.ws, planned, today=DAY)
+        log = (self.root / 'log' / '2026-09-27.md').read_text()
+        self.assertIn('type: daily', log)
+        self.assertIn('2026-09-28 — claude abcd1234', log.split('---')[1])
+        self.assertIn('## From chats', log)
+        self.assertIn('→ ekibe paylaşıldı: https://github.com/acme/kb/blob/main/x.md', log)
+
     def test_a_taken_name_gets_a_number(self):
         self.enable()
         calls, call = self.fake(taken=['90_Inbox/2026-09-28 — Pilot tarihi.md'])

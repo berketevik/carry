@@ -225,8 +225,8 @@ def extractor():
 
 
 def apple_model():
-    """The helper `carry app install` builds into the app for Apple's on-device model (the
-    meeting summary's fallback), or None when there is none."""
+    """The helper `carry app install` builds into the app for Apple's on-device model (a meeting
+    summary chosen by hand with `--extractor apple:on-device`), or None when there is none."""
     from .app_install import DEFAULT_PATH
     helper = DEFAULT_PATH / 'Contents' / 'MacOS' / 'carry-model'
     return helper if sys.platform == 'darwin' and helper.is_file() else None

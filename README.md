@@ -53,7 +53,7 @@ Carry doesn't upload your notes anywhere and uses no online service of its own. 
 | Optional, not part of the standard: ship a large team repo's vectors with it, so teammates skip embedding it (run in the clone, then commit and push) | `carry github pack --id team --out <clone>/.carry/index.db` |
 | Also recap every finished chat each evening at 21:30, in case a chat-end hook missed one | `carry session schedule --install` |
 | Turn search by meaning on or off | `carry search --semantic on` (or `off`) |
-| Put your name on the drafts you approve (`verified: human:<name>`) | `carry owner --set <name>` |
+| Change the name on the drafts and proposals you approve (`verified: human:<name>`; setup uses your login name) | `carry owner --set <name>` |
 | Update Carry | `carry update`, then `carry app install` |
 | Check that everything works | `carry status --probe` |
 
@@ -85,7 +85,7 @@ An older setup keeps its state in `~/CarryState`. `carry state move --vault <not
 <details>
 <summary><b>For assistants (MCP)</b></summary>
 
-Claude Code or Codex starts Carry's local server, `carry.mcp_server`, with three tools: `carry_recall` (search with citations), `carry_catalog` (list files) and `carry_status` (index health). If you allow corrections for that assistant, it also gets `carry_propose` (draft a correction; only you can accept it). The `carry-recall` subagent (Claude Sonnet in Claude Code) keeps the passages that answer. Retrieved text is data, not instructions.
+Claude Code or Codex starts Carry's local server, `carry.mcp_server`, with three tools: `carry_recall` (search with citations), `carry_catalog` (list files) and `carry_status` (index health). If you allow corrections for that assistant, it also gets `carry_propose` (draft a correction; only you can accept it). The `carry-recall` subagent (Claude Sonnet in Claude Code) keeps the passages that answer. Retrieved text is data, not instructions. In the team's folder the server searches only the team's knowledge base (`--scope team`), so a chat that writes team notes never reads your own; a team folder connected with an older Carry switches the next time `carry connect` or setup runs there.
 
 </details>
 
@@ -110,7 +110,7 @@ Needs Python 3.11+. Search by meaning uses `llama-cpp-python` (llama.cpp, built 
 - Search and session recaps can miss or misread things; check drafts against their sources.
 - `carry session` was `carry harvest` (and `carry session start` was `carry context`) before 0.14; the old names still work, and recaps written before keep their `— harvest —` file names.
 - Meeting transcripts tell only you from the other side, not each speaker. On speakers your microphone also hears the call; Carry drops those echoes, but headphones give the cleanest transcript.
-- Apple's on-device model, the summary's fallback, catches fewer items than Claude or Codex and does not compare them with your notes; every item still carries its quote, so check it in Review.
+- Apple's on-device model summarises a meeting only when you choose it (`carry meet summarize --path … --extractor apple:on-device`); with no assistant connected the transcript stays as it is. It catches fewer items than Claude or Codex and does not compare them with your notes; every item still carries its quote, so check it in Review.
 - Secret masking is best effort.
 
 </details>

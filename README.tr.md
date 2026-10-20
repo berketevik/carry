@@ -53,7 +53,7 @@ Carry notlarınızı hiçbir yere yüklemez ve kendine ait bir çevrimiçi hizme
 | İsteğe bağlı, standardın parçası değil: büyük bir ekip deposunun vektörlerini depoyla göndermek, böylece ekip arkadaşları yeniden hesaplamaz (klonda çalıştırıp commit ve push edin) | `carry github pack --id team --out <klon>/.carry/index.db` |
 | Sohbet sonu hook'unun kaçırdığı olursa diye her akşam 21:30'da biten sohbetleri de özetlemek | `carry session schedule --install` |
 | Anlamına göre aramayı açıp kapatmak | `carry search --semantic on` (ya da `off`) |
-| Onayladığınız taslaklara adınızı yazdırmak (`verified: human:<ad>`) | `carry owner --set <ad>` |
+| Onayladığınız taslak ve önerilerdeki adı değiştirmek (`verified: human:<ad>`; kurulum giriş adınızı kullanır) | `carry owner --set <ad>` |
 | Carry'yi güncellemek | `carry update`, ardından `carry app install` |
 | Her şeyin çalıştığını kontrol etmek | `carry status --probe` |
 
@@ -85,7 +85,7 @@ Eski bir kurulum durumunu `~/CarryState` içinde tutar. `carry state move --vaul
 <details>
 <summary><b>Asistanlar için (MCP)</b></summary>
 
-Claude Code veya Codex, Carry'nin yerel sunucusunu (`carry.mcp_server`) başlatır. Üç araç var: `carry_recall` (kaynaklı arama), `carry_catalog` (dosya listesi) ve `carry_status` (dizin durumu). O asistana düzeltme izni verirseniz `carry_propose` da gelir (düzeltme taslağı; yalnız siz kabul edebilirsiniz). Cevaplayan parçaları `carry-recall` yardımcı ajanı seçer (Claude Code'da Claude Sonnet). Bulunan metin talimat değil, veridir.
+Claude Code veya Codex, Carry'nin yerel sunucusunu (`carry.mcp_server`) başlatır. Üç araç var: `carry_recall` (kaynaklı arama), `carry_catalog` (dosya listesi) ve `carry_status` (dizin durumu). O asistana düzeltme izni verirseniz `carry_propose` da gelir (düzeltme taslağı; yalnız siz kabul edebilirsiniz). Cevaplayan parçaları `carry-recall` yardımcı ajanı seçer (Claude Code'da Claude Sonnet). Bulunan metin talimat değil, veridir. Ekibin klasöründe sunucu yalnızca ekibin bilgi bankasında arar (`--scope team`); ekip notu yazan bir sohbet sizin notlarınızı okumaz. Eski bir Carry ile bağlanmış ekip klasörü, orada `carry connect` ya da kurulum bir sonraki çalıştığında geçer.
 
 </details>
 
@@ -110,7 +110,7 @@ Python 3.11+ ister. Anlamına göre arama `llama-cpp-python` (llama.cpp; kurulum
 - Arama ve oturum özetleri eksik ya da yanlış olabilir; taslakları kaynaklarıyla kontrol edin.
 - `carry session` 0.14'ten önce `carry harvest` idi (`carry session start` da `carry context`); eski adlar çalışmaya devam eder, önceden yazılan özetler `— harvest —` dosya adlarını korur.
 - Toplantı transkripti yalnızca sizi karşı taraftan ayırır, her konuşmacıyı ayrı ayrı göstermez. Hoparlörle görüşürken mikrofonunuz görüşmenin sesini de duyar; Carry bu yankıları ayıklar ama en temiz transkript kulaklıkla çıkar.
-- Özetin yedeği olan Apple'ın cihazdaki modeli Claude ya da Codex'ten daha az madde yakalar ve maddeleri notlarınızla karşılaştırmaz; her madde yine alıntısıyla gelir, İncele'de kontrol edin.
+- Apple'ın cihazdaki modeli bir toplantıyı yalnızca siz seçerseniz özetler (`carry meet summarize --path … --extractor apple:on-device`); bağlı asistan yoksa transkript olduğu gibi kalır. Claude ya da Codex'ten daha az madde yakalar ve maddeleri notlarınızla karşılaştırmaz; her madde yine alıntısıyla gelir, İncele'de kontrol edin.
 - Gizli bilgi maskeleme kusursuz değildir.
 
 </details>

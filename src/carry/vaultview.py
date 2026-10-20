@@ -111,23 +111,34 @@ def _local(ws, source_id):
 
 
 def _editable(ws, source_id):
-    """A GitHub source is a pinned mirror replaced on every sync: the app reads it, never writes to it."""
+    """A GitHub source is a pinned mirror replaced on every sync: the app reads it, never writes to it.
+    A team clone is the team's: members change it in its folder by the team's own rules, never from
+    the app (and a write there would stop its pull)."""
     src, root = _local(ws, source_id)
     if src.github:
         raise CarryError('source_read_only')
+    if src.scope == 'team':
+        raise CarryError('team_source_read_only')
     return src, root
 
 
+def own_sources(ws):
+    """The owner's own local folders: neither a GitHub mirror nor a team's knowledge base."""
+    return [s for s in ws.sources if not s.github and s.scope != 'team']
+
+
 def default_vault(ws):
-    """The source the app shows first: a bootstrapped vault, else the first local
-    read-only source, else the first source."""
-    local = [s for s in ws.sources if not s.github]
-    for s in local:
+    """The source the app shows first: the owner's bootstrapped vault, else their first local
+    read-only source, else their first one, else (only a team connected) the first source."""
+    own = own_sources(ws)
+    for s in own:
         if (Path(s.root).expanduser() / '.carry' / 'vault.json').is_file():
             return s.source_id
-    for s in local:
+    for s in own:
         if not s.writable:
             return s.source_id
+    if own:
+        return own[0].source_id
     return ws.sources[0].source_id if ws.sources else None
 
 

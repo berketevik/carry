@@ -256,6 +256,73 @@ class ConnectionTest(WorkspaceCase):
         with self.assertRaisesRegex(CarryError, 'settings_symlink_refused'):
             self.plan()
 
+    def team_project(self):
+        """The project folder as a team clone of this workspace."""
+        from carry.config import SourceConfig
+        (self.project / '.git' / 'info').mkdir(parents=True)
+        (self.project / '.git' / 'info' / 'exclude').write_text('# git ls-files --others --exclude-from=.git/info/exclude\n', encoding='utf-8')
+        self.workspace = self.workspace.with_sources([*self.workspace.sources, SourceConfig('team', self.project, scope='team')])
+        self.workspace.save()
+        return ['-I', '-m', 'carry.mcp_server', '--workspace', str(self.workspace.state_dir)]
+
+    def test_a_personal_folder_gets_an_unscoped_server(self):
+        connections.apply(self.workspace, self.plan())
+        args = json.loads((self.project / '.mcp.json').read_text(encoding='utf-8'))['mcpServers']['carry']['args']
+        self.assertNotIn('--scope', args)
+
+    def test_a_team_folder_gets_a_team_scoped_server_and_keeps_its_files_out_of_git(self):
+        base = self.team_project()
+        exclude = self.project / '.git' / 'info' / 'exclude'
+        original = exclude.read_text(encoding='utf-8')
+        plan = self.plan()
+        connections.apply(self.workspace, plan)
+        args = json.loads((self.project / '.mcp.json').read_text(encoding='utf-8'))['mcpServers']['carry']['args']
+        self.assertEqual(args, base + ['--client', 'claude', '--scope', 'team'])
+        text = exclude.read_text(encoding='utf-8')
+        self.assertTrue(text.startswith(original))
+        for name in connections.DEVICE_FILES:
+            self.assertIn('/' + name, text.splitlines())
+        # Connecting again adds nothing twice.
+        codex = self.plan('codex')
+        self.assertNotIn(str(exclude), [c['path'] for c in codex['changes']])
+        connections.apply(self.workspace, codex)
+        data = tomllib.loads((self.project / '.codex' / 'config.toml').read_text(encoding='utf-8'))
+        self.assertEqual(data['mcp_servers']['carry']['args'], base + ['--client', 'codex', '--scope', 'team'])
+        connections.rollback(self.workspace, codex['id'])
+        connections.rollback(self.workspace, plan['id'])
+        self.assertEqual(exclude.read_text(encoding='utf-8'), original)
+        self.assertFalse((self.project / '.mcp.json').exists())
+
+    def test_an_unscoped_team_connection_is_upgraded_and_any_other_is_refused(self):
+        base = self.team_project()
+        mcp = self.project / '.mcp.json'
+        old = dict(type='stdio', command=sys.executable, args=base + ['--client', 'claude'])
+        mcp.write_text(json.dumps(dict(mcpServers=dict(carry=old, other=dict(command='other')))), encoding='utf-8')
+        connections.apply(self.workspace, self.plan())
+        servers = json.loads(mcp.read_text(encoding='utf-8'))['mcpServers']
+        self.assertEqual(servers['carry']['args'][-2:], ['--scope', 'team'])
+        self.assertIn('other', servers)
+        mcp.write_text(json.dumps(dict(mcpServers=dict(carry=dict(old, command='my-carry')))), encoding='utf-8')
+        with self.assertRaisesRegex(CarryError, 'existing_carry_connection_conflict'):
+            self.plan()
+        # Codex: only the exact block Carry wrote is replaced, the rest of the file stays.
+        path = self.project / '.codex' / 'config.toml'
+        path.parent.mkdir()
+        head = '# keep me\nmodel = "example"\n'
+        block = '\n'.join(['[mcp_servers.carry]', 'command = ' + json.dumps(sys.executable),
+                           'args = ' + json.dumps(base + ['--client', 'codex'])])
+        path.write_text(head + '\n' + block + '\n', encoding='utf-8')
+        connections.apply(self.workspace, self.plan('codex'))
+        written = path.read_text(encoding='utf-8')
+        self.assertTrue(written.startswith(head))
+        self.assertEqual(tomllib.loads(written)['mcp_servers']['carry']['args'][-2:], ['--scope', 'team'])
+        # The same values laid out by someone else are not Carry's block: refused, never rewritten.
+        other = head + '[mcp_servers.carry]\nargs = ' + json.dumps(base + ['--client', 'codex']) + '\ncommand = ' + json.dumps(sys.executable) + '\n'
+        path.write_text(other, encoding='utf-8')
+        with self.assertRaisesRegex(CarryError, 'existing_carry_connection_conflict'):
+            self.plan('codex')
+        self.assertEqual(path.read_text(encoding='utf-8'), other)
+
     def test_mcp_only_requires_no_prompt_consent_and_never_configures_capture(self):
         plan = self.plan()
         connections.apply(self.workspace, plan)

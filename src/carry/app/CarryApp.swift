@@ -114,6 +114,8 @@ struct UIError: LocalizedError {
         case "invalid_vault_request": return L("Choose a language and whether to record prompts, then preview again.")
         case "typesafe_key_not_saved": return L("The key could not be saved in the Keychain. Paste it again; it must not be empty.")
         case "source_read_only": return L("This is a read-only copy of a GitHub knowledge base. Change it on GitHub; Carry picks up the change at the next sync.")
+        case "team_source_read_only": return L("This is your team's knowledge base; Carry only reads it. Change it in its folder with your assistant, by the team's rules, then commit and push.")
+        case "harvest_needs_own_notes": return L("Session recaps go to your own notes folder, and only the team's knowledge base is connected. Add your own notes in Settings › Note folders.")
         case "source_root_missing": return L("This source folder is not available. Reconnect the drive or check the folder in Settings › Sources.")
         case "source_file_missing", "note_not_found": return L("That note no longer exists at this path. Refresh the vault list.")
         case "note_too_large": return L("This file is too large to preview here. Open it in your editor.")
@@ -321,8 +323,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var localSources: [[String: Any]] { sources.filter { ($0["github"] as? [String: Any])?.isEmpty != false } }
     /// Sources the Notes page can show: local folders, and GitHub sources once their read-only copy exists.
     var browsableSources: [[String: Any]] { sources.filter { ($0["github"] as? [String: Any])?.isEmpty != false || $0["root_available"] as? Bool != false } }
-    /// A GitHub source is a copy replaced on every sync, so the app only reads it.
-    func isReadOnly(_ sid: String) -> Bool { (sources.first { str($0, "source_id") == sid }?["github"] as? [String: Any])?.isEmpty == false }
+    /// A GitHub source is a copy replaced on every sync, and a team clone is the team's, so the app only reads both.
+    func isReadOnly(_ sid: String) -> Bool { isGitHub(sid) || isTeam(sid) }
+    func isGitHub(_ sid: String) -> Bool { (sources.first { str($0, "source_id") == sid }?["github"] as? [String: Any])?.isEmpty == false }
+    func isTeam(_ sid: String) -> Bool { sources.first { str($0, "source_id") == sid }.map { str($0, "scope") == "team" } ?? false }
     func sourceLabel(_ source: [String: Any]) -> String {
         (source["github"] as? [String: Any])?.isEmpty == false ? str(source, "source_id") + " (GitHub)" : URL(fileURLWithPath: str(source, "root")).lastPathComponent
     }
@@ -1865,8 +1869,10 @@ struct VaultView: View {
                         ForEach(model.browsableSources.indices, id: \.self) { i in Text(model.sourceLabel(model.browsableSources[i])).tag(str(model.browsableSources[i], "source_id")) }
                     }
                 }
-                if model.isReadOnly(model.vaultSource) {
+                if model.isGitHub(model.vaultSource) {
                     Label(T("Read-only copy of a GitHub knowledge base. Change it on GitHub.", "GitHub bilgi bankasının salt okunur kopyası. Değişikliği GitHub'da yapın."), systemImage: "lock").font(.caption).foregroundStyle(.secondary)
+                } else if model.isTeam(model.vaultSource) {
+                    Label(T("Your team's knowledge base: Carry only reads it. Change it in its folder with your assistant, by the team's rules.", "Ekibinizin bilgi bankası: Carry yalnızca okur. Değişikliği asistanınızla o klasörde, ekibin kurallarına göre yapın."), systemImage: "lock").font(.caption).foregroundStyle(.secondary)
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     Text(T("All notes Carry can read. Click one to read it on the right.", "Carry'nin okuyabildiği tüm notlar. Birine tıklayın, sağda okuyun.")).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -4681,7 +4687,7 @@ func meetingError(_ error: String) -> String {
         return error == "extraction_unparseable" ? T("Your assistant's answer could not be read. Retry.", "Asistanınızın cevabı okunamadı. Yeniden deneyin.") : error
     }
     let said = error.dropFirst("assistant_failed".count).trimmingCharacters(in: CharacterSet(charactersIn: ": "))
-    // Apple's on-device model, the last to try, is off: the owner's assistant is the way out.
+    // Apple's on-device model (used only when chosen by hand) is off: the owner's assistant is the way out.
     let appleOff = said.contains("apple_model_unavailable") ? T(" Apple's model on this Mac is not available either (Apple Intelligence).",
                                                                  " Apple'ın bu Mac'teki modeli de kullanılamıyor (Apple Intelligence).") : ""
     if ["authenticate", "login", "logged in", "sign in"].contains(where: { said.lowercased().contains($0) }) {
@@ -4902,6 +4908,8 @@ let TR: [String: String] = [
     "Choose a language and whether to record prompts, then preview again.": "Bir dil ve istemlerin kaydedilip kaydedilmeyeceğini seçip yeniden önizleyin.",
     "The key could not be saved in the Keychain. Paste it again; it must not be empty.": "Anahtar Anahtar Zinciri'ne kaydedilemedi. Yeniden yapıştırın; boş olmamalı.",
     "This is a read-only copy of a GitHub knowledge base. Change it on GitHub; Carry picks up the change at the next sync.": "Bu, GitHub bilgi bankasının salt okunur bir kopyası. Değişikliği GitHub'da yapın; Carry bir sonraki eşitlemede alır.",
+    "This is your team's knowledge base; Carry only reads it. Change it in its folder with your assistant, by the team's rules, then commit and push.": "Bu, ekibinizin bilgi bankası; Carry yalnızca okur. Değişikliği asistanınızla o klasörde, ekibin kurallarına göre yapın; sonra commit edip push edin.",
+    "Session recaps go to your own notes folder, and only the team's knowledge base is connected. Add your own notes in Settings › Note folders.": "Oturum özetleri sizin not klasörünüze yazılır; şu an yalnızca ekibin bilgi bankası bağlı. Kendi notlarınızı Ayarlar › Not klasörleri bölümünden ekleyin.",
     "This source folder is not available. Reconnect the drive or check the folder in Settings › Sources.": "Bu not klasörüne erişilemiyor. Diski yeniden bağlayın ya da Ayarlar › Not klasörleri'nden kontrol edin.",
     "That note no longer exists at this path. Refresh the vault list.": "Bu not artık bu yerde yok. Listeyi yenileyin.",
     "This file is too large to preview here. Open it in your editor.": "Bu dosya burada önizlemek için çok büyük. Editörünüzde açın.",

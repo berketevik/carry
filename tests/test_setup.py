@@ -116,8 +116,25 @@ class SetupTest(unittest.TestCase):
         code, out, ws = self.run_team(['2', '2', str(clone)])
         self.assertEqual(code, 0)
         self.assertEqual([(s.source_id, s.scope, s.writable) for s in ws.sources], [('team', 'team', False)])
-        self.assertTrue((clone / '.mcp.json').exists())
+        args = json.loads((clone / '.mcp.json').read_text(encoding='utf-8'))['mcpServers']['carry']['args']
+        self.assertEqual(args[-2:], ['--scope', 'team'])
         self.assertIn(f'cd "{clone}"', out)
+        # No notes of the owner's own: nothing for them to approve, no owner id set.
+        self.assertFalse((ws.state_dir / 'owner.json').exists())
+
+    def test_setup_names_the_owner_after_the_login_and_keeps_a_chosen_id(self):
+        from carry import okf
+        argv = ['--workspace', str(self.base / 'ws'), 'setup', '--yes', '--vault', str(self.base / 'Vault'),
+                '--no-animation', '--no-semantic', '--no-app']
+        with redirect_stdout(io.StringIO()) as out, patch('getpass.getuser', return_value='Deniz Yılmaz'):
+            self.assertEqual(cli.main(argv), 0)
+        ws = Workspace.load(self.base / 'ws')
+        self.assertEqual(okf.owner(ws.state_dir), 'human:deniz-yilmaz')
+        self.assertIn('human:deniz-yilmaz', out.getvalue())
+        okf.set_owner(ws.state_dir, 'deniz')
+        with redirect_stdout(io.StringIO()), patch('getpass.getuser', return_value='someone-else'):
+            cli.main(argv)
+        self.assertEqual(okf.owner(Workspace.load(self.base / 'ws').state_dir), 'human:deniz')
 
     def test_both_keep_the_personal_vault_as_the_place_to_start(self):
         clone = self.team_copy()
