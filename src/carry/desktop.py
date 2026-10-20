@@ -71,18 +71,21 @@ HARVEST_JOB = 'harvest-now.json'
 
 
 def harvest_vault(ws, requested):
-    """The vault a harvest from this workspace writes to: one of its own local sources."""
+    """The vault a harvest from this workspace writes to: one of its own local sources, never a
+    team's knowledge base (recaps and chat raws are the owner's)."""
     from . import vaultview
-    roots = {str(Path(s.root).expanduser().resolve()) for s in ws.sources if not s.github}
+    own = vaultview.own_sources(ws)
+    roots = {str(Path(s.root).expanduser().resolve()) for s in own}
     if requested:
         chosen = str(Path(requested).expanduser().resolve())
         if chosen not in roots:
             raise CarryError('harvest_vault_not_a_source')
         return chosen
-    sid = vaultview.default_vault(ws)
-    if not sid:
+    if not ws.sources:
         raise CarryError('no_sources')
-    return str(Path(ws.source(sid).root).expanduser().resolve())
+    if not own:
+        raise CarryError('harvest_needs_own_notes')
+    return str(Path(ws.source(vaultview.default_vault(ws)).root).expanduser().resolve())
 
 
 def harvest_job(ws, proc=None):

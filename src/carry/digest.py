@@ -306,11 +306,13 @@ def recheck(ws, source_id, relative, today=None):
     assistant): a real conflict stays with the note's side refreshed, an already recorded one is
     folded, anything else moves to New with the note kept as related. Decided items never move."""
     from . import harvest, jev
+    from .vaultview import _editable
+    _editable(ws, source_id)
     root, path, body, front = _open(ws, source_id, relative)
     if front.get('lock') is True:
         raise CarryError('note_locked')
     parsed = parse(body)
-    todo = [it for it in parsed['items'] if it['section'] == 'conflict' and it['decision'] is None]
+    todo =[it for it in parsed['items'] if it['section'] == 'conflict' and it['decision'] is None]
     if not todo:
         return dict(path=relative, rechecked=0, moved={})
     labels = harvest.LABELS.get(parsed['language'], harvest.LABELS['English'])

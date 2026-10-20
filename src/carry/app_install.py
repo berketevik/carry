@@ -84,8 +84,8 @@ def install(target=DEFAULT_PATH, workspace=None, python=None):
                                capture_output=True, text=True)
         if build.returncode != 0:
             raise CarryError('app_build_failed: ' + build_error(build.stderr or build.stdout))
-        # Apple's on-device model, the meeting summary's fallback when no assistant answers. If it
-        # does not build, the app is the same without that fallback.
+        # Apple's on-device model, for a meeting summary the owner asks it for by hand
+        # (`--extractor apple:on-device`). If it does not build, the app is the same without it.
         model = Path(tmp) / 'CarryModel.swift'
         model.write_text((resources.files('carry') / 'app' / 'CarryModel.swift').read_text(encoding='utf-8'), encoding='utf-8', newline='\n')
         helper = app / 'Contents' / 'MacOS' / 'carry-model'

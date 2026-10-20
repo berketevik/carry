@@ -102,6 +102,22 @@ def cmd_status(args):
     return EXIT_OK if payload["ok"] else EXIT_FAILED
 
 
+def cmd_confirm(args):
+    """Whether Claude Code asks the owner before Carry searches or a note is saved (carry.confirm)."""
+    from . import confirm
+    workspace = open_workspace(args.workspace)
+    if args.state:
+        result = confirm.apply(workspace, args.state == 'on')
+    else:
+        result = dict(enabled=confirm.enabled(workspace.state_dir), changed=[], skipped=[])
+    lines = [f"confirm: {'on' if result['enabled'] else 'off'}"]
+    lines += [f"  updated: {p}" for p in result['changed']] + [f"  left as it is: {p}" for p in result['skipped']]
+    if result['changed']:
+        lines.append("Restart Claude Code in those folders; `carry connect undo` of them now refuses, as after any later edit.")
+    _print(result, args.json, lines)
+    return EXIT_OK
+
+
 def cmd_owner(args):
     """Who the owner is in OKF `verified` (`human:<id>`), written when they approve a draft."""
     from . import okf
@@ -751,6 +767,10 @@ def build_parser():
     st = sub.add_parser("status", help="integration and index status")
     st.add_argument("--probe", action="store_true", help="contact the embedding provider")
     st.set_defaults(func=cmd_status)
+
+    cf = sub.add_parser("confirm", help="whether Claude Code asks you before Carry searches your notes or a note is saved (default on)")
+    cf.add_argument("state", nargs="?", choices=("on", "off"), help="turn it on or off on this device; without it, show it")
+    cf.set_defaults(func=cmd_confirm)
 
     ow = sub.add_parser("owner", help="the owner's id in OKF `verified` (human:<id>), written when they approve a draft")
     ow.add_argument("--set", metavar="ID", help="a short id such as your first name; never an email address")

@@ -223,6 +223,32 @@ def _gh_signed_in(gh):
     return subprocess.run([gh, 'auth', 'status', '--hostname', 'github.com'], capture_output=True).returncode == 0
 
 
+def _login_id():
+    """The login name as an owner id (`carry owner`): lowercase ASCII, Turkish letters folded."""
+    import re
+    import unicodedata
+    try:
+        name = getpass.getuser()
+    except (OSError, KeyError):
+        return ''
+    name = name.translate(str.maketrans('çğıöşüÇĞİÖŞÜ', 'cgiosuCGIOSU'))
+    name = unicodedata.normalize('NFKD', name).encode('ascii', 'ignore').decode()
+    return re.sub(r'[^a-z0-9._-]+', '-', name.lower()).strip('-._')[:64]
+
+
+def _default_owner(ws):
+    """Name the owner after the login when no id is set yet, so an approval says who approved
+    instead of `human:owner`. Returns the actor it set, else None."""
+    from . import okf
+    if (Path(ws.state_dir) / okf.OWNER_NAME).is_file():
+        return None
+    ident = _login_id()
+    try:
+        return okf.set_owner(ws.state_dir, ident) if ident else None
+    except (CarryError, OSError):
+        return None
+
+
 def _team_clone(p, repository, interactive):
     """A local clone of the team repository, cloned now when missing; None when that is not possible."""
     import subprocess
@@ -398,6 +424,10 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
         except CarryError:
             warn('Ekip bilgi bankalarının arama ayarları birbirini tutmuyor; hiçbiri uygulanmadı.')
         ws = Workspace.load(ws.state_dir)
+    if own:
+        actor = _default_owner(ws)
+        if actor:
+            ok(f'Onayladığın taslaklara adın yazılır: {actor}. Değiştirmek için: carry owner --set <ad>')
 
     # 3. Assistants: a new notes folder carries its own wiring; an existing one is connected for each assistant found.
     step(3, total, 'Asistan bağlantısı')
@@ -469,6 +499,7 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
     say()
     if own and team_root:
         say(paint(f'  Ekip bilgi bankası her iki klasörde de aranır; ona yazmak için Claude\'u {team_root} içinde aç.', DIM))
+        say(paint('  Orada yalnızca ekibin notları aranır; kendi notların ekip klasöründeki sohbete girmez.', DIM))
     say()
     say(paint('  İstersen sonra:', DIM))
     if own:

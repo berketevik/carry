@@ -13,7 +13,7 @@ import sys
 import tomllib
 import uuid
 
-from . import capture, lifecycle
+from . import capture, confirm, lifecycle
 from .errors import CarryError
 from .persistence import atomic_text, writer_lock
 
@@ -40,6 +40,35 @@ def _json(data):
     return json.dumps(data, ensure_ascii=False, indent=2) + '\n'
 
 
+# This device's connection files in a team clone: kept out of the team's commits and its status.
+DEVICE_FILES = ('.mcp.json', '.claude/settings.local.json', '.claude/agents/carry-recall.md',
+                '.codex/config.toml', '.codex/hooks.json', '.codex/agents/carry-recall.toml')
+
+
+def team_source(workspace, project):
+    """The local team source whose folder `project` is, else None. Its folder gets a server
+    scoped to the team's sources, so a chat there never reads the member's own notes."""
+    for source in workspace.sources:
+        if source.scope != 'team' or source.github:
+            continue
+        try:
+            if Path(source.root).expanduser().resolve() == project:
+                return source
+        except OSError:
+            continue
+    return None
+
+
+def _excluded(text, nl):
+    """`.git/info/exclude` with this device's connection files added, or None when all are there."""
+    lines = {line.strip() for line in (text or '').splitlines()}
+    missing = ['/' + p for p in DEVICE_FILES if '/' + p not in lines and p not in lines]
+    if not missing:
+        return None
+    head = (text or '') + (nl if text and not text.endswith(('\n', '\r\n')) else '')
+    return head + nl.join(["# Carry: this device's connection files", *missing, ''])
+
+
 def preview(workspace, client, project, source_id=None, prompts=False, proposals=False, executable=None, language=None):
     capture._client(client)
     if type(prompts) is not bool or type(proposals) is not bool:
@@ -63,13 +92,18 @@ def preview(workspace, client, project, source_id=None, prompts=False, proposals
             changes.append(dict(path=str(path), before=before, after=after,
                 mode=stat.S_IMODE(path.stat().st_mode) if before is not None else 0o600))
 
-    args = ['-I', '-m', 'carry.mcp_server', '--workspace', str(workspace.state_dir), '--client', client]
+    team = team_source(workspace, project)
+    unscoped = ['-I', '-m', 'carry.mcp_server', '--workspace', str(workspace.state_dir), '--client', client]
+    args = unscoped + (['--scope', 'team'] if team else [])
+    # A team folder connected before its server was scoped is brought up to date; any other
+    # Carry entry is someone else's setup and is refused.
     if client == 'claude':
         path = project / '.mcp.json'
         data = _object(_read(path))
         servers = data.setdefault('mcpServers', {})
         desired = dict(type='stdio', command=sys.executable, args=args)
-        if 'carry' in servers and servers['carry'] != desired:
+        upgradable = dict(desired, args=unscoped) if team else None
+        if 'carry' in servers and servers['carry'] not in (desired, upgradable):
             raise CarryError('existing_carry_connection_conflict')
         servers['carry'] = desired
         change(path, _json(data))
@@ -80,12 +114,18 @@ def preview(workspace, client, project, source_id=None, prompts=False, proposals
         data = tomllib.loads(old)
         desired = dict(command=sys.executable, args=args)
         existing = data.get('mcp_servers', {}).get('carry')
+        nl = '\r\n' if '\r\n' in old else '\n'  # the file's own line endings
+        block = lambda a: nl.join(['[mcp_servers.carry]', 'command = ' + json.dumps(sys.executable), 'args = ' + json.dumps(a)])
         if existing is not None and existing != desired:
-            raise CarryError('existing_carry_connection_conflict')
+            # Only the exact block Carry itself wrote is replaced; TOML is never parsed and rewritten.
+            if not team or existing != dict(desired, args=unscoped) or old.count(block(unscoped)) != 1:
+                raise CarryError('existing_carry_connection_conflict')
+            new = old.replace(block(unscoped), block(args))
+            if tomllib.loads(new).get('mcp_servers', {}).get('carry') != desired:
+                raise CarryError('existing_carry_connection_conflict')
+            change(path, new)
         if existing is None:
-            nl = '\r\n' if '\r\n' in old else '\n'  # the file's own line endings
-            new = old + nl.join(['', '[mcp_servers.carry]', 'command = ' + json.dumps(sys.executable),
-                                 'args = ' + json.dumps(args), ''])
+            new = old + nl.join(['', block(args), ''])
             # Inline tables or exotic conflicting layouts are refused, never rewritten.
             tomllib.loads(new)
             change(path, new)
@@ -96,9 +136,20 @@ def preview(workspace, client, project, source_id=None, prompts=False, proposals
     rel = '.claude/agents/carry-recall.md' if client == 'claude' else '.codex/agents/carry-recall.toml'
     if _read(project / rel) is None:
         change(project / rel, vault.render(language or _language(project))[rel])
+    # Local to this clone (never committed): a member's commit cannot carry this device's paths.
+    if team is not None and (project / '.git' / 'info').is_dir():
+        exclude = project / '.git' / 'info' / 'exclude'
+        before = _read(exclude)
+        after = _excluded(before, '\r\n' if before and '\r\n' in before else '\n')
+        if after is not None:
+            change(exclude, after)
+    # Claude Code's settings.local.json can take both the capture hook and the ask rules: one
+    # read, one change, or apply would see its own first write as someone else's edit.
+    ask = client == 'claude' and confirm.enabled(workspace.state_dir)
+    hook_data = _object(_read(hook_path)) if prompts or ask else {}
+    hook_dirty = False
     if prompts:
-        data = _object(_read(hook_path))
-        handlers = data.setdefault('hooks', {}).setdefault('UserPromptSubmit', [])
+        handlers = hook_data.setdefault('hooks', {}).setdefault('UserPromptSubmit', [])
         if not isinstance(handlers, list):
             raise CarryError('invalid_hook_settings')
         command = shlex.join([sys.executable, '-I', '-m', 'carry.hook', '--workspace', str(workspace.state_dir), '--client', client])
@@ -107,7 +158,13 @@ def preview(workspace, client, project, source_id=None, prompts=False, proposals
             if any('carry.hook' in json.dumps(h) for h in handlers):
                 raise CarryError('existing_carry_hook_conflict')
             handlers.append(handler)
-        change(hook_path, _json(data))
+        hook_dirty = True
+    if ask:
+        hook_data, added = confirm.with_rules(hook_data, True)
+        hook_dirty = hook_dirty or added
+    if hook_dirty:
+        change(hook_path, _json(hook_data))
+    if prompts:
         conf = capture._config(workspace)
         prior = conf['clients'].get(client, {})
         conf['clients'][client] = dict(source_id=source.source_id, opt_in=True,

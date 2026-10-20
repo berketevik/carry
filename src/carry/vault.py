@@ -131,7 +131,10 @@ def _claude_settings(workspace, capture):
     if capture:
         command = shlex.join([sys.executable, '-I', '-m', 'carry.hook', '--workspace', str(workspace), '--client', 'claude'])
         hooks['UserPromptSubmit'] = [{'hooks': [dict(type='command', command=command, timeout=10)]}]
-    return _json({'hooks': hooks})
+    # Claude Code asks before each search and each edit of a note (carry.confirm).
+    from . import confirm
+    data, _ = confirm.with_rules({'hooks': hooks}, confirm.enabled(workspace))
+    return _json(data)
 
 
 def _hooks(workspace):

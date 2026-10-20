@@ -96,7 +96,8 @@ def plan(ws, team_id, digest_source, digest_path, item_id, topic, author, with_q
                 message=f'docs(inbox): {topic}', mode=team.share.get('mode', 'direct'),
                 enabled=bool(team.share.get('enabled')), blocked=sorted(set(secrets)), sent=False,
                 source=digest_source, item=found['id'], tag=found['tag'], statement=found['statement'],
-                date=found['date'] or day, raw=parsed['raw'], language=parsed['language'])
+                date=found['date'] or day, raw=parsed['raw'], raw_entry=parsed['raw_entry'], kind=parsed['kind'],
+                language=parsed['language'])
 
 
 def _call(method, path, body=None, missing_ok=False, timeout=45):
@@ -170,4 +171,6 @@ def _log(ws, planned, url):
     from .vaultview import _local
     _, root = _local(ws, planned['source'])
     entry = f"- **{planned['tag']}:** {planned['statement']} → ekibe paylaşıldı: {url}"
-    digest._append_log(root, planned['date'], planned['language'], entry, planned['raw'])
+    # The raw's OKF entry, not its wikilink: a day log the share starts lists it in `sources`.
+    digest._append_log(root, planned['date'], planned['language'], entry, planned.get('raw_entry'),
+                       planned.get('kind', 'chat'))

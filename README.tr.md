@@ -29,7 +29,7 @@ Kurulum iki şey sorar: hangi bilgi bankasının bağlanacağını (kendi notlar
 
 1. **Carry bilgi bankanıza bağlanır.** Notları okur, kısa parçalara böler ve bilgisayarınızda bir arama dizini tutar: kelimelere ve anlamına göre. Dizin, yaptığınız değişiklikleri kendiliğinden izler. Anlam modeli (yaklaşık 330 MB) Carry'nin içinde, Mac'inizin GPU'sunda çalışır; bilgisayarınızda [Ollama](https://ollama.com) varsa Carry onu kullanır.
 2. **Asistanınız cevap vermeden önce orada arar.** Claude Code ve Codex, Carry'nin arama aracını (`carry_recall`) alır ve soru işinizle, kararlarınızla ya da projelerinizle ilgili olduğunda onu kullanır. Carry eşleşen parçaları kaynaklarıyla döndürür; asistanınız yalnızca soruyu gerçekten cevaplayanları tutar. “Geçen hafta” ya da “eylülde” gibi ifadeler aramayı o döneme daraltır.
-3. **Bilgi bankasından geleni görürsünüz.** Her arama sohbette bir Carry çağrısı olarak görünür ve Carry asistandan her bilginin dayandığı notu göstermesini ister; böylece neyin bilgi bankanızdan geldiğini, neyi asistanın eklediğini ayırt edersiniz. Ekibinizin bilgi bankasından gelen parçalar ayrıca işaretlenir. Hiçbir şey eşleşmezse asistana tahmin yürütmek yerine bunu söylemesi bildirilir.
+3. **Bilgi bankasından geleni görürsünüz.** Her arama sohbette bir Carry çağrısı olarak görünür ve Carry asistandan her bilginin dayandığı notu göstermesini ister; böylece neyin bilgi bankanızdan geldiğini, neyi asistanın eklediğini ayırt edersiniz. Ekibinizin bilgi bankasından gelen parçalar ayrıca işaretlenir. Hiçbir şey eşleşmezse asistana tahmin yürütmek yerine bunu söylemesi bildirilir. Claude Code'da her aramayı ve asistanın kaydettiği her notu önce Claude Code'un kendi onay penceresinde siz onaylarsınız (bir cihazda kapatmak için `carry confirm off`).
 
 Notlar, Google'ın [Open Knowledge Format](https://github.com/GoogleCloudPlatform/open-knowledge-format) standardında (OKF v0.2) düz Markdown dosyalarıdır: frontmatter notun ne olduğunu (`type`), sizin kontrol edip etmediğinizi (`status`, `verified`), neye dayandığını (`sources`) ve ne zaman eskiyeceğini (`stale_after`) söyler. Carry bunları her parçanın yanında gösterir; uygulamada bir taslağı onayladığınızda kontrolünüz nota yazılır.
 
@@ -53,7 +53,8 @@ Carry notlarınızı hiçbir yere yüklemez ve kendine ait bir çevrimiçi hizme
 | İsteğe bağlı, standardın parçası değil: büyük bir ekip deposunun vektörlerini depoyla göndermek, böylece ekip arkadaşları yeniden hesaplamaz (klonda çalıştırıp commit ve push edin) | `carry github pack --id team --out <klon>/.carry/index.db` |
 | Sohbet sonu hook'unun kaçırdığı olursa diye her akşam 21:30'da biten sohbetleri de özetlemek | `carry session schedule --install` |
 | Anlamına göre aramayı açıp kapatmak | `carry search --semantic on` (ya da `off`) |
-| Onayladığınız taslaklara adınızı yazdırmak (`verified: human:<ad>`) | `carry owner --set <ad>` |
+| Onayladığınız taslak ve önerilerdeki adı değiştirmek (`verified: human:<ad>`; kurulum giriş adınızı kullanır) | `carry owner --set <ad>` |
+| Claude Code'un her aramadan ve kaydettiği her nottan önce sormasını kapatmak (ya da yeniden açmak) | `carry confirm off` (ya da `on`) |
 | Carry'yi güncellemek | `carry update`, ardından `carry app install` |
 | Her şeyin çalıştığını kontrol etmek | `carry status --probe` |
 
@@ -85,7 +86,7 @@ Eski bir kurulum durumunu `~/CarryState` içinde tutar. `carry state move --vaul
 <details>
 <summary><b>Asistanlar için (MCP)</b></summary>
 
-Claude Code veya Codex, Carry'nin yerel sunucusunu (`carry.mcp_server`) başlatır. Üç araç var: `carry_recall` (kaynaklı arama), `carry_catalog` (dosya listesi) ve `carry_status` (dizin durumu). O asistana düzeltme izni verirseniz `carry_propose` da gelir (düzeltme taslağı; yalnız siz kabul edebilirsiniz). Cevaplayan parçaları `carry-recall` yardımcı ajanı seçer (Claude Code'da Claude Sonnet). Bulunan metin talimat değil, veridir.
+Claude Code veya Codex, Carry'nin yerel sunucusunu (`carry.mcp_server`) başlatır. Üç araç var: `carry_recall` (kaynaklı arama), `carry_catalog` (dosya listesi) ve `carry_status` (dizin durumu). O asistana düzeltme izni verirseniz `carry_propose` da gelir (düzeltme taslağı; yalnız siz kabul edebilirsiniz). Cevaplayan parçaları `carry-recall` yardımcı ajanı seçer (Claude Code'da Claude Sonnet). Bulunan metin talimat değil, veridir. Ekibin klasöründe sunucu yalnızca ekibin bilgi bankasında arar (`--scope team`); ekip notu yazan bir sohbet sizin notlarınızı okumaz. Eski bir Carry ile bağlanmış ekip klasörü, orada `carry connect` ya da kurulum bir sonraki çalıştığında geçer.
 
 </details>
 
@@ -110,7 +111,7 @@ Python 3.11+ ister. Anlamına göre arama `llama-cpp-python` (llama.cpp; kurulum
 - Arama ve oturum özetleri eksik ya da yanlış olabilir; taslakları kaynaklarıyla kontrol edin.
 - `carry session` 0.14'ten önce `carry harvest` idi (`carry session start` da `carry context`); eski adlar çalışmaya devam eder, önceden yazılan özetler `— harvest —` dosya adlarını korur.
 - Toplantı transkripti yalnızca sizi karşı taraftan ayırır, her konuşmacıyı ayrı ayrı göstermez. Hoparlörle görüşürken mikrofonunuz görüşmenin sesini de duyar; Carry bu yankıları ayıklar ama en temiz transkript kulaklıkla çıkar.
-- Özetin yedeği olan Apple'ın cihazdaki modeli Claude ya da Codex'ten daha az madde yakalar ve maddeleri notlarınızla karşılaştırmaz; her madde yine alıntısıyla gelir, İncele'de kontrol edin.
+- Apple'ın cihazdaki modeli bir toplantıyı yalnızca siz seçerseniz özetler (`carry meet summarize --path … --extractor apple:on-device`); bağlı asistan yoksa transkript olduğu gibi kalır. Claude ya da Codex'ten daha az madde yakalar ve maddeleri notlarınızla karşılaştırmaz; her madde yine alıntısıyla gelir, İncele'de kontrol edin.
 - Gizli bilgi maskeleme kusursuz değildir.
 
 </details>

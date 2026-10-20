@@ -44,6 +44,26 @@ class LifecycleTest(WorkspaceCase):
         explicit = recall(self.workspace, 'Cedar pilot delivery', include_drafts=True)
         self.assertIn(pending['record_id'], json.dumps(explicit['evidence']))
 
+    def test_the_decision_records_who_made_it(self):
+        from carry import okf
+        from carry.markdown import parse_frontmatter
+        okf.set_owner(self.workspace.state_dir, 'deniz')
+        accepted = self.accept(self.propose())
+        front, _ = parse_frontmatter((self.records / accepted['path']).read_text(encoding='utf-8'))
+        self.assertEqual(front['carry_reviewed_by'], 'human:deniz')
+        self.assertEqual(okf.verified(front)[0]['by'], 'human:deniz')
+        self.assertEqual(okf.trust(front), 'human-reviewed')
+        listed = next(p for p in lifecycle.list_proposals(self.workspace, include_reviewed=True)
+                      if p['record_id'] == accepted['record_id'])
+        self.assertEqual(listed['reviewed_by'], 'human:deniz')
+        # A rejection names its reviewer too, but verifies nothing.
+        pending = self.propose(OCT22, 'two')
+        review = lifecycle.review(self.workspace, pending['record_id'])
+        rejected = lifecycle.reject(self.workspace, pending['record_id'], review['revision'], review['review_token'])
+        front, _ = parse_frontmatter((self.records / rejected['path']).read_text(encoding='utf-8'))
+        self.assertEqual(front['carry_reviewed_by'], 'human:deniz')
+        self.assertEqual(okf.trust(front), 'unverified')
+
     def test_diff_token_acceptance_and_history(self):
         old = self.accept(self.propose())
         old_path = self.records / old['path']

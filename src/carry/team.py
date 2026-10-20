@@ -209,7 +209,10 @@ def pull(source):
         behind = int(_git(root, "rev-list", "--count", "HEAD..@{u}"))
         if ahead:
             return dict(status="skipped", reason="unpushed_commits", behind=behind, commit=_git(root, "rev-parse", "HEAD"))
-        if _git(root, "status", "--porcelain"):
+        # Untracked files do not count: Carry's own connection files (.mcp.json, the carry-recall
+        # agent) sit untracked in every connected clone. A fast-forward that would overwrite one
+        # is refused by git itself and reported as failed.
+        if _git(root, "status", "--porcelain", "--untracked-files=no"):
             return dict(status="skipped", reason="local_changes", behind=behind, commit=_git(root, "rev-parse", "HEAD"))
         if behind:
             _git(root, "merge", "--ff-only", "-q", "@{u}")

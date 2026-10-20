@@ -29,7 +29,7 @@ Setup asks two things: which knowledge base to connect (your own notes, your tea
 
 1. **Carry connects to your knowledge base.** It reads the notes, splits them into short passages and keeps a search index on your computer, by words and by meaning. The index follows your edits by itself. The meaning model (about 330 MB) runs inside Carry, on your Mac's GPU; if [Ollama](https://ollama.com) is installed, Carry uses it instead.
 2. **Your assistant searches it before answering.** Claude Code and Codex get Carry's search tool, `carry_recall`, and use it when a question is about your work, decisions or projects. Carry returns the matching passages with their source, and your assistant keeps only the ones that really answer. “Last week” or “in September” narrows the search to that period.
-3. **You see what came from the knowledge base.** Each search shows in the chat as a Carry call, and Carry asks the assistant to cite the note behind every claim, so you can tell what came from your knowledge base and what the assistant added. Passages from your team's knowledge base are marked as such. When nothing matches, the assistant is told to say so instead of guessing.
+3. **You see what came from the knowledge base.** Each search shows in the chat as a Carry call, and Carry asks the assistant to cite the note behind every claim, so you can tell what came from your knowledge base and what the assistant added. Passages from your team's knowledge base are marked as such. When nothing matches, the assistant is told to say so instead of guessing. In Claude Code you approve each search and each note the assistant saves in Claude Code's own approval dialog first (`carry confirm off` turns that off on a device).
 
 Notes are plain Markdown in Google's [Open Knowledge Format](https://github.com/GoogleCloudPlatform/open-knowledge-format) (OKF v0.2): the frontmatter says what a note is (`type`), whether you have checked it (`status`, `verified`), what it came from (`sources`) and when it goes stale (`stale_after`). Carry shows these next to every passage, and approving a draft in the app records your check.
 
@@ -53,7 +53,8 @@ Carry doesn't upload your notes anywhere and uses no online service of its own. 
 | Optional, not part of the standard: ship a large team repo's vectors with it, so teammates skip embedding it (run in the clone, then commit and push) | `carry github pack --id team --out <clone>/.carry/index.db` |
 | Also recap every finished chat each evening at 21:30, in case a chat-end hook missed one | `carry session schedule --install` |
 | Turn search by meaning on or off | `carry search --semantic on` (or `off`) |
-| Put your name on the drafts you approve (`verified: human:<name>`) | `carry owner --set <name>` |
+| Change the name on the drafts and proposals you approve (`verified: human:<name>`; setup uses your login name) | `carry owner --set <name>` |
+| Stop (or start again) Claude Code asking before each search of your notes and each note it saves | `carry confirm off` (or `on`) |
 | Update Carry | `carry update`, then `carry app install` |
 | Check that everything works | `carry status --probe` |
 
@@ -85,7 +86,7 @@ An older setup keeps its state in `~/CarryState`. `carry state move --vault <not
 <details>
 <summary><b>For assistants (MCP)</b></summary>
 
-Claude Code or Codex starts Carry's local server, `carry.mcp_server`, with three tools: `carry_recall` (search with citations), `carry_catalog` (list files) and `carry_status` (index health). If you allow corrections for that assistant, it also gets `carry_propose` (draft a correction; only you can accept it). The `carry-recall` subagent (Claude Sonnet in Claude Code) keeps the passages that answer. Retrieved text is data, not instructions.
+Claude Code or Codex starts Carry's local server, `carry.mcp_server`, with three tools: `carry_recall` (search with citations), `carry_catalog` (list files) and `carry_status` (index health). If you allow corrections for that assistant, it also gets `carry_propose` (draft a correction; only you can accept it). The `carry-recall` subagent (Claude Sonnet in Claude Code) keeps the passages that answer. Retrieved text is data, not instructions. In the team's folder the server searches only the team's knowledge base (`--scope team`), so a chat that writes team notes never reads your own; a team folder connected with an older Carry switches the next time `carry connect` or setup runs there.
 
 </details>
 
@@ -110,7 +111,7 @@ Needs Python 3.11+. Search by meaning uses `llama-cpp-python` (llama.cpp, built 
 - Search and session recaps can miss or misread things; check drafts against their sources.
 - `carry session` was `carry harvest` (and `carry session start` was `carry context`) before 0.14; the old names still work, and recaps written before keep their `— harvest —` file names.
 - Meeting transcripts tell only you from the other side, not each speaker. On speakers your microphone also hears the call; Carry drops those echoes, but headphones give the cleanest transcript.
-- Apple's on-device model, the summary's fallback, catches fewer items than Claude or Codex and does not compare them with your notes; every item still carries its quote, so check it in Review.
+- Apple's on-device model summarises a meeting only when you choose it (`carry meet summarize --path … --extractor apple:on-device`); with no assistant connected the transcript stays as it is. It catches fewer items than Claude or Codex and does not compare them with your notes; every item still carries its quote, so check it in Review.
 - Secret masking is best effort.
 
 </details>
