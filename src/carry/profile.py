@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 import re
 
-from . import okf, team, trello
+from . import team, trello
 from .errors import CarryError
 from .paths import walk_markdown
 from .persistence import atomic_text

@@ -130,7 +130,7 @@ struct UIError: LocalizedError {
         case "trello_connect_failed": return T("Carry could not keep the Trello connection. Try again.", "Carry Trello bağlantısını kaydedemedi. Tekrar deneyin.")
         case "trello_unauthorized": return T("Trello no longer accepts Carry's permission. Connect again.", "Trello, Carry'ye verilen izni artık kabul etmiyor. Yeniden bağlanın.")
         case "trello_keychain_failed", "trello_needs_keychain": return T("Trello's permission could not be saved in the Keychain. Try again.", "Trello izni Anahtar Zinciri'ne kaydedilemedi. Tekrar deneyin.")
-        case "trello_team_key_missing": return T("Your team's Trello connection is not set up yet: its key is not in the team notes. Once it is, you connect in one click.", "Ekibin Trello bağlantısı henüz kurulmamış: anahtarı ekip notlarında (OKB) yok. Eklenince tek tıkla bağlanırsınız.")
+        case "trello_team_key_missing": return T("Your team's Trello connection is not set up yet: its key is not in the team notes. Once it is, you connect in one click.", "Ekibin Trello bağlantısı henüz kurulmamış: anahtarı ekip notlarında yok. Eklenince tek tıkla bağlanırsınız.")
         case "trello_port_busy": return T("Another app on this Mac holds the address Trello sends you back to (localhost:47821). Quit it and try again.", "Bu Mac'te başka bir uygulama, Trello'nun sizi geri gönderdiği adresi (localhost:47821) tutuyor. O uygulamayı kapatıp tekrar deneyin.")
         case "trello_denied": return T("Carry was not allowed in Trello. Try again if you want.", "Trello'da Carry'ye izin verilmedi. İsterseniz yeniden deneyin.")
         case "trello_timeout": return T("Trello did not answer within ten minutes. Try again.", "Trello'dan on dakika içinde yanıt gelmedi. Yeniden deneyin.")
@@ -1932,7 +1932,7 @@ struct WorkRow: View {
     func label(_ b: [String: Any]) -> String {
         switch str(b, "kind", "") {
         case "trello": return ["Trello", str(b, "board", ""), str(b, "list", "")].filter { !$0.isEmpty }.joined(separator: " · ")
-        case "okb": return str(b, "state", "") == "handed" ? T("Team notes · handed to you", "OKB · size devredildi") : T("Team notes · waiting for your review", "OKB · inceleme bekliyor")
+        case "okb": return str(b, "state", "") == "handed" ? T("Team notes · handed to you", "Ekip notları · size devredildi") : T("Team notes · waiting for your review", "Ekip notları · inceleme bekliyor")
         case "meeting": return T("Meeting · ", "Toplantı · ") + dayLabel(str(b, "day", ""))
         default: return T("Chat · ", "Sohbet · ") + dayLabel(str(b, "day", ""))
         }
@@ -2094,7 +2094,7 @@ struct TrelloConnect: View {
                 let team = model.sources.first { str($0, "scope", "") == "team" && $0["github"] is [String: Any] }
                 let syncing = str(model.job, "state") == "running" && str(model.job, "action", "") == "github_sync"
                 Text(T("The team's Trello key is not in Carry's copy of the team notes yet. If it was just added there, sync the team notes; Carry also does it by itself every few minutes.",
-                       "Ekibin Trello anahtarı Carry'deki ekip notlarında henüz yok. OKB'ye yeni eklendiyse ekip notlarını eşitleyin; Carry bunu birkaç dakikada bir kendisi de yapar."))
+                       "Ekibin Trello anahtarı Carry'deki ekip notlarında henüz yok. Anahtar oraya yeni eklendiyse ekip notlarını eşitleyin; Carry bunu birkaç dakikada bir kendisi de yapar."))
                     .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 if let team {
                     HStack(spacing: 8) {
@@ -5224,7 +5224,7 @@ struct LoginSheet: View {
         if !domains.isEmpty {
             Text(T("Ends with ", "Şununla bitmeli: ") + domains.map { "@" + $0 }.joined(separator: T(" or ", " ya da "))).font(.caption).foregroundStyle(.secondary)
         }
-        Picker(T("Your name in the team notes", "OKB'deki adınız"), selection: picked) {
+        Picker(T("Your name in the team notes", "Ekip notlarındaki adınız"), selection: picked) {
             Text(T("Choose", "Seç")).tag("")
             ForEach(names, id: \.self) { Text($0).tag($0) }
             Text(T("Not in the list", "Listede yok")).tag(Self.other)
