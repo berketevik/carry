@@ -79,7 +79,7 @@ def _items(path):
         if section in SKIP_SECTIONS:
             continue
         decision, line = decision_of(line)
-        if decision == 'skipped':
+        if decision in ('skipped', 'unsure'):  # rejected, or one the owner was not sure of
             continue
         m = re.match(r'- \*\*([^*:]+?)(?: · [^*]*)?:\*\* (.+)', line)
         if m:

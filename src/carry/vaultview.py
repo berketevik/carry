@@ -24,7 +24,7 @@ from .persistence import writer_lock
 MAX_FILES = 20_000
 HEAD_BYTES = 4096
 MAX_NOTE_BYTES = 2_000_000
-MARK = re.compile(r' ?<!-- carry: (?:accepted|fixed|skipped) \d{4}-\d{2}-\d{2} -->')
+MARK = re.compile(r' ?<!-- carry: (?:accepted|fixed|skipped|unsure) \d{4}-\d{2}-\d{2} -->')
 WIKILINK_RE = re.compile(r"\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]")
 # A plain Markdown link, as GitHub knowledge bases write them: [text](folder/Note%20name.md).
 MDLINK_RE = re.compile(r"(?<!!)\[[^\]\n]*\]\((?:<([^>\n]+)>|([^)\s]+))(?:\s+\"[^\"]*\")?\)")
@@ -244,7 +244,19 @@ def browse(ws, source_id):
             approvable=not is_system(rel, managed) and cannot_approve(front) is None,
             review=not is_system(rel, managed) and awaits_review(rel, front),
             digest=is_digest(front)))
+        if files[-1]['digest'] and rel.startswith('+/'):
+            # A recap is listed by its chat's name; the chat is looked up only for one that waits.
+            topic = _recap_topic(root, front, look=files[-1]['review'])
+            if topic:
+                files[-1]['topic'] = topic
     return dict(source_id=src.source_id, root=str(root), files=files, truncated=truncated)
+
+
+def _recap_topic(root, front, look=True):
+    if front.get('provenance') == 'meeting':
+        return ''  # a meeting's name is in its file name
+    from .harvest import recap_topic
+    return recap_topic(root, front, look)
 
 
 def note(ws, source_id, relative):
@@ -260,7 +272,9 @@ def note(ws, source_id, relative):
     modified, committed = _modified(rel, path, *_history(src))
     links = sorted(set(link_targets(body, rel)))
     heading = next((l[2:].strip() for l in body.splitlines() if l.startswith('# ')), '')
+    topic = _recap_topic(root, front) if is_digest(front) and rel.startswith('+/') else ''
     return dict(source_id=src.source_id, path=rel, absolute=str(path), title=_text(front.get('title')) or heading or path.stem,
+                **({'topic': topic} if topic else {}),
                 frontmatter={k: okf.plain(v) if isinstance(v, (str, int, float, bool, list, dict)) or v is None
                              or hasattr(v, 'isoformat') else str(v) for k, v in (front or {}).items()},
                 okf=okf.view(front),

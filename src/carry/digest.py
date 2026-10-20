@@ -1,13 +1,15 @@
 """A session recap (a harvest digest before 0.14) or meeting digest, item by item: the owner
-accepts, fixes or skips each item.
+accepts, fixes, rejects or passes each item.
 
 An accepted item goes to the day's log (`log/<chat date>.md`) with its quote and a link to the
-raw chat, so recall finds it under the day it was said. Accepting a conflict never edits the
-note it contradicts; the log line links it for conflict resolution. The digest line keeps the
-decision as a trailing HTML comment: Obsidian hides it and the state pack still reads the line.
-Already recorded, done and dropped items are folded and need no decision. A digest leaves the
-review queue (its `status: draft` becomes `stable`, with the owner's check in `verified`) once
-no item waits.
+raw chat, so recall finds it under the day it was said. A passed item (the owner is not sure)
+goes there too, its tag marked unsure, so no one reads it as settled; it stays off the work list
+and the state pack. A rejected item goes nowhere (its marker is `skipped`, the name it had when
+the button was Skip). Accepting a conflict never edits the note it contradicts; the log line
+links it for conflict resolution. The digest line keeps the decision as a trailing HTML comment:
+Obsidian hides it and the state pack still reads the line. Already recorded, done and dropped
+items are folded and need no decision. A digest leaves the review queue (its `status: draft`
+becomes `stable`, with the owner's check in `verified`) once no item waits.
 """
 import datetime
 import hashlib
@@ -21,8 +23,10 @@ from .paths import resolve_within
 from .persistence import atomic_text
 from .vaultview import is_digest
 
-DECISIONS = ('accepted', 'fixed', 'skipped')
-MARK = re.compile(r'\s*<!-- carry: (accepted|fixed|skipped) (\d{4}-\d{2}-\d{2}) -->\s*$')
+DECISIONS = ('accepted', 'fixed', 'skipped', 'unsure')
+# What the owner answers, and the marker it leaves. `skip` is how apps before the Reject button said reject.
+ACTIONS = {'accept': 'accepted', 'fix': 'fixed', 'reject': 'skipped', 'skip': 'skipped', 'pass': 'unsure'}
+MARK = re.compile(r'\s*<!-- carry: (accepted|fixed|skipped|unsure) (\d{4}-\d{2}-\d{2}) -->\s*$')
 ITEM = re.compile(r'^- \*\*(?P<tag>[^*]+?):\*\* (?P<statement>.+?)(?: ↔ (?P<match>\[\[[^\]]+\]\]))?$')
 # A chat item cites its exchange, a meeting item (carry.meet) the transcript line it quotes.
 QUOTE = re.compile(r'^\s+> (?P<quote>.*?) \*\((?P<unit>exchange|segment) (?P<exchange>\d+), (?P<speaker>[^,)]+)(?:, (?P<date>\d{4}-\d{2}-\d{2}))?\)\*\s*$')
@@ -147,46 +151,70 @@ def note_side(ws, source_id, item):
 
 
 FIRST_PROMPT = 200
+ASKED = 300
 OWNER_LINE = re.compile(r'^\*\*Owner:\*\* ?(.*)$')
 
 
-def source_chat(root, relative, parsed):
-    """Where a draft came from, for Review: the assistant and day from its name, and the chat's
-    first message from the raw chat, cut short. Meetings say only that they are one."""
-    if parsed['kind'] == 'meeting':
-        return dict(kind='meeting', day=parsed['created'])
-    stem = Path(relative).stem
-    m = re.match(r'^(\d{4}-\d{2}-\d{2}) — (?:session|harvest) (\w+) ', stem)
-    chat = dict(kind='chat', client=m.group(2) if m else '', day=m.group(1) if m else parsed['created'], first='')
+def raw_chat(root, parsed):
+    """The text of the raw chat a recap came from, or '' (a meeting, a legacy link, a missing file)."""
     resource = (parsed['raw_entry'] or {}).get('resource', '') if isinstance(parsed['raw_entry'], dict) else ''
-    if not resource.startswith('/'):
-        return chat
+    if parsed['kind'] == 'meeting' or not resource.startswith('/'):
+        return ''
     try:
-        raw = resolve_within(root, resource.lstrip('/')).read_text(encoding='utf-8', errors='ignore')
+        return resolve_within(root, resource.lstrip('/')).read_text(encoding='utf-8', errors='ignore')
     except (OSError, CarryError):
-        return chat
-    lines, said = raw.split('\n'), []
-    for n, line in enumerate(lines):
-        found = OWNER_LINE.match(line)
+        return ''
+
+
+def owner_message(raw, exchange=None, limit=FIRST_PROMPT):
+    """What the owner wrote in one exchange of a raw chat (the first one without `exchange`), on
+    one line and cut short."""
+    lines = raw.split('\n')
+    start = 0 if exchange is None else next((n for n, l in enumerate(lines) if l.strip() == f'## Exchange {exchange}'), None)
+    if start is None:
+        return ''
+    said = []
+    for n in range(start, len(lines)):
+        found = OWNER_LINE.match(lines[n])
         if found:
             # The message runs until the reply or the next exchange.
             said = [found.group(1)] + lines[n + 1:n + 20]
             said = said[:next((i for i, l in enumerate(said) if l.startswith(('**Assistant:**', '## '))), len(said))]
             break
+        if exchange is not None and n > start and lines[n].startswith('## '):
+            break
     text = ' '.join(' '.join(said).split())
-    chat['first'] = text if len(text) <= FIRST_PROMPT else text[:FIRST_PROMPT].rsplit(' ', 1)[0] + '…'
-    return chat
+    return text if len(text) <= limit else text[:limit].rsplit(' ', 1)[0] + '…'
+
+
+def source_chat(root, relative, parsed, raw, front):
+    """Where a draft came from, for Review: the assistant and day from its name, the chat's name
+    (`topic`, as the client lists it) and its first message from the raw chat, cut short.
+    Meetings say only that they are one."""
+    if parsed['kind'] == 'meeting':
+        return dict(kind='meeting', day=parsed['created'])
+    from .harvest import recap_topic
+    stem = Path(relative).stem
+    m = re.match(r'^(\d{4}-\d{2}-\d{2}) — (?:session|harvest) (\w+) ', stem)
+    return dict(kind='chat', client=m.group(2) if m else '', day=m.group(1) if m else parsed['created'],
+                topic=recap_topic(root, front), first=owner_message(raw) if raw else '')
 
 
 def items(ws, source_id, relative):
+    """The items with what Review asks about each: the note a conflict points to and, for an item
+    the assistant's words support, what the owner had asked in that exchange (`asked`), so the
+    question reads "you asked this, the assistant answered that, I am saving this: right?"."""
     root, _, text, front = _open(ws, source_id, relative)
     parsed = parse(text)
+    raw = raw_chat(root, parsed)
     for it in parsed['items']:
         if it['match'] and it['decision'] is None:
             it['match_path'], it['match_text'] = note_side(ws, source_id, it)
+        if raw and it['decision'] is None and it.get('speaker') == 'assistant' and it.get('exchange'):
+            it['asked'] = owner_message(raw, it['exchange'], ASKED)
     waiting = sum(1 for it in parsed['items'] if it['decision'] is None)
     return dict(path=relative, items=parsed['items'], waiting=waiting, draft=okf.is_draft(front),
-                chat=source_chat(root, relative, parsed))
+                chat=source_chat(root, relative, parsed, raw, front))
 
 
 def accept_all(ws, source_id, relative, today=None):
@@ -236,8 +264,9 @@ def _append_log(root, day, language, entry, raw_entry, kind='chat'):
 
 
 def decide(ws, source_id, relative, item, action, text=None, today=None):
-    """accept, fix (with new text) or skip one item; the digest leaves the queue when none waits."""
-    if action not in ('accept', 'fix', 'skip'):
+    """accept, fix (with new text), reject or pass (not sure) one item; the digest leaves the
+    queue when none waits."""
+    if action not in ACTIONS:
         raise CarryError('invalid_decision')
     statement = ' '.join((text or '').split())
     if action == 'fix' and not statement:
@@ -256,18 +285,23 @@ def decide(ws, source_id, relative, item, action, text=None, today=None):
     if found['decision']:
         raise CarryError('item_already_decided')
     today = (today or datetime.date.today()).isoformat()
-    decision = dict(accept='accepted', fix='fixed', skip='skipped')[action]
+    decision = ACTIONS[action]
     lines = body.split('\n')
     line = lines[found['line']]
     if action == 'fix':
         line = line.replace(f":** {found['statement']}", f":** {statement}", 1)
     lines[found['line']] = f'{line} <!-- carry: {decision} {today} -->'
     logged = None
-    if action != 'skip':
+    if decision != 'skipped':
         said = statement or found['statement']
+        tag = found['tag']
+        if decision == 'unsure':
+            # The doubt travels with the text: recall shows it to whoever reads the line.
+            from .harvest import LABELS
+            tag += ' · ' + LABELS.get(parsed['language'], LABELS['English'])['unsure']
         where = f" ↔ {found['match']}" if found['match'] else ''
         source = f"{parsed['raw']}, {found['unit']} {found['exchange']}" if found['exchange'] else parsed['raw']
-        entry = f"- **{found['tag']}:** {said}{where} ({source})"
+        entry = f"- **{tag}:** {said}{where} ({source})"
         if found['quote']:
             entry += f"\n  > {found['quote']}"
         logged = _append_log(root, found['date'] or parsed['created'] or today, parsed['language'], entry,

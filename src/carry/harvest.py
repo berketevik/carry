@@ -67,11 +67,12 @@ LABELS = {
     'Turkish': dict(recap='Oturum özeti', new='Yeni', conflict='Çelişki adayları (incele)', review='İncelenecek', known='Zaten kayıtlı', resolved='Yapılmış görünüyor',
                     dropped='Vazgeçilmiş görünüyor',
                     assistant='asistanın önerisi/sonucu; sahibi onaylamadı', decision='karar', fact='olgu',
-                    preference='tercih', open_item='açık iş', unchecked='vault ile karşılaştırılmadı (ne Jev ne asistanınız kontrol edebildi)'),
+                    preference='tercih', open_item='açık iş', unsure='şüpheli, sahibi emin değil',
+                    unchecked='vault ile karşılaştırılmadı (ne Jev ne asistanınız kontrol edebildi)'),
     'English': dict(recap='Session recap', new='New', conflict='Conflict candidates (review)', review='To review', known='Already recorded', resolved='Apparently done',
                     dropped='Apparently dropped',
                     assistant="assistant's suggestion or result; not confirmed by the owner", decision='decision',
-                    fact='fact', preference='preference', open_item='open item',
+                    fact='fact', preference='preference', open_item='open item', unsure='unsure, the owner was not certain',
                     unchecked='not compared with the vault (neither Jev nor your assistant could check it)'),
 }
 
@@ -127,6 +128,70 @@ def find_threads(root):
             if first.get('type') == 'session_meta' and meta.get('cwd') and Path(meta['cwd']).resolve() == root:
                 found.append(('codex', meta.get('id') or p.stem, p))
     return found
+
+
+TITLE_MAX = 120
+CODEX_INDEX = Path('.codex') / 'session_index.jsonl'
+
+
+def _titled(path, wanted):
+    """{record type: last string under its key} for the wanted record types of a JSONL file."""
+    out = {}
+    for line in Path(path).read_text(encoding='utf-8', errors='ignore').splitlines():
+        if not any(f'"{kind}"' in line for kind in wanted):
+            continue
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        for kind, (key, match) in wanted.items():
+            if d.get('type', kind) == kind and isinstance(d.get(key), str) and match(d):
+                out[kind] = d[key]
+    return out
+
+
+def thread_title(client, thread_id, path=None):
+    """The name the client gave the chat, as its own chat list shows it: the title the owner set
+    in Claude Code, else the one Claude Code made; Codex's thread name. '' when there is none."""
+    try:
+        if client == 'claude' and path:
+            found = _titled(path, {'custom-title': ('customTitle', lambda d: True), 'ai-title': ('aiTitle', lambda d: True)})
+            title = found.get('custom-title') or found.get('ai-title') or ''
+        elif client == 'codex':
+            found = _titled(Path.home() / CODEX_INDEX, {thread_id: ('thread_name', lambda d: d.get('id') == thread_id)})
+            title = found.get(thread_id, '')
+        else:
+            return ''
+    except OSError:
+        return ''
+    title = ' '.join(mask(title)[0].split())
+    return title if len(title) <= TITLE_MAX else title[:TITLE_MAX].rsplit(' ', 1)[0] + '…'
+
+
+_TOPICS = {}  # (thread, transcript mtime) -> title: the app lists the inbox often
+
+
+def recap_topic(root, front, look=True):
+    """What a session recap's chat was about, by the chat's name: the recap's `title`, else (recaps
+    written before it was kept, and only with `look`) the name the client gives that chat now."""
+    title = front.get('title')
+    if isinstance(title, str) and title.strip():
+        return title.strip()
+    if not look:
+        return ''
+    meta = front.get('session') or front.get('harvest')
+    thread = meta.get('thread') if isinstance(meta, dict) else None
+    if not isinstance(thread, str) or ':' not in thread:
+        return ''
+    client, thread_id = thread.split(':', 1)
+    path = claude_project_dir(Path(root).resolve()) / f'{thread_id}.jsonl' if client == 'claude' else Path.home() / CODEX_INDEX
+    try:
+        key = (thread, path.stat().st_mtime)
+    except OSError:
+        return ''
+    if key not in _TOPICS:
+        _TOPICS[key] = thread_title(client, thread_id, path)
+    return _TOPICS[key]
 
 
 def read_thread(client, path, root):
@@ -514,7 +579,7 @@ def _link(path, root):
     return '[[' + Path(path).stem + ']]'
 
 
-def write_outputs(root, client, thread_id, exchanges, groups, meta, language, today=None):
+def write_outputs(root, client, thread_id, exchanges, groups, meta, language, today=None, title=''):
     today = (today or datetime.date.today()).isoformat()
     short = thread_id.replace('-', '')[:8]
     raw_rel = f'sources/carry/session/{today} — {client} {short}.md'
@@ -537,7 +602,8 @@ def write_outputs(root, client, thread_id, exchanges, groups, meta, language, to
     L = LABELS.get(language, LABELS['English'])
     counts = {k: len(v) for k, v in groups.items()}
     # OKF v0.2: a draft (it waits for the owner's decisions), generated by Carry, derived from the raw.
-    lines = ['---', 'type: output',
+    # The chat's own name (its title in the client's chat list): Review names the recap by it.
+    lines = ['---', 'type: output'] + ([f'title: {json.dumps(title, ensure_ascii=False)}'] if title else []) + [
              f'description: "{client} {short}: {counts.get("new", 0)} new, {counts.get("conflict", 0)} conflict, '
              f'{counts.get("known", 0)} already recorded"',
              f'created: {today}', 'status: draft', f'generated: {made}', 'provenance: chat',
@@ -747,7 +813,8 @@ def run(workspace, root=None, dry_run=False, include_filed=False, limit=None, mi
                     report['harvested'] += 1
                     progress(f'harvested {client} {thread_id[:8]}: nothing to file')
                     continue
-                raw_rel, digest_rel = write_outputs(root, client, thread_id, exchanges, groups, meta, language)
+                raw_rel, digest_rel = write_outputs(root, client, thread_id, exchanges, groups, meta, language,
+                                                    title=thread_title(client, thread_id, path))
             except (CarryError, jev.JevUnavailable, subprocess.SubprocessError, OSError) as exc:
                 report['pending'] += 1
                 save(entry_key, dict(previous, status='pending', error=str(exc)))

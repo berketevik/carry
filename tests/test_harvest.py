@@ -400,6 +400,36 @@ class HarvestTest(unittest.TestCase):
         self.assertIn(('codex', 'abc'), found)
         self.assertNotIn(('codex', 'zzz'), found)
 
+    def test_a_recap_is_named_after_the_chat(self):
+        # Claude Code names each chat in its transcript (the name the owner gave it first); Review lists the recap by it.
+        path = self.thread('ffff6666', [('We will ship the pilot on 15 October, decided.', 'Noted.')])
+        with open(path, 'a', encoding='utf-8') as f:
+            f.write(json.dumps({'type': 'ai-title', 'aiTitle': 'pilot tarihi'}) + '\n')
+            f.write(json.dumps({'type': 'ai-title', 'aiTitle': 'pilot ship date'}) + '\n')
+        os.utime(path, (time.time() - 3600, time.time() - 3600))
+        good = dict(type='decision', statement='The pilot ships on 15 October.', exchange=1, quote='ship the pilot on 15 October')
+        with self.items(good), patch.object(jev, 'api_key', return_value=None):
+            rel = harvest.run(self.ws, which='claude:sonnet', progress=lambda m: None)['digests'][0]
+        self.assertIn('\ntitle: "pilot ship date"\n', (self.root / rel).read_text(encoding='utf-8'))
+        with open(path, 'a', encoding='utf-8') as f:
+            f.write(json.dumps({'type': 'custom-title', 'customTitle': 'Pilot launch'}) + '\n')
+        self.assertEqual(harvest.thread_title('claude', 'ffff6666', path), 'Pilot launch')
+        # A recap written before titles were kept finds the chat by its thread, but only when asked to look.
+        old = {'session': {'thread': 'claude:ffff6666'}}
+        self.assertEqual(harvest.recap_topic(self.root, old), 'Pilot launch')
+        self.assertEqual(harvest.recap_topic(self.root, old, look=False), '')
+        self.assertEqual(harvest.recap_topic(self.root, {'title': 'Kept', **old}), 'Kept')
+        self.assertEqual(harvest.recap_topic(self.root, {'session': {'thread': 'claude:gone'}}), '')
+
+    def test_a_codex_chat_is_named_from_its_session_index(self):
+        index = self.home / '.codex' / 'session_index.jsonl'; index.parent.mkdir(parents=True)
+        index.write_text('\n'.join(json.dumps(x) for x in [
+            {'id': 'abc', 'thread_name': 'Logo taslağı'}, {'id': 'other', 'thread_name': 'Başka'},
+            {'id': 'abc', 'thread_name': 'Carry logosu'}]) + '\n', encoding='utf-8')
+        self.assertEqual(harvest.thread_title('codex', 'abc'), 'Carry logosu')
+        self.assertEqual(harvest.recap_topic(self.root, {'harvest': {'thread': 'codex:abc'}}), 'Carry logosu')
+        self.assertEqual(harvest.thread_title('codex', 'missing'), '')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -43,7 +43,9 @@ GROUNDING = (
     "user's own notes: when the answer uses one, say so in the answer itself. "
     "Passage metadata follows the Open Knowledge Format: status draft means the owner has not "
     "checked the text, trust says whether anyone verified it (unverified, machine-confirmed, "
-    "human-reviewed), and stale true means it is past its stale_after date: say so when it matters."
+    "human-reviewed), and stale true means it is past its stale_after date: say so when it matters. "
+    "A daily-log item whose tag says unsure (şüpheli in Turkish) is one the owner was not sure of "
+    "when reviewing it: never present it as settled."
 )
 
 TOOLS = [
