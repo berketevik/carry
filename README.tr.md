@@ -37,7 +37,8 @@ Notlar, Google'ın [Open Knowledge Format](https://github.com/GoogleCloudPlatfor
 
 - **Yeni bir not klasörü.** Henüz notunuz yok mu? Carry, asistanınız için hazırlanmış bir not klasörü oluşturabilir.
 - **Her sohbet bir özetle açılır ve onayladığınız bir oturum özetiyle biter.** Açılış özeti son kararları ve yarım kalan işleri listeler. Sohbet bitince Carry kararları ve açık işleri not klasörünüzdeki `+/` gelen kutusuna taslak olarak yazar (`carry session end`; asistanın sohbet sonu hook'u çalıştırır). Uzun bir sohbet, Claude Code ya da Codex bağlamı sıkıştırmadan önce de özetlenir (`carry session checkpoint`); sohbet sonu yalnız sonrasını özetler. Önceden sahip olduğunuz bir not klasörü için bu hook'ları bu Mac'te `carry session hooks --install` açar. Carry uygulamasında her maddeyi kabul eder, düzeltir ya da atlarsınız; kabul edilenler o günün log'una yazılır, siz onaylamadan hiçbir şey kaydedilmez.
-- **Toplantılar da nota dönüşür.** Uygulamadaki Toplantılar sayfasından ya da bir görüşme mikrofonu açtığında menü çubuğundan Carry toplantıyı kaydeder ve konuşulanı o anda yazıya döker: mikrofonunuz ve macOS 14.2 ve sonrasında görüşmenin sesi, Mac'inizde yazıya dökülür. Durdur'a basınca transkript `sources/carry/meet/` altına kaydedilir. Apple Silicon bir Mac'te ardından Whisper (large-v3-turbo, bir kez yaklaşık 875 MB indirilir) her iki tarafın sesini Mac'inizin GPU'sunda yeniden ve daha doğru yazıya döker; mikrofon bir görüşmede açıkken bekler, bitince ses silinir. Sonra bağlı asistanınız toplantıyı bir kez özetler; kararlar, açık işler ve bilgiler söylendikleri satırla birlikte oturum özetleri gibi İncele'ye gelir. Bağlı asistan yoksa transkript olduğu gibi kalır.
+- **Toplantılar da nota dönüşür.** Uygulamadaki Toplantılar sayfasından ya da bir görüşme mikrofonu açtığında menü çubuğundan Carry toplantıyı kaydeder ve konuşulanı o anda yazıya döker: mikrofonunuz ve macOS 14.2 ve sonrasında görüşmenin sesi, Mac'inizde yazıya dökülür. Durdur'a basınca transkript `sources/carry/meet/` altına kaydedilir. Apple Silicon bir Mac'te ardından Whisper (large-v3-turbo, bir kez yaklaşık 875 MB indirilir) her iki tarafın sesini Mac'inizin GPU'sunda yeniden ve daha doğru yazıya döker; mikrofon bir görüşmede açıkken bekler, bitince ses silinir. Sonra bağlı asistanınız toplantıyı bir kez özetler; kararlar, açık işler ve bilgiler söylendikleri satırla birlikte oturum özetleri gibi İncele'ye gelir. Bağlı asistan yoksa transkript olduğu gibi kalır. Başlıksız başlatılan bir toplantıya özetinden konusuyla ad verilir; kayıtta yazdığınız ya da sonradan değiştirdiğiniz başlık olduğu gibi kalır.
+- **Ekiple, ana sayfa kendi işlerinizi gösterir.** Bir ekibin bilgi bankası bağlıyken uygulama bir kez şirket mailinizle giriş yapmanızı ister; mail bu Mac'te kalır, parola ve sunucu yoktur. Ana sayfa sonra açık Trello kartlarınızı (yalnız okuma), ekibin kurallarına göre sizi bekleyen ekip notlarını ve İncele'de kabul ettiğiniz açık işleri, bitti diyene kadar listeler. Trello ekibin anahtarıyla tek tıkla bağlanır.
 
 ## Verileriniz
 
@@ -55,6 +56,8 @@ Carry notlarınızı hiçbir yere yüklemez ve kendine ait bir çevrimiçi hizme
 | Anlamına göre aramayı açıp kapatmak | `carry search --semantic on` (ya da `off`) |
 | Onayladığınız taslak ve önerilerdeki adı değiştirmek (`verified: human:<ad>`; kurulum giriş adınızı kullanır) | `carry owner --set <ad>` |
 | Claude Code'un her aramadan ve kaydettiği her nottan önce sormasını kapatmak (ya da yeniden açmak) | `carry confirm off` (ya da `on`) |
+| Trello'yu komut satırından kendi API anahtarınızla bağlamak, kartlarınızı listelemek ya da bağlantıyı kesmek (uygulama ekibin anahtarıyla tek tıkla bağlar) | `carry trello connect` (ya da `cards`, `disconnect`) |
+| Carry toplantılara konusuyla ad vermeden önce kaydedilmiş bir toplantıya ad vermek; asistanınıza yalnız özeti gider | `carry meet retitle --path <toplantı notu>` |
 | Carry'yi güncellemek | `carry update`, ardından `carry app install` |
 | Her şeyin çalıştığını kontrol etmek | `carry status --probe` |
 
@@ -80,6 +83,31 @@ Bir cihazda yapılan değişiklik (örneğin `carry search --semantic off`) `set
 Not klasörü iCloud Drive'da, bir bulut depolama klasöründe (OneDrive, Dropbox, Google Drive) ya da `~/Dropbox` içindeyse `state/` dışarıda, `~/CarryState` içinde kalır: sürekli yazılan bir veritabanı dosya eşitlemesine dayanmaz. `settings.json` yine klasöre yazılır.
 
 Eski bir kurulum durumunu `~/CarryState` içinde tutar. `carry state move --vault <not klasörü>` önce `.carry/.gitignore`'u yazar (git klasöründe cihaz dosyalarının gerçekten yok sayıldığını kontrol eder), hiçbir dizin kurulumu çalışmıyorken durumu `.carry/state`'e taşır, eski yolda bir sembolik bağ bırakır (o yolu gösteren her hook, MCP ayarı ve zamanlanmış iş çalışmaya devam eder), `settings.json`'ı yazar (başka bir cihaz önce taşındıysa onu benimser) ve Carry'nin kendi bağlantılarını yeni yere yöneltir. `--shared-only` yalnız `.gitignore` ile `settings.json`'ı yazar; cihazlar taşınmadan önce commit etmek için.
+
+</details>
+
+<details>
+<summary><b>Ekip liderleri için: ekibin ayarları</b></summary>
+
+Ekibin deposunda `.carry/team.json` bulunabilir. Her üyenin Carry'si onu okur; bilinmeyen bir anahtarı ya da hatalı bir değeri `carry status` bildirir, hiçbir şeyi bozmaz.
+
+| Anahtar | Ne söyler |
+|---|---|
+| `retrieval` | her üyenin kullanması gereken arama ayarları; kurulum uygular, sonradan `carry team --apply` |
+| `min_carry_version` | depoda aynı şekilde arayan en eski Carry sürümü |
+| `email_domains` | uygulamadaki girişin kabul ettiği mail alan adları, örneğin `["ornek.com.tr"]` (yoksa her mail) |
+| `trello_api_key` | ekibin Trello API anahtarı; üyeler Trello'yu tek tıkla bağlar. Anahtar gizli değildir; her üyenin token'ı gizlidir ve kendi Anahtar Zinciri'nde kalır |
+| `work` | ana sayfada hangi ekip notlarının bir üyeyi beklediği: `review_statuses`, üyenin sahibi olduğu notlardan onu bekleyenlerin durumları; `inbox` ve `handed`, bir notu üyeye devreden klasör ve başlık kalıpları (`{name}` üyenin adıdır). Yoksa hiçbir ekip notu kimseyi beklemez |
+
+```json
+{
+  "email_domains": ["ornek.com.tr"],
+  "trello_api_key": "<ekibin anahtarı>",
+  "work": {"inbox": "90_Inbox", "handed": ["{name} için"], "review_statuses": ["to-review"]}
+}
+```
+
+Trello anahtarı varsa, anahtarın Trello Power-Up yönetim sayfasında (trello.com/power-ups/admin) izin verilen adreslere bir kez `http://localhost:47821` ekleyin. Trello üyenin tarayıcısını izniyle bu adrese geri gönderir; ekli değilse tek tıkla bağlantı çalışmaz.
 
 </details>
 

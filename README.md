@@ -37,7 +37,8 @@ Notes are plain Markdown in Google's [Open Knowledge Format](https://github.com/
 
 - **A new notes folder.** No notes yet? Carry can create one, set up for your assistant.
 - **Each chat opens with a brief and ends with a recap you review.** The brief lists recent decisions and unfinished work. When a chat ends, Carry recaps its decisions and open tasks into your notes folder's `+/` inbox (`carry session end`, run by the client's chat-end hook). A long chat is also recapped before Claude Code or Codex compacts its context (`carry session checkpoint`), so the end recaps only what came after. For a notes folder you already had, `carry session hooks --install` turns these hooks on for this Mac. In the Carry app you accept, fix or skip each item; accepted items go to that day's log, and nothing is recorded without you.
-- **Meetings become notes too.** On the app's Meetings page, or from the menu bar when a call opens the microphone, Carry records a meeting and writes down what is said as it is said: your microphone and, on macOS 14.2+, the sound of the call, transcribed on your Mac. At Stop the transcript is saved under `sources/carry/meet/`. On an Apple Silicon Mac, Whisper (large-v3-turbo, a one-time download of about 875 MB) then transcribes the audio of each side again, more accurately, on your Mac's GPU; it waits while a call has the microphone, and the audio is deleted once it is done. Your connected assistant then summarises the meeting once, and its decisions, open items and facts come to Review like session recaps, each with the line it was said in. With no assistant connected the transcript stays as it is.
+- **Meetings become notes too.** On the app's Meetings page, or from the menu bar when a call opens the microphone, Carry records a meeting and writes down what is said as it is said: your microphone and, on macOS 14.2+, the sound of the call, transcribed on your Mac. At Stop the transcript is saved under `sources/carry/meet/`. On an Apple Silicon Mac, Whisper (large-v3-turbo, a one-time download of about 875 MB) then transcribes the audio of each side again, more accurately, on your Mac's GPU; it waits while a call has the microphone, and the audio is deleted once it is done. Your connected assistant then summarises the meeting once, and its decisions, open items and facts come to Review like session recaps, each with the line it was said in. With no assistant connected the transcript stays as it is. A meeting started without a title is named after its subject from the summary; a title you typed, or a heading you wrote since, stays.
+- **Home shows your own work, with a team.** When a team's knowledge base is connected, the app asks you once to sign in with your company mail; it stays on this Mac, with no password and no server. Home then lists your open Trello cards (read only), the team notes that wait for you by the team's rules, and the open items you accepted in Review, until you mark them done. Trello connects in one click with the team's key.
 
 ## Your data
 
@@ -55,6 +56,8 @@ Carry doesn't upload your notes anywhere and uses no online service of its own. 
 | Turn search by meaning on or off | `carry search --semantic on` (or `off`) |
 | Change the name on the drafts and proposals you approve (`verified: human:<name>`; setup uses your login name) | `carry owner --set <name>` |
 | Stop (or start again) Claude Code asking before each search of your notes and each note it saves | `carry confirm off` (or `on`) |
+| Connect Trello from the command line with your own API key, list your cards, or disconnect (the app connects in one click with the team's key) | `carry trello connect` (or `cards`, `disconnect`) |
+| Name a meeting saved before Carry named meetings by their subject; only its summary goes to your assistant | `carry meet retitle --path <meeting note>` |
 | Update Carry | `carry update`, then `carry app install` |
 | Check that everything works | `carry status --probe` |
 
@@ -80,6 +83,31 @@ A change made on one device (say `carry search --semantic off`) is written to `s
 If the notes folder is in iCloud Drive, a cloud-storage folder (OneDrive, Dropbox, Google Drive) or `~/Dropbox`, `state/` stays outside it, in `~/CarryState`: a database written all the time does not survive file sync. `settings.json` still goes in the folder.
 
 An older setup keeps its state in `~/CarryState`. `carry state move --vault <notes folder>` writes `.carry/.gitignore` first (and in a git folder checks that git really ignores the device files), moves the state into `.carry/state` while no index build runs, leaves a symlink at the old path so every hook, MCP config and scheduled job that names it keeps working, writes `settings.json` (or adopts it, when another device moved first), and points Carry's own wiring at the new place. `--shared-only` writes just `.gitignore` and `settings.json`, to commit them before the devices move.
+
+</details>
+
+<details>
+<summary><b>For team leads: the team's settings</b></summary>
+
+The team's repository may carry `.carry/team.json`. Every member's Carry reads it; an unknown key or a bad value is reported by `carry status`, never fatal.
+
+| Key | What it says |
+|---|---|
+| `retrieval` | the search settings every member should use; setup applies them, `carry team --apply` later |
+| `min_carry_version` | the oldest Carry that searches the repository the same way |
+| `email_domains` | the mail domains the app's sign-in accepts, such as `["ornek.com.tr"]` (none: any mail) |
+| `trello_api_key` | the team's Trello API key, so members connect Trello in one click; a key is not a secret, each member's token is and stays in their Keychain |
+| `work` | which team notes wait for a member on Home: `review_statuses`, the statuses of notes they own that wait for them; `inbox` and `handed`, the folder and the title phrases that hand a note to them, `{name}` being their first name. Without it no team note waits for anyone |
+
+```json
+{
+  "email_domains": ["ornek.com.tr"],
+  "trello_api_key": "<the team's key>",
+  "work": {"inbox": "90_Inbox", "handed": ["{name} için"], "review_statuses": ["to-review"]}
+}
+```
+
+With a Trello key, add `http://localhost:47821` to its allowed origins once, on the key's page in Trello's Power-Up admin (trello.com/power-ups/admin). Trello sends a member's browser back to that address with their permission; without it the one-click connection fails.
 
 </details>
 
