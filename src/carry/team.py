@@ -91,7 +91,7 @@ def load_settings(source):
 
 def sign_in(workspace):
     """What the app's sign-in takes from the team sources: the mail domains it accepts (none:
-    any mail) and the Trello API key (None: the member enters one)."""
+    any mail) and the Trello API key (None: the app cannot offer the one-click connection)."""
     domains, key = [], None
     for source in workspace.sources:
         if source.scope != "team":
