@@ -168,7 +168,7 @@ def thread_title(client, thread_id, path=None):
     return title if len(title) <= TITLE_MAX else title[:TITLE_MAX].rsplit(' ', 1)[0] + '…'
 
 
-_TOPICS = {}  # (thread, transcript mtime) -> title: the app lists the inbox often
+_TOPICS = {}  # thread -> (transcript mtime, title): the app lists the inbox often, a running chat keeps growing
 
 
 def recap_topic(root, front, look=True):
@@ -186,12 +186,12 @@ def recap_topic(root, front, look=True):
     client, thread_id = thread.split(':', 1)
     path = claude_project_dir(Path(root).resolve()) / f'{thread_id}.jsonl' if client == 'claude' else Path.home() / CODEX_INDEX
     try:
-        key = (thread, path.stat().st_mtime)
+        mtime = path.stat().st_mtime
     except OSError:
         return ''
-    if key not in _TOPICS:
-        _TOPICS[key] = thread_title(client, thread_id, path)
-    return _TOPICS[key]
+    if _TOPICS.get(thread, (None,))[0] != mtime:
+        _TOPICS[thread] = (mtime, thread_title(client, thread_id, path))
+    return _TOPICS[thread][1]
 
 
 def read_thread(client, path, root):
