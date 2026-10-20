@@ -1,4 +1,4 @@
-"""İşlerin: the home page's one list of the signed-in person's work.
+"""İşleriniz: the home page's one list of the signed-in person's work.
 
 Three sources, one row per piece of work, the sources as badges:
 - Trello: the open cards the person chose to see (trello.view).

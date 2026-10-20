@@ -327,7 +327,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
     func openTrelloPage() { if let url = URL(string: str(trelloLogin, "authorize_url", "")) { NSWorkspace.shared.open(url) } }
     func cancelTrello() { run("trello_login_cancel", clearError: false, quiet: true) { self.trelloLogin = $0 } }
-    /// İşlerin: the signed-in person's work from Trello, the team notes and accepted chat items.
+    /// İşleriniz: the signed-in person's work from Trello, the team notes and accepted chat items.
     @Published var work: [String: Any] = [:]
     func loadWork() { run("work", clearError: false, quiet: true) { value in if !same(value, self.work) { self.work = value } } }
     /// After the profile or Trello changed: everything that depends on who is signed in.
@@ -340,7 +340,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 if !same(value, self.trelloLogin) { self.trelloLogin = value }
                 guard str(value, "state") == "connected" else { return }
                 self.showLogin = false
-                self.notice = T("Trello is connected. Your open cards show on Home.", "Trello bağlandı. Açık kartların ana sayfada görünüyor.")
+                self.notice = T("Trello is connected. Your open cards show on Home.", "Trello bağlandı. Açık kartlarınız ana sayfada görünüyor.")
                 self.run("profile", clearError: false, quiet: true) { self.profileChanged($0) }
             }
         }
@@ -1027,6 +1027,8 @@ struct Onboarding: View {
     @ObservedObject var model: Model
     @State private var notesLanguage = Lang.code == "tr" ? "Turkish" : "English"
     let steps = [("Welcome", "Tanışma"), ("Knowledge base", "Bilgi bankası"), ("Assistant", "Asistan"), ("Ready", "Hazır")]
+    /// Opened again from Settings: there is a setup to go back to, so the guide can be closed.
+    var hasSetup: Bool { !model.snapshot.isEmpty && !model.sources.isEmpty }
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 18) {
@@ -1044,6 +1046,7 @@ struct Onboarding: View {
                 }
                 Spacer()
                 Picker("", selection: $model.language) { Text("Türkçe").tag("tr"); Text("English").tag("en") }.pickerStyle(.segmented).labelsHidden().frame(width: 150)
+                if hasSetup { Button(T("Close the guide", "Rehberi kapat")) { model.onboarding = false }.keyboardShortcut(.cancelAction) }
             }.padding(20)
             Divider()
             if !model.error.isEmpty {
@@ -1097,7 +1100,7 @@ struct Onboarding: View {
             HStack {
                 Button(T("Let's start", "Başlayalım")) { model.prepareWorkspace { model.onboardingStep = 1 } }.buttonStyle(.borderedProminent).controlSize(.large).keyboardShortcut(.defaultAction)
                 Spacer()
-                Button(T("Choose my existing Carry setup…", "Mevcut Carry kurulumumu seç…")) { model.chooseWorkspace(create: false) }.buttonStyle(.link)
+                if !hasSetup { Button(T("Choose my existing Carry setup…", "Mevcut Carry kurulumumu seç…")) { model.chooseWorkspace(create: false) }.buttonStyle(.link) }
             }.padding(.top, 8)
         }
     }
@@ -1412,18 +1415,18 @@ struct ReviewView: View {
             VStack(alignment: .leading, spacing: 12) {
                 Text(pageName("Review")).font(.title.bold())
                 Text(T("After a chat or a meeting, Carry picks out what seems worth keeping and asks you here. Is it right? Accept it: it goes to that day's daily note, and open items also join your work on Home. Not right? Fix or skip it; a skipped item shows up nowhere.",
-                       "Bir sohbetten ya da toplantıdan sonra Carry saklanmaya değer görünenleri çıkarır ve burada sana sorar. Doğruysa kabul et: o günün günlük notuna yazılır, açık işler ayrıca ana sayfadaki İşlerin listesine girer. Doğru değilse düzelt ya da atla; atladığın madde hiçbir yerde görünmez."))
+                       "Bir sohbetten ya da toplantıdan sonra Carry saklanmaya değer görünenleri çıkarır ve burada size sorar. Doğruysa kabul edin: o günün günlük notuna yazılır, açık işler ayrıca ana sayfadaki İşleriniz listesine girer. Doğru değilse düzeltin ya da atlayın; atladığınız madde hiçbir yerde görünmez."))
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 if model.pendingReview > 0 {
                     Button { model.page = "Proposals" } label: {
-                        Label(T("\(model.pendingReview) change proposal(s) wait for your answer", "\(model.pendingReview) değişiklik önerisi cevabını bekliyor"), systemImage: "exclamationmark.bubble")
+                        Label(T("\(model.pendingReview) change proposal(s) wait for your answer", "\(model.pendingReview) değişiklik önerisi cevabınızı bekliyor"), systemImage: "exclamationmark.bubble")
                             .frame(maxWidth: .infinity, alignment: .leading).padding(10).background(Color.orange.opacity(0.1)).clipShape(RoundedRectangle(cornerRadius: 8))
                     }.buttonStyle(.plain)
                 }
                 if all.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         Label(T("Nothing to review", "İncelenecek bir şey yok"), systemImage: "checkmark.circle").font(.headline).foregroundStyle(.green)
-                        Text(T("New drafts appear here after your chats and your assistants' work.", "Sohbetlerinden ve toplantılarından sonra Carry'nin sorduğu maddeler burada görünür.")).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        Text(T("New drafts appear here after your chats and your assistants' work.", "Sohbetlerinizden ve toplantılarınızdan sonra Carry'nin sorduğu maddeler burada görünür.")).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }.padding(.top, 20)
                     Spacer()
                 } else {
@@ -1477,7 +1480,7 @@ struct ReviewView: View {
             Button(T("Approve all", "Hepsini onayla")) { model.approveMany(bulk.map { str($0, "path") }) }
         } message: {
             Text(T("Their draft mark is removed; the text does not change. Approve only what you trust without reading.",
-                   "Taslak işaretleri kaldırılır; metin değişmez. Yalnızca okumadan güvendiğin taslakları onayla."))
+                   "Taslak işaretleri kaldırılır; metin değişmez. Yalnızca okumadan güvendiğiniz taslakları onaylayın."))
         }
         .onAppear(perform: openFirst)
         .onChange(of: all.count) { openFirst() }  // the list may arrive after the page opens
@@ -1513,7 +1516,7 @@ struct DigestItemsView: View {
         case "preference", "tercih": name = T("preference", "tercih")
         default: name = str(it, "tag")
         }
-        return str(it, "tag").contains(" · ") ? name + T(" · assistant's suggestion", " · asistanın önerisi") : name
+        return str(it, "tag").contains(" · ") ? name + T(" · assistant's suggestion", " · asistanınızın önerisi") : name
     }
     /// Which chat this is, in the words people use: "Claude chat · 19 October" and its first message.
     @ViewBuilder var origin: some View {
@@ -1548,14 +1551,14 @@ struct DigestItemsView: View {
         VStack(alignment: .leading, spacing: 12) {
             origin
             Label(open.isEmpty ? T("Every item is decided.", "Tüm maddeler karara bağlandı.")
-                               : (meeting ? T("\(open.count) item(s) from this meeting wait for your answer.", "Bu toplantıdan \(open.count) madde cevabını bekliyor.")
-                                       : T("\(open.count) item(s) from this chat wait for your answer.", "Bu sohbetten \(open.count) madde cevabını bekliyor.")),
+                               : (meeting ? T("\(open.count) item(s) from this meeting wait for your answer.", "Bu toplantıdan \(open.count) madde cevabınızı bekliyor.")
+                                       : T("\(open.count) item(s) from this chat wait for your answer.", "Bu sohbetten \(open.count) madde cevabınızı bekliyor.")),
                   systemImage: "checklist").foregroundStyle(.orange).fontWeight(.medium)
             if plain.count > 1 {
                 HStack(spacing: 10) {
-                    Button(T("Accept all \(plain.count)", "\(plain.count) maddenin hepsini kabul et")) { acceptAll() }.buttonStyle(.borderedProminent)
+                    Button(T("Accept all \(plain.count)", "\(plain.count) maddenin hepsini kabul edin")) { acceptAll() }.buttonStyle(.borderedProminent)
                     if plain.count < open.count {
-                        Text(T("Conflicts with your notes stay for you to choose.", "Notlarınla çelişenler senin seçmen için kalır.")).font(.caption).foregroundStyle(.secondary)
+                        Text(T("Conflicts with your notes stay for you to choose.", "Notlarınızla çelişenler sizin seçmeniz için kalır.")).font(.caption).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -1605,8 +1608,8 @@ struct DigestItemsView: View {
                 Button(T("Accept", "Kabul et")) { decide(id, "accept") }.buttonStyle(.borderedProminent)
                 Button(T("Fix…", "Düzelt…")) { editing = id; fixed = str(it, "statement") }
                 Button(T("Skip", "Atla")) { decide(id, "skip") }
-                Text(isOpenItem(it) ? T("Accepted, it goes to the daily note and stays in your work on Home until you mark it done.", "Kabul edersen günlük nota yazılır ve Bitti diyene kadar ana sayfada İşlerin listesinde durur.")
-                                    : T("Accepted, it goes to that day's daily note.", "Kabul edersen o günün günlük notuna yazılır."))
+                Text(isOpenItem(it) ? T("Accepted, it goes to the daily note and stays in your work on Home until you mark it done.", "Kabul ederseniz günlük nota yazılır ve Bitti diyene kadar ana sayfada İşleriniz listesinde durur.")
+                                    : T("Accepted, it goes to that day's daily note.", "Kabul ederseniz o günün günlük notuna yazılır."))
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -1618,7 +1621,7 @@ struct DigestItemsView: View {
         let conflict = str(it, "section") == "conflict"
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text(conflict ? T("Your note says", "Notunda yazan") : T("Related note (checked: not a conflict)", "İlgili not (kontrol edildi: çelişki değil)"))
+                Text(conflict ? T("Your note says", "Notunuzda yazan") : T("Related note (checked: not a conflict)", "İlgili not (kontrol edildi: çelişki değil)"))
                     .font(.caption.weight(.semibold)).foregroundStyle(conflict ? .red : .secondary)
                 Text(name).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 Spacer()
@@ -1634,7 +1637,7 @@ struct DigestItemsView: View {
             }
             if conflict {
                 Text(T("Accepting saves this version to the daily note and leaves the note as it is; you decide which one is right.",
-                       "Kabul edersen bu hâli günlük nota yazılır, not olduğu gibi kalır; hangisinin doğru olduğuna sen karar ver."))
+                       "Kabul ederseniz bu hâli günlük nota yazılır, not olduğu gibi kalır; hangisinin doğru olduğuna siz karar verin."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }.padding(8).background((conflict ? Color.red : Color.secondary).opacity(0.05)).clipShape(RoundedRectangle(cornerRadius: 6))
@@ -1674,7 +1677,7 @@ struct DigestItemsView: View {
                 if let next { model.openNote(next) } else { model.reloadNote() }
             } else {
                 load(); model.reloadNote()
-                model.notice = T("\(accepted) item(s) accepted. The conflicts wait for your choice.", "\(accepted) madde kabul edildi. Çelişenler senin seçimini bekliyor.")
+                model.notice = T("\(accepted) item(s) accepted. The conflicts wait for your choice.", "\(accepted) madde kabul edildi. Çelişenler sizin seçiminizi bekliyor.")
             }
         }
     }
@@ -1739,7 +1742,7 @@ struct Overview: View {
                               text: T("Carry connects your AI assistant to your knowledge base.", "Carry, yapay zekâ asistanınızı bilgi bankanıza bağlar."))
                     Button(T("Start setup", "Kuruluma başla")) { model.startOnboarding() }.buttonStyle(.borderedProminent).controlSize(.large)
                 } else {
-                    Text(T("Your work", "İşlerin")).font(.largeTitle.bold())
+                    Text(T("Your work", "İşleriniz")).font(.largeTitle.bold())
                     FlowLayout(spacing: 8) {
                         Pill(title: T("Review", "İncele"), icon: "checkmark.circle", count: model.reviewFiles.count) { model.page = "Review" }
                         Pill(title: T("Search notes", "Notlarda ara"), icon: "magnifyingglass") { model.page = "Search" }
@@ -1772,7 +1775,7 @@ func dayLabel(_ iso: String) -> String {
     model.openNote(path, source: sid.isEmpty ? nil : sid)
 }
 
-/// İşlerin: one row per piece of work, its sources as badges; dated work first.
+/// İşleriniz: one row per piece of work, its sources as badges; dated work first.
 struct WorkList: View {
     @ObservedObject var model: Model
     @State private var all = false
@@ -1789,13 +1792,13 @@ struct WorkList: View {
                 HStack(spacing: 12) {
                     Image(systemName: "person.crop.circle").font(.title2).foregroundStyle(Color.accentColor)
                     Text(T("Sign in with your company mail to see your Trello cards and the team notes waiting for you here.",
-                           "Trello kartlarını ve seni bekleyen ekip notlarını burada görmek için şirket mailinle giriş yap.")).fixedSize(horizontal: false, vertical: true)
+                           "Trello kartlarınızı ve sizi bekleyen ekip notlarını burada görmek için şirket mailinizle giriş yapın.")).fixedSize(horizontal: false, vertical: true)
                     Spacer()
                     Button(T("Sign in", "Giriş yap")) { model.signIn() }.buttonStyle(.borderedProminent)
                 }.padding(12).background(Color.accentColor.opacity(0.07)).clipShape(RoundedRectangle(cornerRadius: 10))
             } else if trello["connected"] as? Bool != true && !model.work.isEmpty {
                 HStack {
-                    Text(T("Trello is not connected, so your cards are not here yet.", "Trello bağlı değil; kartların bu yüzden burada değil.")).foregroundStyle(.secondary)
+                    Text(T("Trello is not connected, so your cards are not here yet.", "Trello bağlı değil; kartlarınız bu yüzden burada değil.")).foregroundStyle(.secondary)
                     Spacer()
                     Button(T("Connect Trello", "Trello'yu bağla")) { model.signIn(step: 1) }
                 }
@@ -1807,7 +1810,7 @@ struct WorkList: View {
                 ProgressView().controlSize(.small)
             } else if rows.isEmpty {
                 Text(T("Nothing waits for you. Your Trello cards and the work you accept in Review show up here.",
-                       "Seni bekleyen bir iş yok. Trello kartların ve İncele'de kabul ettiğin işler burada görünür.")).foregroundStyle(.secondary)
+                       "Sizi bekleyen bir iş yok. Trello kartlarınız ve İncele'de kabul ettiğiniz işler burada görünür.")).foregroundStyle(.secondary)
             } else {
                 let shown = all ? rows : Array(rows.prefix(Self.first))
                 VStack(spacing: 0) {
@@ -1834,7 +1837,7 @@ struct WorkList: View {
                         }
                     }.padding(.top, 6)
                 } label: {
-                    Text(T("Your other team notes (\(owned.count))", "Senin diğer ekip notların (\(owned.count))")).font(.headline)
+                    Text(T("Your other team notes (\(owned.count))", "Diğer ekip notlarınız (\(owned.count))")).font(.headline)
                 }
             }
             if !decisions.isEmpty {
@@ -1893,7 +1896,7 @@ struct WorkRow: View {
     func label(_ b: [String: Any]) -> String {
         switch str(b, "kind", "") {
         case "trello": return ["Trello", str(b, "board", ""), str(b, "list", "")].filter { !$0.isEmpty }.joined(separator: " · ")
-        case "okb": return str(b, "state", "") == "handed" ? T("Team notes · handed to you", "OKB · sana devredildi") : T("Team notes · waiting for your review", "OKB · inceleme bekliyor")
+        case "okb": return str(b, "state", "") == "handed" ? T("Team notes · handed to you", "OKB · size devredildi") : T("Team notes · waiting for your review", "OKB · inceleme bekliyor")
         case "meeting": return T("Meeting · ", "Toplantı · ") + dayLabel(str(b, "day", ""))
         default: return T("Chat · ", "Sohbet · ") + dayLabel(str(b, "day", ""))
         }
@@ -2055,7 +2058,7 @@ struct TrelloConnect: View {
                 let team = model.sources.first { str($0, "scope", "") == "team" && $0["github"] is [String: Any] }
                 let syncing = str(model.job, "state") == "running" && str(model.job, "action", "") == "github_sync"
                 Text(T("The team's Trello key is not in Carry's copy of the team notes yet. If it was just added there, sync the team notes; Carry also does it by itself every few minutes.",
-                       "Ekibin Trello anahtarı Carry'deki ekip notlarında henüz yok. OKB'ye yeni eklendiyse ekip notlarını eşitle; Carry bunu birkaç dakikada bir kendisi de yapar."))
+                       "Ekibin Trello anahtarı Carry'deki ekip notlarında henüz yok. OKB'ye yeni eklendiyse ekip notlarını eşitleyin; Carry bunu birkaç dakikada bir kendisi de yapar."))
                     .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 if let team {
                     HStack(spacing: 8) {
@@ -2070,7 +2073,7 @@ struct TrelloConnect: View {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
                     Text(state == "checking" ? T("Checking with Trello…", "Trello ile doğrulanıyor…")
-                                             : T("Trello opened in your browser. Click Allow there; Carry connects by itself.", "Trello tarayıcıda açıldı. Orada İzin ver'e bas; Carry kendiliğinden bağlanır."))
+                                             : T("Trello opened in your browser. Click Allow there; Carry connects by itself.", "Trello tarayıcıda açıldı. Orada İzin ver'e basın; Carry kendiliğinden bağlanır."))
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 HStack {
@@ -2194,7 +2197,7 @@ struct VaultView: View {
                 Button(T("Approve all", "Hepsini onayla")) { model.approveMany(approvable) }
             } message: {
                 Text(T("Their draft mark is removed; the text does not change. Locked notes and raw records (chat logs, clips) are left as they are. Approve only what you trust without reading.",
-                       "Taslak işaretleri kaldırılır; metin değişmez. Kilitli notlar ve ham kayıtlar (sohbet kaydı, kırpıntı) olduğu gibi kalır. Yalnızca okumadan güvendiğin taslakları onayla."))
+                       "Taslak işaretleri kaldırılır; metin değişmez. Kilitli notlar ve ham kayıtlar (sohbet kaydı, kırpıntı) olduğu gibi kalır. Yalnızca okumadan güvendiğiniz taslakları onaylayın."))
             }
         }
     }
@@ -2465,7 +2468,7 @@ struct SettingsView: View {
                 case "General": GeneralSettings(model: model)
                 case "Trello": ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
-                        PageIntro(icon: "square.stack", title: "Trello", text: T("Your Trello connection, and which of your cards Home shows.", "Trello bağlantın ve ana sayfanın hangi kartlarını gösterdiği."))
+                        PageIntro(icon: "square.stack", title: "Trello", text: T("Your Trello connection, and which of your cards Home shows.", "Trello bağlantınız ve ana sayfanın hangi kartlarınızı gösterdiği."))
                         TrelloSettings(model: model)
                     }.padding(30).frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -2547,7 +2550,7 @@ struct SearchSettings: View {
             VStack(alignment: .leading, spacing: 20) {
                 PageIntro(icon: "magnifyingglass", title: T("Search and index", "Arama ve indeks"),
                           text: T("How Carry finds the right notes when your assistant asks. For this it keeps an index of your notes: it follows your changes by itself and can always be rebuilt; your notes never change.",
-                                  "Asistanın sorduğunda Carry'nin doğru notları nasıl bulduğu. Bunun için notlarından bir indeks tutar: değişikliklerini kendisi izler, her zaman yeniden oluşturulabilir; notların hiç değişmez."))
+                                  "Asistanınız sorduğunda Carry'nin doğru notları nasıl bulduğu. Bunun için notlarınızdan bir indeks tutar: değişikliklerinizi kendisi izler, her zaman yeniden oluşturulabilir; notlarınız hiç değişmez."))
                 GroupBox(T("How should Carry search?", "Carry nasıl arasın?")) {
                     VStack(alignment: .leading, spacing: 16) {
                         Text(legacyChecker ? T("1. How should it find notes?", "1. Notları nasıl bulsun?") : T("How should it find notes?", "Notları nasıl bulsun?")).font(.headline)
@@ -2644,11 +2647,11 @@ struct PromptCapture: View {
     static let iso: ISO8601DateFormatter = { let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return f }()
     func stateText(_ state: String) -> String {
         switch state {
-        case "captured", "duplicate", "harness_event": return T("Recording your messages.", "Mesajlarını kaydediyor.")
+        case "captured", "duplicate", "harness_event": return T("Recording your messages.", "Mesajlarınızı kaydediyor.")
         case "paused": return T("Paused.", "Duraklatıldı.")
-        case "no_receipt": return T("Set up; nothing recorded yet. Restart the assistant and send a message in the project.", "Kuruldu; henüz kayıt yok. Asistanı yeniden başlatıp projede bir mesaj gönder.")
-        case "unsupported_version": return T("The assistant is too old: Claude Code 2.1.196 or Codex CLI 0.153.4 or newer is needed.", "Asistanın sürümü eski: Claude Code 2.1.196 ya da Codex CLI 0.153.4 veya üstü gerekir.")
-        case "hooks_disabled": return T("Hooks are turned off in this assistant. Turn them on, then set it up again.", "Bu asistanda kancalar kapalı. Açıp yeniden kur.")
+        case "no_receipt": return T("Set up; nothing recorded yet. Restart the assistant and send a message in the project.", "Kuruldu; henüz kayıt yok. Asistanı yeniden başlatıp projede bir mesaj gönderin.")
+        case "unsupported_version": return T("The assistant is too old: Claude Code 2.1.196 or Codex CLI 0.153.4 or newer is needed.", "Asistanınızın sürümü eski: Claude Code 2.1.196 ya da Codex CLI 0.153.4 veya üstü gerekir.")
+        case "hooks_disabled": return T("Hooks are turned off in this assistant. Turn them on, then set it up again.", "Bu asistanda kancalar kapalı. Açıp yeniden kurun.")
         case "client_unavailable": return T("The assistant was not found on this Mac.", "Asistan bu Mac'te bulunamadı.")
         default: return T("The last message was not recorded (\(state)).", "Son mesaj kaydedilemedi (\(state)).")
         }
@@ -2656,7 +2659,7 @@ struct PromptCapture: View {
     var body: some View {
         Text(T("Prompt capture", "Mesaj kaydı")).font(.title3.bold()).padding(.top, 8)
         Text(T("Optional. Records your own messages in a project word for word (replies and tool output are left out, secrets masked as best as possible); each one becomes an unaccepted draft under the writable source.",
-               "İsteğe bağlı. Bir projedeki kendi mesajlarını kelimesi kelimesine kaydeder (yanıtlar ve araç çıktıları alınmaz, gizli bilgiler elden geldiğince maskelenir); her biri yazılabilir klasörde onaylanmamış bir taslak olur."))
+               "İsteğe bağlı. Bir projedeki kendi mesajlarınızı kelimesi kelimesine kaydeder (yanıtlar ve araç çıktıları alınmaz, gizli bilgiler elden geldiğince maskelenir); her biri yazılabilir klasörde onaylanmamış bir taslak olur."))
             .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         ForEach(model.adapters.indices, id: \.self) { i in
             let adapter = model.adapters[i]
@@ -2793,7 +2796,7 @@ struct HarvestSettings: View {
             VStack(alignment: .leading, spacing: 20) {
                 PageIntro(icon: "tray.and.arrow.down", title: T("Session recap", "Oturum özeti"),
                           text: T("After you chat with your assistant in your notes folder, Carry picks out what is worth keeping (decisions, facts, unfinished work) into a draft; you go through it item by item on the Review page. The language of the drafts is on the General tab.",
-                                  "Not klasöründe asistanınla sohbet ettikten sonra Carry saklanmaya değer olanları (kararlar, bilgiler, yarım kalan işler) bir taslağa çıkarır; sen İncele sayfasında madde madde geçersin. Taslakların dili Genel sekmesinde."))
+                                  "Not klasöründe asistanınızla sohbet ettikten sonra Carry saklanmaya değer olanları (kararlar, bilgiler, yarım kalan işler) bir taslağa çıkarır; siz İncele sayfasında madde madde geçersiniz. Taslakların dili Genel sekmesinde."))
                 GroupBox(L("Every evening")) {
                     VStack(alignment: .leading, spacing: 12) {
                         if foreign {
@@ -2803,10 +2806,10 @@ struct HarvestSettings: View {
                         DatePicker(L("Time"), selection: $time, displayedComponents: .hourAndMinute).fixedSize().disabled(!enabled)
                         if let vault = schedule["vault"] as? String, !foreign { Text(L("Vault: ") + vault).font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }
                         if schedule["installed"] as? Bool == true && schedule["loaded"] as? Bool == false && !foreign {
-                            Text(T("macOS has not picked up the evening run. Save the evening plan again.", "macOS akşam çalışmasını yüklememiş. Akşam planını yeniden kaydet.")).foregroundStyle(.orange).font(.callout)
+                            Text(T("macOS has not picked up the evening run. Save the evening plan again.", "macOS akşam çalışmasını yüklememiş. Akşam planını yeniden kaydedin.")).foregroundStyle(.orange).font(.callout)
                         }
                         Button(T("Save evening plan", "Akşam planını kaydet")) { if foreign { confirmReplace = true } else { save() } }.buttonStyle(.borderedProminent)
-                        Text(T("Runs while you are logged in to this Mac.", "Bu Mac'te oturumun açıkken çalışır.")).font(.caption).foregroundStyle(.secondary)
+                        Text(T("Runs while you are logged in to this Mac.", "Bu Mac'te oturumunuz açıkken çalışır.")).font(.caption).foregroundStyle(.secondary)
                     }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .confirmationDialog(L("Replace the other workspace’s nightly harvest?"), isPresented: $confirmReplace) {
@@ -2863,13 +2866,13 @@ struct GeneralSettings: View {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack { Text(L("App language")); Spacer(); Picker(L("App language"), selection: $model.language) { Text("Türkçe").tag("tr"); Text("English").tag("en") }.pickerStyle(.segmented).labelsHidden().fixedSize() }
                         HStack { Text(T("Language of session recaps", "Oturum özetlerinin dili")); Spacer(); Picker(L("Language of drafts"), selection: draftLanguage) { Text("Türkçe").tag("Turkish"); Text("English").tag("English") }.pickerStyle(.segmented).labelsHidden().fixedSize() }
-                        Text(T("Recaps of your chats and meetings are written in this language. Saved as soon as you pick.", "Sohbet ve toplantı özetleri bu dilde yazılır. Seçtiğin an kaydedilir.")).font(.caption).foregroundStyle(.secondary)
+                        Text(T("Recaps of your chats and meetings are written in this language. Saved as soon as you pick.", "Sohbet ve toplantı özetleri bu dilde yazılır. Seçtiğiniz an kaydedilir.")).font(.caption).foregroundStyle(.secondary)
                     }.padding(12).frame(maxWidth: 520, alignment: .leading)
                 }
                 GroupBox(T("Help", "Yardım")) {
                     VStack(alignment: .leading, spacing: 10) {
                         Text(T("New here, or setting up another Mac? The setup guide walks you through notes and assistants again. Nothing you already have is removed.",
-                               "Yeni misin ya da başka bir Mac mi kuruyorsun? Kurulum rehberi notlar ve asistanlar adımlarından yeniden geçirir. Mevcut hiçbir şey silinmez.")).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                               "Yeni misiniz ya da başka bir Mac mi kuruyorsunuz? Kurulum rehberi sizi notlar ve asistanlar adımlarından yeniden geçirir. Mevcut hiçbir şey silinmez.")).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         Button(T("Open the setup guide", "Kurulum rehberini aç")) { model.startOnboarding() }
                     }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -2879,7 +2882,7 @@ struct GeneralSettings: View {
                             VStack(alignment: .leading, spacing: 10) {
                                 Text(model.workspace).font(.callout.monospaced()).textSelection(.enabled)
                                 Text(T("Holds Carry's settings and search data. Your notes are never stored here. Search data can always be rebuilt; do not delete this folder.",
-                                       "Carry'nin ayarlarını ve arama verilerini tutar. Notların asla burada saklanmaz. Arama verileri her zaman yeniden oluşturulabilir; bu klasörü silme.")).font(.caption).foregroundStyle(.secondary)
+                                       "Carry'nin ayarlarını ve arama verilerini tutar. Notlarınız asla burada saklanmaz. Arama verileri her zaman yeniden oluşturulabilir; bu klasörü silmeyin.")).font(.caption).foregroundStyle(.secondary)
                                 FlowLayout {
                                     Button(L("Show in Finder")) { NSWorkspace.shared.open(URL(fileURLWithPath: model.workspace)) }
                                     Button(T("Open another settings folder", "Başka bir ayar klasörü aç")) { model.chooseWorkspace(create: false) }
@@ -5157,21 +5160,21 @@ struct LoginSheet: View {
     @ViewBuilder var mailStep: some View {
         Label(T("Sign in to Carry", "Carry'ye giriş"), systemImage: "person.crop.circle").font(.title2.bold())
         Text(T("Your company mail tells Carry whose Trello cards and team notes to show on Home. There is no password; the mail stays on this Mac.",
-               "Şirket mailin, Carry'nin ana sayfada hangi Trello kartlarını ve ekip notlarını göstereceğini belirler. Şifre yok; mail yalnız bu Mac'te durur."))
+               "Şirket mailiniz, Carry'nin ana sayfada hangi Trello kartlarını ve ekip notlarını göstereceğini belirler. Şifre yok; mail yalnız bu Mac'te durur."))
             .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-        TextField(T("Company mail", "Şirket mailin"), text: $email).textFieldStyle(.roundedBorder).textContentType(.emailAddress)
+        TextField(T("Company mail", "Şirket mailiniz"), text: $email).textFieldStyle(.roundedBorder).textContentType(.emailAddress)
             .onChange(of: email) { suggest() }
         if !domains.isEmpty {
             Text(T("Ends with ", "Şununla bitmeli: ") + domains.map { "@" + $0 }.joined(separator: T(" or ", " ya da "))).font(.caption).foregroundStyle(.secondary)
         }
-        Picker(T("Your name in the team notes", "OKB'deki adın"), selection: picked) {
+        Picker(T("Your name in the team notes", "OKB'deki adınız"), selection: picked) {
             Text(T("Choose", "Seç")).tag("")
             ForEach(names, id: \.self) { Text($0).tag($0) }
             Text(T("Not in the list", "Listede yok")).tag(Self.other)
         }
-        if typed { TextField(T("Your name", "Adın"), text: $name).textFieldStyle(.roundedBorder) }
+        if typed { TextField(T("Your name", "Adınız"), text: $name).textFieldStyle(.roundedBorder) }
         Text(T("The name in the owner field of the team notes: notes waiting for your review then show up among your work.",
-               "Ekip notlarının sahip alanında geçen adın: incelemeni bekleyen notlar böylece işlerinin arasında görünür."))
+               "Ekip notlarının sahip alanında geçen adınız: incelemenizi bekleyen notlar böylece işlerinizin arasında görünür."))
             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         HStack {
             Button(model.signedIn ? T("Cancel", "Vazgeç") : T("Later", "Sonra")) { dismiss() }
@@ -5184,7 +5187,7 @@ struct LoginSheet: View {
     @ViewBuilder var trelloStep: some View {
         Label(T("Connect Trello", "Trello'yu bağla"), systemImage: "square.stack").font(.title2.bold())
         Text(T("Home then shows the open cards assigned to you. Carry asks Trello only for permission to read: it never changes a card.",
-               "Böylece ana sayfa sana atanmış açık kartları gösterir. Carry Trello'dan yalnız okuma izni ister: hiçbir kartı değiştirmez."))
+               "Böylece ana sayfa size atanmış açık kartları gösterir. Carry Trello'dan yalnız okuma izni ister: hiçbir kartı değiştirmez."))
             .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         TrelloConnect(model: model)
         HStack {
@@ -5231,7 +5234,7 @@ struct ProfileButton: View {
                 }.frame(width: 30, height: 30)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(model.signedIn ? str(model.me, "name") : T("Sign in", "Giriş yap")).fontWeight(.medium).lineLimit(1)
-                    Text(model.signedIn ? str(model.me, "email") : T("See your own work", "Kendi işlerini gör")).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                    Text(model.signedIn ? str(model.me, "email") : T("See your own work", "Kendi işlerinizi görün")).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                 }
                 Spacer(minLength: 0)
             }.contentShape(Rectangle())
@@ -5242,7 +5245,7 @@ struct ProfileButton: View {
             Button(T("Sign out", "Çıkış yap"), role: .destructive) { model.run("profile_logout") { model.profileChanged($0) } }
         } message: {
             Text(T("Your profile and Trello connection are removed from this Mac. Your notes, index and settings stay.",
-                   "Profilin ve Trello bağlantın bu Mac'ten silinir. Notların, indeksin ve ayarların kalır."))
+                   "Profiliniz ve Trello bağlantınız bu Mac'ten silinir. Notlarınız, indeksiniz ve ayarlarınız kalır."))
         }
     }
     func item(_ title: String, _ icon: String, role: ButtonRole? = nil, action: @escaping () -> Void) -> some View {
@@ -5272,7 +5275,7 @@ struct ProfileButton: View {
                 item(T("Sign out", "Çıkış yap"), "rectangle.portrait.and.arrow.right", role: .destructive) { confirmLogout = true }
             } else {
                 Text(T("Sign in with your company mail: Home then shows your Trello cards and the team notes waiting for you.",
-                       "Şirket mailinle giriş yap: ana sayfa böylece Trello kartlarını ve seni bekleyen ekip notlarını gösterir."))
+                       "Şirket mailinizle giriş yapın: ana sayfa böylece Trello kartlarınızı ve sizi bekleyen ekip notlarını gösterir."))
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 item(T("Sign in", "Giriş yap"), "person.crop.circle") { model.signIn() }
                 item(T("Settings", "Ayarlar"), "gearshape") { model.page = "Settings" }

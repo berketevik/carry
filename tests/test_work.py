@@ -1,4 +1,4 @@
-"""İşlerin: the home page's one list of the signed-in person's work, from Trello, the team notes and chats.
+"""İşleriniz: the home page's one list of the signed-in person's work, from Trello, the team notes and chats.
 
 Each piece of work is one row; its sources are badges. A chat's open item joins only once the owner
 accepted it and stays until they mark it done; done is kept in the state, never in the notes."""

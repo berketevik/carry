@@ -125,9 +125,9 @@ LOGIN_TEXT = {
     'en': dict(waiting='Connecting Carry to Trello…', connected='Trello is connected. You can close this tab and go back to Carry.',
                failed='Carry could not connect to Trello. Try again in Carry.', denied='Trello was not allowed. You can try again in Carry.',
                used='This link was already used. Go back to Carry.'),
-    'tr': dict(waiting='Carry Trello\'ya bağlanıyor…', connected='Trello bağlandı. Bu sekmeyi kapatıp Carry\'ye dönebilirsin.',
-               failed='Carry Trello\'ya bağlanamadı. Carry\'de yeniden dene.', denied='Trello\'ya izin verilmedi. Carry\'de yeniden deneyebilirsin.',
-               used='Bu bağlantı zaten kullanıldı. Carry\'ye dön.'),
+    'tr': dict(waiting='Carry Trello\'ya bağlanıyor…', connected='Trello bağlandı. Bu sekmeyi kapatıp Carry\'ye dönebilirsiniz.',
+               failed='Carry Trello\'ya bağlanamadı. Carry\'de yeniden deneyin.', denied='Trello\'ya izin verilmedi. Carry\'de yeniden deneyebilirsiniz.',
+               used='Bu bağlantı zaten kullanıldı. Carry\'ye dönün.'),
 }
 # The fragment never reaches a server: the page reads it, wipes it from the address bar and posts it here.
 LOGIN_PAGE = '''<!doctype html><meta charset="utf-8"><title>Carry</title>
