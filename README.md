@@ -6,7 +6,7 @@
 
 The knowledge base is a folder of Markdown (`.md`) notes: your own (an Obsidian vault, for example), your team's in a GitHub repository, or both. Carry indexes it on your computer and gives your assistant one tool to search it, `carry_recall`. In September you find that a client's user IDs are broken and write it down. In November you sit down to fix them and ask your assistant: it searches the knowledge base, tells you what you found and links the note it is written in. Your notes stay where they are; Carry reads them, and nothing is written without you.
 
-**Version 0.16.0 · macOS 14+ · pilot**
+**Version 0.17.0 · macOS 14+ · pilot**
 
 ## Get started
 

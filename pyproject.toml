@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "carry"
-version = "0.16.0"
+version = "0.17.0"
 authors = [{ name = "Berke Tevik" }]
 description = "Connects coding agents (Claude Code, Codex) to Markdown knowledge bases: a local search index and an MCP recall tool that cites its sources."
 requires-python = ">=3.11"
