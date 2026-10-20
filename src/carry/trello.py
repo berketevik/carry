@@ -57,8 +57,12 @@ def _keychain_read(account):
 def _keychain_write(account, value):
     if sys.platform != 'darwin':
         raise CarryError('trello_needs_keychain')
-    subprocess.run(['/usr/bin/security', 'add-generic-password', '-U', '-s', KEYCHAIN, '-a', account, '-w', value],
-                   capture_output=True, check=True, timeout=10)
+    try:
+        subprocess.run(['/usr/bin/security', 'add-generic-password', '-U', '-s', KEYCHAIN, '-a', account, '-w', value],
+                       capture_output=True, check=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        # The error's text holds the command line, the token with it: it must not reach a screen or a log.
+        raise CarryError('trello_keychain_failed') from None
 
 
 def _keychain_delete(account):

@@ -10,6 +10,9 @@ The repository may also carry `.carry/team.json`: the search settings every memb
 should use and the oldest Carry version that searches it the same way. Setup applies
 them, status reports any difference, and `carry team --apply` applies them later. They
 are never applied silently, since a member's workspace may hold their own notes too.
+It may also name the team's mail domains (`email_domains`), which the app's sign-in
+accepts, and the Trello API key members connect with (`trello_api_key`; a key is not a
+secret, each member's token is).
 The file comes from a repository the member does not control: unknown keys and bad
 values are reported, never fatal.
 """
@@ -29,6 +32,9 @@ MAX_SETTINGS = 64_000
 RETRIEVAL_KEYS = {"top_k": int, "max_chars": int, "max_per_document": int,
                   "branch_candidates": int, "rrf_k": int, "vector_min_score": float}
 VERSION_RE = re.compile(r"^\d+(\.\d+){0,2}$")
+DOMAIN_RE = re.compile(r"^[a-z0-9-]+(\.[a-z0-9-]+)+$")
+TRELLO_KEY_RE = re.compile(r"^[0-9a-f]{32}$")
+KEYS = ("min_carry_version", "retrieval", "email_domains", "trello_api_key")
 
 
 def _valid(kind, value):
@@ -53,7 +59,7 @@ def load_settings(source):
         return None, ["team_settings_unreadable"]
     if not isinstance(data, dict):
         return None, ["team_settings_unreadable"]
-    warnings = [f"team_settings_unknown_key:{k}" for k in data if k not in ("min_carry_version", "retrieval")]
+    warnings = [f"team_settings_unknown_key:{k}" for k in data if k not in KEYS]
     retrieval = {}
     raw = data.get("retrieval", {})
     if not isinstance(raw, dict):
@@ -71,7 +77,30 @@ def load_settings(source):
     if version is not None and not (isinstance(version, str) and VERSION_RE.match(version)):
         warnings.append("team_settings_invalid:min_carry_version")
         version = None
-    return dict(retrieval=retrieval, min_carry_version=version), warnings
+    domains = data.get("email_domains", [])
+    if not (isinstance(domains, list) and all(isinstance(d, str) and DOMAIN_RE.match(d.strip().lower()) for d in domains)):
+        warnings.append("team_settings_invalid:email_domains")
+        domains = []
+    key = data.get("trello_api_key")
+    if key is not None and not (isinstance(key, str) and TRELLO_KEY_RE.match(key)):
+        warnings.append("team_settings_invalid:trello_api_key")
+        key = None
+    return dict(retrieval=retrieval, min_carry_version=version,
+                email_domains=[d.strip().lower() for d in domains], trello_api_key=key), warnings
+
+
+def sign_in(workspace):
+    """What the app's sign-in takes from the team sources: the mail domains it accepts (none:
+    any mail) and the Trello API key (None: the member enters one)."""
+    domains, key = [], None
+    for source in workspace.sources:
+        if source.scope != "team":
+            continue
+        settings, _ = load_settings(source)
+        if settings:
+            domains += [d for d in settings["email_domains"] if d not in domains]
+            key = key or settings["trello_api_key"]
+    return dict(email_domains=domains, trello_api_key=key)
 
 
 def _version(text):

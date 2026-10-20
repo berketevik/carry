@@ -68,6 +68,21 @@ class TeamSettingsTest(WorkspaceCase):
         team.apply_settings(self.workspace)
         self.assertEqual(self.reload().retrieval.chunk_chars, self.workspace.retrieval.chunk_chars)
 
+    def test_mail_domains_and_trello_key_for_signing_in(self):
+        key = "0123456789abcdef0123456789abcdef"
+        self.write({"email_domains": ["Ornek.com.tr", "ornek.dev"], "trello_api_key": key})
+        settings, warnings = team.load_settings(self.workspace.source("team"))
+        self.assertEqual(warnings, [])
+        self.assertEqual((settings["email_domains"], settings["trello_api_key"]), (["ornek.com.tr", "ornek.dev"], key))
+        self.assertEqual(team.sign_in(self.workspace), dict(email_domains=["ornek.com.tr", "ornek.dev"], trello_api_key=key))
+        self.assertNotIn("team_settings_invalid", status(self.workspace)["degradation"])
+        self.write({"email_domains": "ornek.com.tr", "trello_api_key": "not a key"})
+        settings, warnings = team.load_settings(self.workspace.source("team"))
+        self.assertEqual(sorted(warnings), ["team_settings_invalid:email_domains", "team_settings_invalid:trello_api_key"])
+        self.assertEqual(team.sign_in(self.workspace), dict(email_domains=[], trello_api_key=None))
+        (self.team / ".carry" / "team.json").unlink()
+        self.assertEqual(team.sign_in(self.workspace), dict(email_domains=[], trello_api_key=None))
+
     def test_a_broken_file_never_breaks_search_or_status(self):
         self.write("{not json")
         index_module.build(self.workspace)

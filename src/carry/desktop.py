@@ -211,6 +211,17 @@ class Bridge:
             from . import trello
             trello.save_settings(ws.state_dir, boards=request.get('boards'), since=request.get('since'))
             return trello.view(ws.state_dir)
+        if action in ('profile', 'profile_save', 'profile_logout', 'trello_connect', 'trello_disconnect'):
+            from . import profile
+            if action == 'profile_save':
+                return profile.save(ws, request.get('email'), request.get('name'))
+            if action == 'profile_logout':
+                return profile.logout(ws)
+            if action == 'trello_connect':
+                return profile.connect_trello(ws, request.get('token'), request.get('key'))
+            if action == 'trello_disconnect':
+                return profile.disconnect_trello(ws)
+            return profile.view(ws)
         if action == 'maintenance_status':
             maintenance.automatic(ws)
             return maintenance.job_status(ws)

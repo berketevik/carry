@@ -152,3 +152,15 @@ class TrelloTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class KeychainTest(unittest.TestCase):
+    def test_a_failed_keychain_write_never_shows_the_token(self):
+        import subprocess
+        failed = subprocess.CalledProcessError(1, ['/usr/bin/security', '-w', 'secret-token'])
+        with patch.object(trello.sys, 'platform', 'darwin'), patch.object(trello.subprocess, 'run', side_effect=failed):
+            with self.assertRaises(CarryError) as caught:
+                trello._keychain_write('token', 'secret-token')
+        self.assertEqual(str(caught.exception), 'trello_keychain_failed')
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertNotIn('secret-token', repr(caught.exception))
