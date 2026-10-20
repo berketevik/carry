@@ -32,6 +32,20 @@ DECISION_DAYS = 14
 INBOX_DIR = '+'
 
 
+def moment(touched):
+    """A row's latest activity as seconds, so the three forms compare: Trello's UTC time
+    ('…T10:00:00.000Z'), a note's local time without a zone, and a chat's day alone, which
+    counts as noon that day, since the recap says only the day."""
+    if not touched:
+        return 0.0
+    try:
+        if len(touched) == 10:
+            return datetime.datetime.fromisoformat(touched + 'T12:00:00').timestamp()
+        return datetime.datetime.fromisoformat(touched.replace('Z', '+00:00')).timestamp()
+    except ValueError:
+        return 0.0
+
+
 def done_items(state_dir):
     try:
         saved = json.loads((Path(state_dir) / DONE).read_text(encoding='utf-8')).get('done', [])
@@ -195,7 +209,7 @@ def build(workspace, today=None):
     team_rows, owned = _from_team(workspace, signed['name']) if signed else ([], [])
     rows = _merge(_card_rows(board.get('cards') or []), team_rows + opens)
     # Dated work first, the nearest at the top; then the latest activity.
-    rows.sort(key=lambda r: r['touched'] or '', reverse=True)
+    rows.sort(key=lambda r: moment(r['touched']), reverse=True)
     rows.sort(key=lambda r: (r['due'] is None, r['due'] or ''))
     for row in rows:
         for key in ('text', 'code', 'number'):

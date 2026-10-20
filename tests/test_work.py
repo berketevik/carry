@@ -2,6 +2,7 @@
 
 Each piece of work is one row; its sources are badges. A chat's open item joins only once the owner
 accepted it and stays until they mark it done; done is kept in the state, never in the notes."""
+import datetime
 import json
 from unittest.mock import patch
 
@@ -160,3 +161,12 @@ class WorkTest(WorkspaceCase):
             result = call('work_done', done=[dict(digest=rel, item=digest.item_id('Kabul edilen iş'))])
         self.assertNotIn('Kabul edilen iş', self.titles(result))
         self.assertEqual(json.loads((self.state / work.DONE).read_text(encoding='utf-8'))['done'][0]['digest'], rel)
+
+    def test_the_latest_activity_compares_trello_times_note_times_and_chat_days(self):
+        # Trello's time is UTC, a note's is local without a zone, a chat has its day alone (noon).
+        day = datetime.datetime(2026, 10, 20)
+        note = (day + datetime.timedelta(hours=11)).isoformat(timespec='seconds')
+        card = (day + datetime.timedelta(hours=13)).astimezone(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
+        times = dict(card=card, chat='2026-10-20', note=note)
+        self.assertEqual(sorted(times, key=lambda k: work.moment(times[k]), reverse=True), ['card', 'chat', 'note'])
+        self.assertEqual(work.moment(''), 0.0)
