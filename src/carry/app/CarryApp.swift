@@ -537,8 +537,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             }
         }
     }
-    func followLink(_ target: String) {
-        let sid = noteSource, from = str(note, "path", ""), token = noteToken
+    /// A [[link]] from the open note, or from the note `from` in `source` (a line on Home names its own).
+    func followLink(_ target: String, source: String? = nil, from: String? = nil) {
+        let sid = source ?? noteSource, from = from ?? str(note, "path", ""), token = noteToken
         var fields: [String: Any] = ["target": target, "from": from]
         if !sid.isEmpty { fields["source_id"] = sid }
         run("vault_resolve", fields, quiet: true) { value in
@@ -1880,6 +1881,13 @@ struct WorkList: View {
                                 Button { openWork(model, ["path": str(d, "digest", ""), "source_id": str(d, "source_id", "")]) } label: { Image(systemName: "doc.text").foregroundStyle(.secondary) }
                                     .buttonStyle(.plain).help(T("Where it came from", "Nereden geldi?"))
                             }
+                            // A [[link]] in the decision opens its note, found from the recap it came from.
+                            .environment(\.openURL, OpenURLAction { url in
+                                guard url.scheme == "carry-note" else { return .systemAction }
+                                model.followLink(url.absoluteString.dropFirst("carry-note:".count).removingPercentEncoding ?? "",
+                                                 source: str(d, "source_id", ""), from: str(d, "digest", ""))
+                                return .handled
+                            })
                         }
                     }.padding(.top, 6)
                 } label: {
