@@ -5,9 +5,9 @@ team notes, or one the owner gives the CLI. Once connected, both are read from T
 and TRELLO_TOKEN or the macOS Keychain (service carry-trello), never from workspace files. Only
 GET requests are made. The cards go to the state's trello.json and are fetched again in the
 background once they are five minutes old, so the page never waits for Trello; nothing is
-written into the notes. Which boards the page shows and from which day is the owner's choice in
-trello-settings.json, applied when the cards are read, so changing it never waits for Trello
-either.
+written into the notes. Which boards the page leaves out and from which day is the owner's choice
+in trello-settings.json, applied when the cards are read, so changing it never waits for Trello
+either; a board joined later shows, and disconnecting forgets the choice.
 
 In the app a person connects with one click (Login): the team's key comes from the team notes,
 Trello's permission page sends the browser back to this Mac with the token in the address's
@@ -281,17 +281,24 @@ class Login:
             server.server_close()
 
 
-def settings(state_dir):
-    """The boards the home page shows (None: every board) and the oldest day it shows (None: any)."""
+def _saved_settings(state_dir):
     try:
         saved = json.loads((state_dir / SETTINGS).read_text(encoding='utf-8'))
     except (OSError, ValueError):
-        saved = {}
-    boards = saved.get('boards')
-    return dict(boards=boards if isinstance(boards, list) else None, since=saved.get('since') or None)
+        return {}
+    return saved if isinstance(saved, dict) else {}
+
+
+def settings(state_dir):
+    """The boards the owner turned off (a board joined later shows) and the oldest day shown (None: any)."""
+    saved = _saved_settings(state_dir)
+    hidden = saved.get('hidden')
+    return dict(hidden=[b for b in hidden if isinstance(b, str)] if isinstance(hidden, list) else [],
+                since=saved.get('since') or None)
 
 
 def save_settings(state_dir, boards=None, since=None):
+    """Keep the choice from the boards left on (None: every board): what is kept is the boards turned off."""
     if boards is not None and not (isinstance(boards, list) and all(isinstance(b, str) for b in boards)):
         raise CarryError('invalid_trello_boards')
     if since:
@@ -299,16 +306,29 @@ def save_settings(state_dir, boards=None, since=None):
             datetime.date.fromisoformat(since)
         except (TypeError, ValueError):
             raise CarryError('invalid_trello_since')
-    atomic_text(state_dir / SETTINGS, json.dumps(dict(boards=boards, since=since or None)))
+    known = [b['id'] for b in _read_cache(state_dir).get('boards', [])]
+    hidden = [] if boards is None else [b for b in known if b not in boards]
+    atomic_text(state_dir / SETTINGS, json.dumps(dict(hidden=hidden, since=since or None)))
+
+
+def _upgrade_settings(state_dir, cached):
+    """A choice kept as the boards shown, as Carry kept it before, becomes the boards turned off."""
+    saved = _saved_settings(state_dir)
+    if 'hidden' in saved or not isinstance(saved.get('boards'), list) or not cached.get('boards'):
+        return
+    hidden = [b['id'] for b in cached['boards'] if b['id'] not in saved['boards']]
+    atomic_text(state_dir / SETTINGS, json.dumps(dict(hidden=hidden, since=saved.get('since') or None)))
 
 
 def disconnect(state_dir):
+    """Forget the permission, the cards and the board choice: the next person starts fresh."""
     for account in ('key', 'token'):
         _keychain_delete(account)
-    try:
-        (state_dir / CACHE).unlink()
-    except FileNotFoundError:
-        pass
+    for name in (CACHE, SETTINGS):
+        try:
+            (state_dir / name).unlink()
+        except FileNotFoundError:
+            pass
 
 
 def _read_cache(state_dir):
@@ -368,6 +388,7 @@ def _start_refresh(state_dir):
 
 def shown(state_dir, cached):
     """The cards on the owner's chosen boards from the chosen day, with every board and its count for the settings."""
+    _upgrade_settings(state_dir, cached)
     chosen = settings(state_dir)
     since = chosen['since']
     # A card's day is its due date, or its latest activity when it has none.
@@ -375,11 +396,11 @@ def shown(state_dir, cached):
     counts = {}
     for c in dated:
         counts[c.get('board_id')] = counts.get(c.get('board_id'), 0) + 1
-    picked = chosen['boards']
-    boards = [dict(id=b['id'], name=b['name'], cards=counts.get(b['id'], 0), shown=picked is None or b['id'] in picked)
+    hidden = chosen['hidden']
+    boards = [dict(id=b['id'], name=b['name'], cards=counts.get(b['id'], 0), shown=b['id'] not in hidden)
               for b in cached.get('boards', [])]
     boards.sort(key=lambda b: (-b['cards'], b['name'].casefold()))
-    return dict(cached, boards=boards, since=since, cards=[c for c in dated if picked is None or c.get('board_id') in picked])
+    return dict(cached, boards=boards, since=since, cards=[c for c in dated if c.get('board_id') not in hidden])
 
 
 def view(state_dir, start=None):

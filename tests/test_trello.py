@@ -104,7 +104,28 @@ class TrelloTest(unittest.TestCase):
         for boards, since in ((['b1'], '2026-13-01'), ('b1', None), ([1], None)):
             with self.assertRaises(CarryError):
                 trello.save_settings(self.state, boards=boards, since=since)
-        self.assertEqual(trello.settings(self.state), dict(boards=None, since=None))
+        self.assertEqual(trello.settings(self.state), dict(hidden=[], since=None))
+
+    def test_a_board_joined_after_the_choice_shows_by_itself(self):
+        with patch.object(trello, '_get', side_effect=api()):
+            trello.refresh(self.state)
+        trello.save_settings(self.state, boards=['b2'], since=None)  # the app sends the boards left on
+        self.assertEqual(trello.settings(self.state)['hidden'], ['b1'])
+        joined = BOARDS + [dict(id='b3', name='Yeni marka', lists=[dict(id='l5', name='Yapılacaklar')])]
+        card = dict(CARDS[0], id='c9', name='Yeni panodaki iş', idBoard='b3', idList='l5', shortUrl='https://trello.com/c/9')
+        with patch.object(trello, '_get', side_effect=api(cards=CARDS + [card], boards=joined)):
+            trello.refresh(self.state)
+        view = trello.view(self.state, start=lambda: None)
+        self.assertIn('Yeni panodaki iş', [c['name'] for c in view['cards']])
+        self.assertEqual({b['id']: b['shown'] for b in view['boards']}, dict(b1=False, b2=True, b3=True))
+
+    def test_a_choice_kept_as_shown_boards_becomes_the_boards_turned_off(self):
+        with patch.object(trello, '_get', side_effect=api()):
+            trello.refresh(self.state)
+        (self.state / trello.SETTINGS).write_text(json.dumps(dict(boards=['b2'], since='2026-01-01')), encoding='utf-8')
+        view = trello.view(self.state, start=lambda: None)
+        self.assertEqual([b['id'] for b in view['boards'] if b['shown']], ['b2'])
+        self.assertEqual(json.loads((self.state / trello.SETTINGS).read_text(encoding='utf-8')), dict(hidden=['b1'], since='2026-01-01'))
 
     def test_view_serves_the_cache_and_refreshes_only_when_stale(self):
         with patch.object(trello, '_get', side_effect=api()):
@@ -164,6 +185,14 @@ class TrelloTest(unittest.TestCase):
             trello.disconnect(self.state)
         self.assertEqual(removed, ['key', 'token'])
         self.assertFalse((self.state / trello.CACHE).exists())
+
+    def test_disconnect_forgets_the_board_choice_for_the_next_person(self):
+        with patch.object(trello, '_get', side_effect=api()):
+            trello.refresh(self.state)
+        trello.save_settings(self.state, boards=['b2'], since='2026-01-01')
+        with patch.object(trello, '_keychain_delete'):
+            trello.disconnect(self.state)
+        self.assertFalse((self.state / trello.SETTINGS).exists())
 
 
 class LoginTest(unittest.TestCase):
