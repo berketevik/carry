@@ -1,6 +1,6 @@
 """`carry setup`: a terminal wizard that creates the workspace, a vault or source,
 search, client wiring and the app, builds the index and says so in large letters. It asks only
-where the notes are, their language and, when Ollama is missing, whether to install it.
+where the notes are and their language.
 
 Standard library only. Every step calls the same functions as the CLI and the app;
 the wizard adds prompts, a spinner and the final banner. --yes takes every default.
@@ -385,19 +385,20 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
             except CarryError as exc:
                 warn(f'Carry\'nin dosyaları not klasörüne taşınamadı ({exc}); {state} içinde kalıyor.')
 
-    # 2. Search: by meaning, through Ollama when it is installed, otherwise with the model
-    # built into Carry. No question: the owner's assistant checks the results either way.
+    # 2. Search: by meaning, with the model built into Carry even where Ollama is installed;
+    # through Ollama only where that model is not (Windows). No question: the owner's
+    # assistant checks the results either way.
     step(2, total, 'Arama')
     from . import llama_model, ollama_setup
     semantic = semantic_default
+    builtin = llama_model.runtime_available()
     with_ollama = False
-    if semantic:
+    if semantic and not builtin:
         if ollama_setup.status()['installed']:
             with_ollama, how = ollama_setup.start()
             if not with_ollama:
-                warn(f'Ollama başlatılamadı ({how}); Carry\'nin kendi arama modeli kullanılacak.')
-        if not with_ollama and not llama_model.runtime_available():
-            semantic = False
+                warn(f'Ollama başlatılamadı ({how}).')
+        semantic = with_ollama
     label = ('Arama modeli hazırlanıyor' if with_ollama else
              f'Arama modeli indiriliyor ({llama_model.DOWNLOAD_BYTES // 1_000_000} MB, bir iki dakika sürer)') if semantic \
         else 'Arama ayarı uygulanıyor'
@@ -409,6 +410,7 @@ def run(state_dir=None, assume_yes=False, vault_path=None, language=None, animat
         semantic = False
         models.setup(ws, models.search_preset(False, 'assistant'))
     ok('Anlamına göre arama açık.' if semantic else
+       'Kelimeye göre arama açık. Anlamına göre aramayı sonra açmak için: carry search --semantic on' if builtin else
        'Kelimeye göre arama açık. Bu bilgisayarda anlamına göre arama için Ollama gerekiyor: '
        'carry search --semantic on --install-ollama')
     ws = Workspace.load(ws.state_dir)

@@ -501,9 +501,9 @@ def cmd_search(args):
         _print(dict(status='error', error='no_typesafe_key'), args.json,
                ['no TypeSafe key: save it with carry setup or set TYPESAFE_API_KEY'])
         return EXIT_FAILED
-    # Without Ollama the model built into Carry searches by meaning; Ollama is needed only
-    # when asked for, or where that model is not installed (Windows).
-    if semantic and (args.install_ollama or models.semantic_engine() == 'embeddinggemma'):
+    # The model built into Carry searches by meaning, even where Ollama is installed; Ollama is
+    # needed only where that model is not installed (Windows).
+    if semantic and models.semantic_engine() == 'embeddinggemma':
         ok, how = ollama_setup.ensure(install_if_missing=args.install_ollama)
         if not ok:
             hint = ('run again with --install-ollama (uses Homebrew)' if how == 'ollama_missing'
@@ -990,10 +990,11 @@ def build_parser():
     start_options(cx)
     cx.set_defaults(func=cmd_context)
 
-    se = sub.add_parser("search", help="switch semantic search (embeddinggemma via Ollama) on or off and choose the judge")
+    se = sub.add_parser("search", help="switch semantic search (embeddinggemma, built into Carry) on or off and choose the judge")
     se.add_argument("--semantic", choices=("on", "off"))
     se.add_argument("--judge", choices=("jev", "assistant"))
-    se.add_argument("--install-ollama", action="store_true", help="install Ollama with Homebrew if it is missing")
+    se.add_argument("--install-ollama", action="store_true",
+                    help="where Carry's own model is not installed (Windows): install Ollama if it is missing")
     se.set_defaults(func=cmd_search)
 
     hv = sub.add_parser("harvest", help="old name of `carry session sweep` (--thread: `session end --thread`, "
