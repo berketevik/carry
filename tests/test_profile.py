@@ -90,6 +90,11 @@ class ProfileTest(WorkspaceCase):
         self.assertTrue(view['trello_key_known'])
         self.assertNotIn('0123456789abcdef0123456789abcdef', json.dumps(view))
         self.assertEqual(profile.view(self.workspace, 'deniz.kaya@ornek.com.tr')['guess'], 'Deniz Kaya')
+        # A permission Trello turned down is not a connection: the menu offers to connect again.
+        (self.state / profile.trello.CACHE).write_text(json.dumps(dict(connected=False, error='trello_unauthorized')), encoding='utf-8')
+        with patch.object(profile.trello, 'credentials', return_value=('k', 't')):
+            view = profile.view(self.workspace)
+        self.assertEqual((view['trello_connected'], view['trello_revoked']), (False, True))
 
     def test_trello_connects_in_one_click_under_the_team_key(self):
         from carry.desktop import Bridge

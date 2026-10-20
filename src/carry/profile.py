@@ -105,7 +105,8 @@ def view(workspace, email=None):
     email = email or (current or {}).get('email')
     return dict(profile=current, names=candidates, email_domains=allowed['email_domains'],
                 guess=guess(email, candidates) if email else '',
-                trello_connected=trello.credentials() is not None, trello_key_known=bool(key))
+                trello_connected=trello.credentials() is not None and not trello.revoked(workspace.state_dir),
+                trello_revoked=trello.revoked(workspace.state_dir), trello_key_known=bool(key))
 
 
 def save(workspace, email, name):

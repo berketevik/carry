@@ -124,10 +124,24 @@ class TrelloTest(unittest.TestCase):
     def test_a_failed_refresh_keeps_the_last_cards_and_says_why(self):
         with patch.object(trello, '_get', side_effect=api()):
             trello.refresh(self.state)
+        with patch.object(trello, '_get', side_effect=CarryError('trello_unreachable: timed out')):
+            result = trello.refresh(self.state)
+        self.assertEqual(result['error'], 'trello_unreachable: timed out')
+        self.assertEqual(len(result['cards']), 4)
+
+    def test_a_revoked_permission_shows_as_not_connected_not_as_a_network_problem(self):
+        with patch.object(trello, '_get', side_effect=api()):
+            trello.refresh(self.state)
         with patch.object(trello, '_get', side_effect=CarryError('trello_unauthorized')):
             result = trello.refresh(self.state)
-        self.assertEqual(result['error'], 'trello_unauthorized')
-        self.assertEqual(len(result['cards']), 4)
+        self.assertEqual(result, dict(connected=False, error='trello_unauthorized', checked_at=result['checked_at']))
+        self.assertTrue(trello.revoked(self.state))
+        seen = trello.view(self.state, start=lambda: None)
+        self.assertEqual((seen['connected'], seen['error'], seen.get('cards')), (False, 'trello_unauthorized', None))
+        # Connecting again fetches the cards and clears it.
+        with patch.object(trello, '_get', side_effect=api()):
+            trello.refresh(self.state)
+        self.assertFalse(trello.revoked(self.state))
 
     def test_connect_checks_the_token_before_storing_it(self):
         stored = []

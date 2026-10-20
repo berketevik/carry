@@ -304,6 +304,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var me: [String: Any] { profile["profile"] as? [String: Any] ?? [:] }
     var signedIn: Bool { !me.isEmpty }
     var trelloConnected: Bool { profile["trello_connected"] as? Bool == true }
+    var trelloRevoked: Bool { profile["trello_revoked"] as? Bool == true }
     func loadProfile() {
         run("profile", clearError: false, quiet: true) { value in
             if !same(value, self.profile) { self.profile = value }
@@ -1809,13 +1810,16 @@ struct WorkList: View {
                     Button(T("Sign in", "Giriş yap")) { model.signIn() }.buttonStyle(.borderedProminent)
                 }.padding(12).background(Color.accentColor.opacity(0.07)).clipShape(RoundedRectangle(cornerRadius: 10))
             } else if trello["connected"] as? Bool != true && !model.work.isEmpty {
+                let revoked = str(trello, "error", "") == "trello_unauthorized"
                 HStack {
-                    Text(T("Trello is not connected, so your cards are not here yet.", "Trello bağlı değil; kartlarınız bu yüzden burada değil.")).foregroundStyle(.secondary)
+                    Text(revoked ? UIError("trello_unauthorized").localizedDescription
+                                 : T("Trello is not connected, so your cards are not here yet.", "Trello bağlı değil; kartlarınız bu yüzden burada değil."))
+                        .foregroundStyle(revoked ? .orange : .secondary)
                     Spacer()
                     Button(T("Connect Trello", "Trello'yu bağla")) { model.signIn(step: 1) }
                 }
             }
-            if let error = trello["error"] as? String, !error.isEmpty {
+            if let error = trello["error"] as? String, !error.isEmpty, error != "trello_unauthorized" {
                 Text(T("Trello could not be reached; these are the cards seen last.", "Trello'ya ulaşılamadı; bunlar son görülen kartlar.")).font(.caption).foregroundStyle(.orange)
             }
             if model.work.isEmpty {
@@ -2096,6 +2100,8 @@ struct TrelloConnect: View {
             } else {
                 if state == "failed" {
                     Text(UIError(str(model.trelloLogin, "error", "")).localizedDescription).foregroundStyle(.red).font(.callout).fixedSize(horizontal: false, vertical: true)
+                } else if model.trelloRevoked {
+                    Text(UIError("trello_unauthorized").localizedDescription).foregroundStyle(.orange).font(.callout).fixedSize(horizontal: false, vertical: true)
                 }
                 HStack {
                     Text(T("Not connected. Carry asks Trello only for permission to read.", "Bağlı değil. Carry Trello'dan yalnız okuma izni ister.")).foregroundStyle(.secondary)

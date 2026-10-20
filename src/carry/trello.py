@@ -329,7 +329,11 @@ def refresh(state_dir, creds=None):
         boards = _get('/members/me/boards?filter=open&fields=name&lists=open', *creds)
         cards = _get(f'/members/me/cards?filter=open&fields={CARD_FIELDS}', *creds)
     except CarryError as exc:
-        result = dict(cached, connected=True, error=str(exc), checked_at=time.time())
+        # A revoked or expired permission is not a network problem: the person has to connect again.
+        if str(exc) == 'trello_unauthorized':
+            result = dict(connected=False, error='trello_unauthorized', checked_at=time.time())
+        else:
+            result = dict(cached, connected=True, error=str(exc), checked_at=time.time())
         atomic_text(state_dir / CACHE, json.dumps(result, ensure_ascii=False))
         return result
     # Only the open lists of open boards come back, so a card on a closed board or list drops out here.
@@ -345,6 +349,11 @@ def refresh(state_dir, creds=None):
                               touched=c.get('dateLastActivity'), number=c.get('idShort')) for c in cards])
     atomic_text(state_dir / CACHE, json.dumps(result, ensure_ascii=False))
     return result
+
+
+def revoked(state_dir):
+    """True when Trello last turned the kept permission down: it was revoked or has expired."""
+    return _read_cache(state_dir).get('error') == 'trello_unauthorized'
 
 
 def _start_refresh(state_dir):
@@ -381,4 +390,6 @@ def view(state_dir, start=None):
     last = max(cached.get('fetched_at') or 0, cached.get('checked_at') or 0)
     if time.time() - last > MAX_AGE:
         (start or (lambda: _start_refresh(state_dir)))()
+    if cached.get('error') == 'trello_unauthorized':
+        return dict(connected=False, error='trello_unauthorized')
     return dict(shown(state_dir, cached), connected=True)
