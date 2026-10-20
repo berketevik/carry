@@ -29,7 +29,7 @@ Kurulum iki şey sorar: hangi bilgi bankasının bağlanacağını (kendi notlar
 
 1. **Carry bilgi bankanıza bağlanır.** Notları okur, kısa parçalara böler ve bilgisayarınızda bir arama dizini tutar: kelimelere ve anlamına göre. Dizin, yaptığınız değişiklikleri kendiliğinden izler. Anlam modeli (yaklaşık 330 MB) Carry'nin içinde, Mac'inizin GPU'sunda çalışır; bilgisayarınızda [Ollama](https://ollama.com) varsa Carry onu kullanır.
 2. **Asistanınız cevap vermeden önce orada arar.** Claude Code ve Codex, Carry'nin arama aracını (`carry_recall`) alır ve soru işinizle, kararlarınızla ya da projelerinizle ilgili olduğunda onu kullanır. Carry eşleşen parçaları kaynaklarıyla döndürür; asistanınız yalnızca soruyu gerçekten cevaplayanları tutar. “Geçen hafta” ya da “eylülde” gibi ifadeler aramayı o döneme daraltır.
-3. **Bilgi bankasından geleni görürsünüz.** Her arama sohbette bir Carry çağrısı olarak görünür ve Carry asistandan her bilginin dayandığı notu göstermesini ister; böylece neyin bilgi bankanızdan geldiğini, neyi asistanın eklediğini ayırt edersiniz. Ekibinizin bilgi bankasından gelen parçalar ayrıca işaretlenir. Hiçbir şey eşleşmezse asistana tahmin yürütmek yerine bunu söylemesi bildirilir.
+3. **Bilgi bankasından geleni görürsünüz.** Her arama sohbette bir Carry çağrısı olarak görünür ve Carry asistandan her bilginin dayandığı notu göstermesini ister; böylece neyin bilgi bankanızdan geldiğini, neyi asistanın eklediğini ayırt edersiniz. Ekibinizin bilgi bankasından gelen parçalar ayrıca işaretlenir. Hiçbir şey eşleşmezse asistana tahmin yürütmek yerine bunu söylemesi bildirilir. Claude Code'da her aramayı ve asistanın kaydettiği her notu önce Claude Code'un kendi onay penceresinde siz onaylarsınız (bir cihazda kapatmak için `carry confirm off`).
 
 Notlar, Google'ın [Open Knowledge Format](https://github.com/GoogleCloudPlatform/open-knowledge-format) standardında (OKF v0.2) düz Markdown dosyalarıdır: frontmatter notun ne olduğunu (`type`), sizin kontrol edip etmediğinizi (`status`, `verified`), neye dayandığını (`sources`) ve ne zaman eskiyeceğini (`stale_after`) söyler. Carry bunları her parçanın yanında gösterir; uygulamada bir taslağı onayladığınızda kontrolünüz nota yazılır.
 
@@ -54,6 +54,7 @@ Carry notlarınızı hiçbir yere yüklemez ve kendine ait bir çevrimiçi hizme
 | Sohbet sonu hook'unun kaçırdığı olursa diye her akşam 21:30'da biten sohbetleri de özetlemek | `carry session schedule --install` |
 | Anlamına göre aramayı açıp kapatmak | `carry search --semantic on` (ya da `off`) |
 | Onayladığınız taslak ve önerilerdeki adı değiştirmek (`verified: human:<ad>`; kurulum giriş adınızı kullanır) | `carry owner --set <ad>` |
+| Claude Code'un her aramadan ve kaydettiği her nottan önce sormasını kapatmak (ya da yeniden açmak) | `carry confirm off` (ya da `on`) |
 | Carry'yi güncellemek | `carry update`, ardından `carry app install` |
 | Her şeyin çalıştığını kontrol etmek | `carry status --probe` |
 

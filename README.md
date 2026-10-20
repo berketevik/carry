@@ -29,7 +29,7 @@ Setup asks two things: which knowledge base to connect (your own notes, your tea
 
 1. **Carry connects to your knowledge base.** It reads the notes, splits them into short passages and keeps a search index on your computer, by words and by meaning. The index follows your edits by itself. The meaning model (about 330 MB) runs inside Carry, on your Mac's GPU; if [Ollama](https://ollama.com) is installed, Carry uses it instead.
 2. **Your assistant searches it before answering.** Claude Code and Codex get Carry's search tool, `carry_recall`, and use it when a question is about your work, decisions or projects. Carry returns the matching passages with their source, and your assistant keeps only the ones that really answer. “Last week” or “in September” narrows the search to that period.
-3. **You see what came from the knowledge base.** Each search shows in the chat as a Carry call, and Carry asks the assistant to cite the note behind every claim, so you can tell what came from your knowledge base and what the assistant added. Passages from your team's knowledge base are marked as such. When nothing matches, the assistant is told to say so instead of guessing.
+3. **You see what came from the knowledge base.** Each search shows in the chat as a Carry call, and Carry asks the assistant to cite the note behind every claim, so you can tell what came from your knowledge base and what the assistant added. Passages from your team's knowledge base are marked as such. When nothing matches, the assistant is told to say so instead of guessing. In Claude Code you approve each search and each note the assistant saves in Claude Code's own approval dialog first (`carry confirm off` turns that off on a device).
 
 Notes are plain Markdown in Google's [Open Knowledge Format](https://github.com/GoogleCloudPlatform/open-knowledge-format) (OKF v0.2): the frontmatter says what a note is (`type`), whether you have checked it (`status`, `verified`), what it came from (`sources`) and when it goes stale (`stale_after`). Carry shows these next to every passage, and approving a draft in the app records your check.
 
@@ -54,6 +54,7 @@ Carry doesn't upload your notes anywhere and uses no online service of its own. 
 | Also recap every finished chat each evening at 21:30, in case a chat-end hook missed one | `carry session schedule --install` |
 | Turn search by meaning on or off | `carry search --semantic on` (or `off`) |
 | Change the name on the drafts and proposals you approve (`verified: human:<name>`; setup uses your login name) | `carry owner --set <name>` |
+| Stop (or start again) Claude Code asking before each search of your notes and each note it saves | `carry confirm off` (or `on`) |
 | Update Carry | `carry update`, then `carry app install` |
 | Check that everything works | `carry status --probe` |
 

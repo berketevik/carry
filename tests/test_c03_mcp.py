@@ -65,6 +65,19 @@ class HandshakeTest(WorkspaceCase):
         tools = {tool["name"]: tool for tool in by_id[2]["result"]["tools"]}
         self.assertEqual(set(tools), {"carry_recall", "carry_catalog", "carry_status"})
         self.assertEqual(tools["carry_recall"]["inputSchema"]["required"], ["query"])
+        # Reading notes asks the owner on every call in Claude Code; the status tool reads none.
+        ask = {"anthropic/requiresUserInteraction": True}
+        self.assertEqual((tools["carry_recall"].get("_meta"), tools["carry_catalog"].get("_meta")), (ask, ask))
+        self.assertNotIn("_meta", tools["carry_status"])
+
+    def test_confirm_off_leaves_the_tools_unmarked(self):
+        from carry import confirm
+        from carry.mcp_server import available_tools
+        confirm.apply(self.workspace, False)
+        self.assertFalse(any("_meta" in t for t in available_tools(self.workspace.state_dir, "claude")))
+        confirm.apply(self.workspace, True)
+        self.assertTrue(all("_meta" in t for t in available_tools(self.workspace.state_dir, "claude")
+                            if t["name"] != "carry_status"))
 
     def test_an_unsupported_protocol_version_is_answered_with_a_supported_one(self):
         self.build()

@@ -158,6 +158,13 @@ class VaultTest(unittest.TestCase):
         ignored = (self.target / '.gitignore').read_text(encoding='utf-8')
         self.assertIn('.mcp.json', ignored)
 
+    def test_a_new_vault_asks_before_carry_searches_or_a_note_is_saved(self):
+        from carry import confirm
+        self.install(workspace=self.base / 'state', attach=True)
+        local = json.loads((self.target / '.claude' / 'settings.local.json').read_text(encoding='utf-8'))
+        self.assertEqual(local['permissions']['ask'], list(confirm.RULES))
+        self.assertIn('SessionStart', local['hooks'])
+
     def test_capture_wires_hooks_and_lands_prompts_in_the_inbox(self):
         from carry import capture
         state = self.base / 'state'

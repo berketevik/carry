@@ -326,9 +326,47 @@ class ConnectionTest(WorkspaceCase):
     def test_mcp_only_requires_no_prompt_consent_and_never_configures_capture(self):
         plan = self.plan()
         connections.apply(self.workspace, plan)
-        self.assertFalse((self.project / '.claude' / 'settings.local.json').exists())
+        local = json.loads((self.project / '.claude' / 'settings.local.json').read_text(encoding='utf-8'))
+        self.assertNotIn('hooks', local)  # only the ask rules: no capture hook
         self.assertFalse(lifecycle.client_enabled(self.workspace, 'claude'))
         self.assertEqual(capture.capture_status(self.workspace)['state'], 'not_configured')
+
+    def test_claude_asks_before_carry_searches_or_a_note_is_saved(self):
+        from carry import confirm
+        local = self.project / '.claude' / 'settings.local.json'
+        local.parent.mkdir()
+        local.write_text('{"permissions": {"allow": ["Bash(ls)"], "ask": ["Bash(rm *)"]}}', encoding='utf-8')
+        plan = self.plan(prompts=True)
+        # One change for the file that takes both the capture hook and the ask rules.
+        self.assertEqual([c['path'] for c in plan['changes']].count(str(local.resolve())), 1)
+        connections.apply(self.workspace, plan)
+        data = json.loads(local.read_text(encoding='utf-8'))
+        self.assertEqual(data['permissions']['ask'], ['Bash(rm *)', *confirm.RULES])
+        self.assertEqual(data['permissions']['allow'], ['Bash(ls)'])
+        self.assertIn('UserPromptSubmit', data['hooks'])
+        connections.rollback(self.workspace, plan['id'])
+        self.assertEqual(json.loads(local.read_text(encoding='utf-8')),
+                         {"permissions": {"allow": ["Bash(ls)"], "ask": ["Bash(rm *)"]}})
+        # Codex has no such rules; turned off, Claude Code gets none either.
+        self.assertFalse(any('permissions' in (c['after'] or '') for c in self.plan('codex')['changes']))
+        confirm.apply(self.workspace, False)
+        connections.apply(self.workspace, self.plan())
+        self.assertEqual(json.loads(local.read_text(encoding='utf-8'))['permissions']['ask'], ['Bash(rm *)'])
+
+    def test_confirm_off_and_on_rewrites_only_carrys_rules_in_connected_folders(self):
+        from carry import confirm
+        connections.apply(self.workspace, self.plan())
+        local = self.project / '.claude' / 'settings.local.json'
+        data = json.loads(local.read_text(encoding='utf-8'))
+        data['permissions']['ask'].insert(0, 'Bash(rm *)')
+        local.write_text(json.dumps(data), encoding='utf-8')
+        off = confirm.apply(self.workspace, False)
+        self.assertEqual(off['changed'], [str(local.resolve())])
+        self.assertFalse(confirm.enabled(self.workspace.state_dir))
+        self.assertEqual(json.loads(local.read_text(encoding='utf-8'))['permissions'], {'ask': ['Bash(rm *)']})
+        self.assertEqual(confirm.apply(self.workspace, True)['changed'], [str(local.resolve())])
+        self.assertEqual(json.loads(local.read_text(encoding='utf-8'))['permissions']['ask'], ['Bash(rm *)', *confirm.RULES])
+        self.assertEqual(confirm.apply(self.workspace, True)['changed'], [])
 
     def test_the_recall_subagent_is_installed_in_the_notes_language_and_undone(self):
         (self.project / '.carry').mkdir()
