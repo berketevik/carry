@@ -12,7 +12,10 @@ them, status reports any difference, and `carry team --apply` applies them later
 are never applied silently, since a member's workspace may hold their own notes too.
 It may also name the team's mail domains (`email_domains`), which the app's sign-in
 accepts, and the Trello API key members connect with (`trello_api_key`; a key is not a
-secret, each member's token is).
+secret, each member's token is). `work` says which team notes wait for a member on the app's
+home page: the notes they own in one of `review_statuses`, and the notes under `inbox` whose
+title has one of the `handed` phrases, `{name}` being the member's first name. Without it no
+team note waits for anyone; the member's notes are only counted.
 The file comes from a repository the member does not control: unknown keys and bad
 values are reported, never fatal.
 """
@@ -34,7 +37,9 @@ RETRIEVAL_KEYS = {"top_k": int, "max_chars": int, "max_per_document": int,
 VERSION_RE = re.compile(r"^\d+(\.\d+){0,2}$")
 DOMAIN_RE = re.compile(r"^[a-z0-9-]+(\.[a-z0-9-]+)+$")
 TRELLO_KEY_RE = re.compile(r"^[0-9a-f]{32}$")
-KEYS = ("min_carry_version", "retrieval", "email_domains", "trello_api_key")
+KEYS = ("min_carry_version", "retrieval", "email_domains", "trello_api_key", "work")
+WORK_KEYS = ("inbox", "handed", "review_statuses")
+NO_WORK = dict(inbox="", handed=[], review_statuses=[])
 
 
 def _valid(kind, value):
@@ -43,6 +48,34 @@ def _valid(kind, value):
     if kind is int:
         return isinstance(value, int) and value > 0
     return isinstance(value, (int, float)) and -1.0 <= value <= 1.0
+
+
+def _strings(value):
+    return isinstance(value, list) and all(isinstance(v, str) and v.strip() for v in value)
+
+
+def _work(raw, warnings):
+    """The team's rules for what waits for a member, or none (NO_WORK)."""
+    if raw is None:
+        return dict(NO_WORK)
+    if not isinstance(raw, dict):
+        warnings.append("team_settings_invalid:work")
+        return dict(NO_WORK)
+    warnings += [f"team_settings_unknown_key:work.{k}" for k in raw if k not in WORK_KEYS]
+    inbox, handed, statuses = raw.get("inbox", ""), raw.get("handed", []), raw.get("review_statuses", [])
+    if not isinstance(inbox, str):
+        warnings.append("team_settings_invalid:work.inbox")
+        inbox = ""
+    # A phrase without the member's name would hand every inbox note to everyone.
+    if not (_strings(handed) and all("{name}" in h for h in handed)):
+        warnings.append("team_settings_invalid:work.handed")
+        handed = []
+    if not _strings(statuses):
+        warnings.append("team_settings_invalid:work.review_statuses")
+        statuses = []
+    inbox = inbox.strip().strip("/")
+    return dict(inbox=inbox + "/" if inbox else "", handed=[h.strip() for h in handed],
+                review_statuses=[s.strip().lower() for s in statuses])
 
 
 def load_settings(source):
@@ -86,7 +119,8 @@ def load_settings(source):
         warnings.append("team_settings_invalid:trello_api_key")
         key = None
     return dict(retrieval=retrieval, min_carry_version=version,
-                email_domains=[d.strip().lower() for d in domains], trello_api_key=key), warnings
+                email_domains=[d.strip().lower() for d in domains], trello_api_key=key,
+                work=_work(data.get("work"), warnings)), warnings
 
 
 def sign_in(workspace):

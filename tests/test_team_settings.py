@@ -83,6 +83,21 @@ class TeamSettingsTest(WorkspaceCase):
         (self.team / ".carry" / "team.json").unlink()
         self.assertEqual(team.sign_in(self.workspace), dict(email_domains=[], trello_api_key=None))
 
+    def test_the_rules_for_what_waits_for_a_member(self):
+        self.write({"work": {"inbox": "/90_Inbox/", "handed": ["{name} için"], "review_statuses": ["To-Review", "open"]}})
+        settings, warnings = team.load_settings(self.workspace.source("team"))
+        self.assertEqual(warnings, [])
+        self.assertEqual(settings["work"], dict(inbox="90_Inbox/", handed=["{name} için"], review_statuses=["to-review", "open"]))
+        self.assertNotIn("team_settings_invalid", status(self.workspace)["degradation"])
+        # A phrase without the member's name would hand every inbox note to everyone.
+        self.write({"work": {"inbox": 3, "handed": ["devir"], "review_statuses": "open", "owner": "x"}})
+        settings, warnings = team.load_settings(self.workspace.source("team"))
+        self.assertEqual(sorted(warnings), ["team_settings_invalid:work.handed", "team_settings_invalid:work.inbox",
+                                            "team_settings_invalid:work.review_statuses", "team_settings_unknown_key:work.owner"])
+        self.assertEqual(settings["work"], team.NO_WORK)
+        self.write({"work": "everything"})
+        self.assertEqual(team.load_settings(self.workspace.source("team"))[1], ["team_settings_invalid:work"])
+
     def test_a_broken_file_never_breaks_search_or_status(self):
         self.write("{not json")
         index_module.build(self.workspace)

@@ -40,6 +40,8 @@ class WorkTest(WorkspaceCase):
         (self.vault / '.carry' / 'vault.json').write_text('{"language": "Turkish"}', encoding='utf-8')
         self.team = self.base / 'team'
         (self.team / '90_Inbox').mkdir(parents=True)
+        (self.team / '.carry').mkdir()
+        self.rules(dict(inbox='90_Inbox', handed=['{name} için'], review_statuses=['to-review', 'open']))
         self.okb('Marka rehberi', 'İsmail', 'active')
         self.okb('Ölçüm planı', 'İsmail, Sude', 'to-review', body='Kart: https://trello.com/c/AbC123')
         self.okb('Bütçe', 'ismail', 'open')
@@ -51,6 +53,9 @@ class WorkTest(WorkspaceCase):
             embedding=HASHING, retrieval=RetrievalConfig(top_k=6, auto_refresh=False))
         self.state = self.workspace.state_dir
         profile.save(self.workspace, 'ismail@ornek.com.tr', 'İsmail')
+
+    def rules(self, work_rules):
+        (self.team / '.carry' / 'team.json').write_text(json.dumps(dict(work=work_rules), ensure_ascii=False), encoding='utf-8')
 
     def okb(self, title, owner, status, folder='', body=''):
         root = self.team / folder if folder else self.team
@@ -73,6 +78,21 @@ class WorkTest(WorkspaceCase):
         self.assertEqual(set(rows), {'Ölçüm planı', 'Bütçe', 'İsmail için KSF devir notu'})
         self.assertEqual(rows['Bütçe']['badges'][0], dict(kind='okb', state='review', source_id='team', path='Bütçe.md'))
         self.assertEqual(rows['İsmail için KSF devir notu']['badges'][0]['state'], 'handed')
+
+    def test_what_waits_comes_from_the_teams_own_rules_or_nothing_waits(self):
+        (self.team / '.carry' / 'team.json').unlink()
+        result = self.build(cards=[])
+        self.assertEqual(result['items'], [])
+        self.assertEqual({n['title'] for n in result['owned']}, {'Marka rehberi', 'Ölçüm planı', 'Bütçe'})
+        self.rules(dict(review_statuses=['active']))
+        self.assertEqual(self.titles(self.build(cards=[])), ['Marka rehberi'])
+
+    def test_a_first_name_hands_a_note_only_as_a_whole_word(self):
+        self.okb('Ercan için devir notu', 'Deniz', 'to-review', folder='90_Inbox')
+        self.okb('Can için ölçüm notu', 'Deniz', 'to-review', folder='90_Inbox')
+        self.okb('Can için arşiv notu', 'Deniz', 'to-review')  # outside the inbox
+        profile.save(self.workspace, 'can@ornek.com.tr', 'Can Demir')
+        self.assertEqual(self.titles(self.build(cards=[])), ['Can için ölçüm notu'])
 
     def test_the_rest_of_my_notes_are_counted_not_listed(self):
         result = self.build(cards=[])

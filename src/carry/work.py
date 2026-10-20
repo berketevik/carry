@@ -2,9 +2,10 @@
 
 Three sources, one row per piece of work, the sources as badges:
 - Trello: the open cards the person chose to see (trello.view).
-- The team notes (sources with scope "team", the team knowledge base): notes the person owns
-  that wait for their review (`status: to-review` or `open`), and inbox notes handed to them by
-  title ("İsmail için …", or "devir" with their name). Their other notes are counted, not listed.
+- The team notes (sources with scope "team", the team knowledge base), by the team's own rules
+  (`work` in its .carry/team.json): notes the person owns in one of the team's review statuses,
+  and inbox notes whose title hands them to the person ("{name} için"). Without the rules nothing
+  waits; their notes are counted, not listed.
 - Chats and meetings: open items the owner accepted in Review. An item not yet decided waits in
   Review, not here; a skipped one is gone; a decision goes to the daily log and the decisions list.
 An item stays until the person marks it done. Done is kept in the state (work-done.json), never in
@@ -19,7 +20,7 @@ import json
 from pathlib import Path
 import re
 
-from . import digest, profile, trello
+from . import digest, profile, team, trello
 from .persistence import atomic_text
 
 DONE = 'work-done.json'
@@ -27,8 +28,6 @@ CARD_LINK = re.compile(r'trello\.com/c/([A-Za-z0-9]+)')
 CARD_NUMBER = re.compile(r'\b(?:kart|card)\s*#(\d+)\b', re.I)
 OPEN_KINDS = ('open item', 'açık iş')
 DECISION_KINDS = ('decision', 'karar')
-REVIEW_STATUSES = ('to-review', 'open')
-INBOX = '90_Inbox/'
 DECISION_DAYS = 14
 INBOX_DIR = '+'
 
@@ -99,17 +98,36 @@ def _from_digests(workspace, today):
     return opens, decisions[:8]
 
 
+def _rules(source, known):
+    """The source's rules for what waits for a member, read once per build."""
+    if source.source_id not in known:
+        settings, _ = team.load_settings(source)
+        known[source.source_id] = settings['work'] if settings else team.NO_WORK
+    return known[source.source_id]
+
+
+def handed_to(title, phrases, name):
+    """True when the title has one of the phrases, `{name}` being the person's first name, as
+    whole words side by side; case and Turkish letters aside, so "Can" is not "Ercan"."""
+    first = (profile.fold(name).split() or [''])[0]
+    words = re.findall(r'\w+', profile.fold(title))
+    for phrase in phrases:
+        wanted = re.findall(r'\w+', profile.fold(phrase.replace('{name}', first)))
+        if first and wanted and any(words[i:i + len(wanted)] == wanted for i in range(len(words))):
+            return True
+    return False
+
+
 def _from_team(workspace, name):
     """(rows waiting for the person, the rest of their notes) from the team sources."""
     from .vaultview import _history, _modified
-    rows, owned, histories = [], [], {}
+    rows, owned, histories, known = [], [], {}, {}
     for source, rel, path, front in profile.team_notes(workspace):
+        rules = _rules(source, known)
         title = str(front.get('title') or front.get('_heading') or Path(rel).stem)
         mine = profile.owned_by(front.get('owner'), name)
         status = str(front.get('status') or '').lower()
-        folded = profile.fold(title)
-        first = profile.fold(name).split()[0]
-        handed = rel.startswith(INBOX) and (f'{first} icin' in folded or ('devir' in folded and first in folded.split()))
+        handed = rel.startswith(rules['inbox']) and handed_to(title, rules['handed'], name)
         if not (mine or handed):
             continue
         if source.source_id not in histories:
@@ -117,7 +135,7 @@ def _from_team(workspace, name):
         modified, _ = _modified(rel, path, *histories[source.source_id])
         touched = datetime.datetime.fromtimestamp(modified).isoformat(timespec='seconds')
         note = dict(title=title, source_id=source.source_id, path=rel, touched=touched)
-        if handed or status in REVIEW_STATUSES:
+        if handed or status in rules['review_statuses']:
             try:
                 text = path.read_text(encoding='utf-8', errors='ignore')
             except OSError:
