@@ -780,7 +780,7 @@ def build_parser():
     trs = tr.add_subparsers(dest="trello_command")
     trs.add_parser("connect", help="ask Trello for a read-only token under your API key (TRELLO_API_KEY, or asked)")
     trs.add_parser("cards", help="fetch and list your open cards (the default)")
-    trs.add_parser("disconnect", help="forget the key, the token and the cards")
+    trs.add_parser("disconnect", help="forget the key, the token, the cards and the board choice")
     tr.set_defaults(func=cmd_trello)
 
     tm = sub.add_parser("team", help="the team knowledge base's shared search settings (.carry/team.json)")
