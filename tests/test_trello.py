@@ -1,4 +1,5 @@
 """Trello: the owner's open cards for the home page, read-only, cached in the state."""
+import http.client
 import json
 import os
 from pathlib import Path
@@ -56,6 +57,7 @@ class TrelloTest(unittest.TestCase):
         url = trello.authorize_url('abc')
         for part in ('key=abc', 'scope=read', 'expiration=never', 'name=Carry', 'response_type=token'):
             self.assertIn(part, url)
+        self.assertNotIn('return_url', url)
 
     def test_credentials_come_from_the_environment_first(self):
         self.assertEqual(trello.credentials(), ('k' * 32, 't' * 64))
@@ -148,6 +150,122 @@ class TrelloTest(unittest.TestCase):
             trello.disconnect(self.state)
         self.assertEqual(removed, ['key', 'token'])
         self.assertFalse((self.state / trello.CACHE).exists())
+
+
+class LoginTest(unittest.TestCase):
+    """The one-click connection, on a free loopback port: Trello itself is never asked."""
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
+        self.state = Path(self.tmp.name)
+        connect = patch.object(trello, 'connect', return_value=dict(username='ismail', name='İsmail'))
+        self.connect = connect.start(); self.addCleanup(connect.stop)
+        self.login = self.start()
+
+    def start(self, **options):
+        login = trello.Login(self.state, 'k' * 32, 'tr', port=0, **options)
+        self.addCleanup(login.stop)
+        return login
+
+    def call(self, method, path, body=None, origin=True, host=None, address='127.0.0.1', login=None):
+        login = login or self.login
+        headers = {'Host': host or login.host}
+        if origin:
+            headers['Origin'] = login.origin if origin is True else origin
+        data = None if body is None else (body if isinstance(body, str) else json.dumps(body))
+        if data is not None:
+            headers['Content-Type'] = 'application/json'
+        connection = http.client.HTTPConnection(address, int(login.host.split(':')[1]), timeout=5)
+        try:
+            connection.request(method, path, body=data, headers=headers)
+            response = connection.getresponse()
+            return response.status, response.read().decode('utf-8'), response
+        finally:
+            connection.close()
+
+    def closed(self, login):
+        """True once nothing answers on the login's port any more."""
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            try:
+                socket = http.client.HTTPConnection('127.0.0.1', int(login.host.split(':')[1]), timeout=1)
+                socket.connect(); socket.close()
+            except OSError:
+                return True
+            time.sleep(0.05)
+        return False
+
+    def test_trellos_page_comes_back_to_a_random_path_on_localhost(self):
+        result = self.login.result
+        self.assertEqual(result['state'], 'waiting')
+        query = trello.urllib.parse.parse_qs(trello.urllib.parse.urlsplit(result['authorize_url']).query)
+        self.assertEqual(query['return_url'], [self.login.origin + self.login.path])
+        self.assertEqual(query['callback_method'], ['fragment'])
+        self.assertEqual(query['scope'], ['read'])
+        self.assertTrue(self.login.origin.startswith('http://localhost:'))
+        self.assertGreater(len(self.login.path), len('/trello/') + 16)
+        self.assertNotEqual(self.start().path, self.login.path)
+        status, page, response = self.call('GET', self.login.path)
+        self.assertEqual(status, 200)
+        self.assertIn('location.hash', page)
+        self.assertIn('history.replaceState', page)
+        self.assertIn("connect-src 'self'", response.getheader('Content-Security-Policy'))
+        self.assertEqual(response.getheader('Cache-Control'), 'no-store')
+        self.assertEqual(self.call('GET', '/trello/another')[0], 404)
+        if len(self.login.servers) > 1:  # browsers may reach localhost on either loopback
+            self.assertEqual(self.call('GET', self.login.path, address='::1')[0], 200)
+
+    def test_the_token_is_checked_kept_and_the_listener_closes(self):
+        token = 'A1b2' * 16
+        status, body, _ = self.call('POST', self.login.path + '/token', dict(token=token))
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)['message'], trello.LOGIN_TEXT['tr']['connected'])
+        self.connect.assert_called_once_with(self.state, 'k' * 32, token)
+        self.assertEqual(self.login.result, dict(state='connected', username='ismail', name='İsmail'))
+        self.assertNotIn(token, json.dumps(self.login.result))
+        self.assertTrue(self.closed(self.login))
+        self.assertEqual(self.login.receive(dict(token=token))[0], 410)
+        self.assertEqual(self.connect.call_count, 1)
+
+    def test_another_page_path_or_host_is_turned_away(self):
+        token = dict(token='a' * 64)
+        self.assertEqual(self.call('POST', self.login.path + '/token', token, origin='https://ornek.com.tr')[0], 403)
+        self.assertEqual(self.call('POST', self.login.path + '/token', token, origin=False)[0], 403)
+        self.assertEqual(self.call('POST', '/trello/guessed/token', token)[0], 404)
+        self.assertEqual(self.call('POST', self.login.path + '/token', token, host='ornek.com.tr')[0], 404)
+        self.assertEqual(self.call('GET', self.login.path, host='ornek.com.tr')[0], 404)
+        self.assertEqual(self.call('POST', self.login.path + '/token', 'not json')[0], 400)
+        self.connect.assert_not_called()
+        self.assertEqual(self.login.result['state'], 'waiting')
+
+    def test_a_denied_or_odd_answer_fails_without_asking_trello(self):
+        status, body, _ = self.call('POST', self.login.path + '/token', dict(error='denied'))
+        self.assertEqual((status, json.loads(body)['message']), (200, trello.LOGIN_TEXT['tr']['denied']))
+        self.assertEqual(self.login.result, dict(state='failed', error='trello_denied'))
+        odd = self.start()
+        self.assertEqual(self.call('POST', odd.path + '/token', dict(token='short'), login=odd)[0], 400)
+        self.assertEqual(odd.result, dict(state='failed', error='trello_token_invalid'))
+        self.connect.assert_not_called()
+
+    def test_a_token_trello_refuses_says_why(self):
+        self.connect.side_effect = CarryError('trello_unauthorized')
+        status, body, _ = self.call('POST', self.login.path + '/token', dict(token='a' * 64))
+        self.assertEqual((status, json.loads(body)['message']), (502, trello.LOGIN_TEXT['tr']['failed']))
+        self.assertEqual(self.login.result, dict(state='failed', error='trello_unauthorized'))
+
+    def test_cancel_and_the_time_limit_close_the_listener(self):
+        self.login.cancel()
+        self.assertEqual(self.login.result, dict(state='cancelled'))
+        self.assertTrue(self.closed(self.login))
+        with patch.object(trello, 'LOGIN_TIMEOUT', 0.05):
+            late = self.start()
+        self.assertTrue(self.closed(late))
+        self.assertEqual(late.result, dict(state='failed', error='trello_timeout'))
+
+    def test_a_busy_port_is_named(self):
+        port = int(self.login.host.split(':')[1])
+        with self.assertRaises(CarryError) as caught:
+            trello.Login(self.state, 'k' * 32, port=port)
+        self.assertEqual(str(caught.exception), 'trello_port_busy')
 
 
 class CardNumberTest(unittest.TestCase):

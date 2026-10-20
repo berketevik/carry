@@ -105,8 +105,7 @@ def view(workspace, email=None):
     email = email or (current or {}).get('email')
     return dict(profile=current, names=candidates, email_domains=allowed['email_domains'],
                 guess=guess(email, candidates) if email else '',
-                trello_connected=trello.credentials() is not None, trello_key_known=bool(key),
-                trello_authorize_url=trello.authorize_url(key) if key else None)
+                trello_connected=trello.credentials() is not None, trello_key_known=bool(key))
 
 
 def save(workspace, email, name):
@@ -129,11 +128,12 @@ def save(workspace, email, name):
     return view(workspace)
 
 
-def connect_trello(workspace, token, key=None):
-    """Check the pasted read-only token with Trello and keep it; the key is the team's unless given."""
-    key = (key or '').strip() or team.sign_in(workspace)['trello_api_key'] or ''
-    trello.connect(workspace.state_dir, key, (token or '').strip())
-    return view(workspace)
+def trello_login(workspace, language='en'):
+    """Start the one-click Trello connection under the team's key from the team notes."""
+    key = team.sign_in(workspace)['trello_api_key']
+    if not key:
+        raise CarryError('trello_team_key_missing')
+    return trello.Login(workspace.state_dir, key, language)
 
 
 def disconnect_trello(workspace):

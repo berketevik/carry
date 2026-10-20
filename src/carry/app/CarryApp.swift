@@ -125,9 +125,13 @@ struct UIError: LocalizedError {
         case "profile_invalid_email": return T("Enter your company mail, like name@company.com.", "Şirket mailinizi girin, örneğin ad@sirket.com.")
         case "profile_name_required": return T("Choose your name, or write it if it is not in the list.", "Adınızı seçin; listede yoksa yazın.")
         case "profile_email_domain": return T("Use your company mail; this one is not on your team's domain.", "Şirket mailinizi kullanın; bu mail ekibinizin alan adında değil.")
-        case "trello_unauthorized": return T("Trello did not accept this token. Allow Carry in Trello again and paste the new token.", "Trello bu token'ı kabul etmedi. Trello'da Carry'ye yeniden izin verip yeni token'ı yapıştırın.")
-        case "trello_key_and_token_required": return T("Paste the token Trello showed (and the API key if asked).", "Trello'nun gösterdiği token'ı yapıştırın (istenirse API anahtarını da).")
-        case "trello_keychain_failed", "trello_needs_keychain": return T("The token could not be saved in the Keychain. Try again.", "Token Anahtar Zinciri'ne kaydedilemedi. Tekrar deneyin.")
+        case "trello_unauthorized": return T("Trello no longer accepts Carry's permission. Connect again.", "Trello, Carry'ye verilen izni artık kabul etmiyor. Yeniden bağlanın.")
+        case "trello_keychain_failed", "trello_needs_keychain": return T("Trello's permission could not be saved in the Keychain. Try again.", "Trello izni Anahtar Zinciri'ne kaydedilemedi. Tekrar deneyin.")
+        case "trello_team_key_missing": return T("Your team's Trello connection is not set up yet: its key is not in the team notes. Once it is, you connect in one click.", "Ekibin Trello bağlantısı henüz kurulmamış: anahtarı ekip notlarında (OKB) yok. Eklenince tek tıkla bağlanırsınız.")
+        case "trello_port_busy": return T("Another app on this Mac holds the address Trello sends you back to (localhost:47821). Quit it and try again.", "Bu Mac'te başka bir uygulama, Trello'nun sizi geri gönderdiği adresi (localhost:47821) tutuyor. O uygulamayı kapatıp tekrar deneyin.")
+        case "trello_denied": return T("Carry was not allowed in Trello. Try again if you want.", "Trello'da Carry'ye izin verilmedi. İsterseniz yeniden deneyin.")
+        case "trello_timeout": return T("Trello did not answer within ten minutes. Try again.", "Trello'dan on dakika içinde yanıt gelmedi. Yeniden deneyin.")
+        case "trello_token_invalid": return T("Trello's answer could not be read. Try again.", "Trello'nun yanıtı okunamadı. Yeniden deneyin.")
         case "item_already_decided", "item_not_found": return T("This item was already decided; the list is refreshed.", "Bu madde zaten karara bağlanmış; liste yenilendi.")
         default:
             if message.hasPrefix("trello_unreachable") || message.hasPrefix("trello_http") {
@@ -308,6 +312,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
     }
     func signIn(step: Int = 0) { loginStep = step; showLogin = true }
+    /// The one-click Trello connection: Carry opens Trello's page in the browser and waits for the
+    /// person's permission to come back to this Mac. Shown by TrelloConnect, polled by `tick`.
+    @Published var trelloLogin: [String: Any] = [:]
+    var trelloKeyKnown: Bool { profile["trello_key_known"] as? Bool == true }
+    var trelloWaiting: Bool { ["waiting", "checking"].contains(str(trelloLogin, "state")) }
+    func connectTrello() {
+        request("trello_login", ["language": Lang.code == "tr" ? "tr" : "en"], clearError: false, quiet: true, orElse: { e in
+            self.trelloLogin = ["state": "failed", "error": (e as? UIError)?.message ?? e.localizedDescription]
+        }) { value in
+            self.trelloLogin = value
+            self.openTrelloPage()
+        }
+    }
+    func openTrelloPage() { if let url = URL(string: str(trelloLogin, "authorize_url", "")) { NSWorkspace.shared.open(url) } }
+    func cancelTrello() { run("trello_login_cancel", clearError: false, quiet: true) { self.trelloLogin = $0 } }
     /// İşlerin: the signed-in person's work from Trello, the team notes and accepted chat items.
     @Published var work: [String: Any] = [:]
     func loadWork() { run("work", clearError: false, quiet: true) { value in if !same(value, self.work) { self.work = value } } }
@@ -316,6 +335,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func tick() {
         guard !workspace.isEmpty, !busy else { return }
         if Date().timeIntervalSince(trelloAsked) > 60 { loadTrello(); loadWork() }
+        if trelloWaiting {
+            run("trello_login_status", clearError: false, quiet: true) { value in
+                if !same(value, self.trelloLogin) { self.trelloLogin = value }
+                guard str(value, "state") == "connected" else { return }
+                self.showLogin = false
+                self.notice = T("Trello is connected. Your open cards show on Home.", "Trello bağlandı. Açık kartların ana sayfada görünüyor.")
+                self.run("profile", clearError: false, quiet: true) { self.profileChanged($0) }
+            }
+        }
         if ["starting", "waiting_for_browser"].contains(str(githubLogin, "state")) {
             run("github_login_status", clearError: false, quiet: true) { value in
                 self.githubLogin = value
@@ -1954,18 +1982,12 @@ struct TrelloSettings: View {
         model.run("trello_settings", ["boards": ids, "since": day], quiet: true) { model.trello = $0 }
     }
     var body: some View {
-        GroupBox("Trello") {
-            VStack(alignment: .leading, spacing: 10) {
-                if model.trello["connected"] as? Bool != true {
-                    HStack {
-                        Text(T("Not connected. Carry asks Trello only for permission to read.", "Bağlı değil. Carry Trello'dan yalnız okuma izni ister.")).foregroundStyle(.secondary)
-                        Spacer()
-                        Button(T("Connect Trello", "Trello'yu bağla")) { model.signIn(step: 1) }
-                    }
-                } else {
-                    if let user = model.trello["username"] as? String, !user.isEmpty {
-                        Label(T("Connected as @\(user)", "@\(user) olarak bağlı"), systemImage: "checkmark.circle.fill").foregroundStyle(.green)
-                    }
+        GroupBox(T("Connection", "Bağlantı")) {
+            TrelloConnect(model: model).padding(12).frame(maxWidth: .infinity, alignment: .leading)
+        }
+        if model.trelloConnected && model.trello["connected"] as? Bool == true {
+            GroupBox(T("Boards", "Panolar")) {
+                VStack(alignment: .leading, spacing: 10) {
                     Text(T("Home shows the open cards assigned to you on these boards. Cards in a Done list are left out.",
                            "Ana sayfa bu panolarda size atanmış açık kartları gösterir. Done listesindeki kartlar gösterilmez.")).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     ForEach(boards.indices, id: \.self) { i in
@@ -1989,8 +2011,51 @@ struct TrelloSettings: View {
                     }
                     Text(T("A card's day is its due date, or its latest change when it has none.",
                            "Kartın günü son tarihidir; son tarihi yoksa son değiştiği gündür.")).font(.caption).foregroundStyle(.secondary)
+                }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+}
+
+/// Trello in one click, the same in the sign-in sheet and in Settings › Trello: the browser opens
+/// Trello's page, the person allows Carry, and Carry keeps the permission on its own. Nobody types a
+/// key or a token; without the team's key in the team notes there is only an explanation.
+struct TrelloConnect: View {
+    @ObservedObject var model: Model
+    var body: some View {
+        let state = str(model.trelloLogin, "state", "idle")
+        VStack(alignment: .leading, spacing: 10) {
+            if model.trelloConnected {
+                HStack {
+                    let user = str(model.trello, "username", "")
+                    Label(user.isEmpty ? T("Connected", "Bağlı") : T("Connected as @\(user)", "@\(user) olarak bağlı"), systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                    Spacer()
+                    Button(T("Disconnect", "Bağlantıyı kes")) { model.run("trello_disconnect") { model.profileChanged($0) } }
                 }
-            }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+            } else if !model.trelloKeyKnown {
+                Text(UIError("trello_team_key_missing").localizedDescription).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            } else if model.trelloWaiting {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(state == "checking" ? T("Checking with Trello…", "Trello ile doğrulanıyor…")
+                                             : T("Trello opened in your browser. Click Allow there; Carry connects by itself.", "Trello tarayıcıda açıldı. Orada İzin ver'e bas; Carry kendiliğinden bağlanır."))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                HStack {
+                    Button(T("Open the page again", "Sayfayı yeniden aç")) { model.openTrelloPage() }.disabled(state == "checking")
+                    Spacer()
+                    Button(T("Cancel", "Vazgeç")) { model.cancelTrello() }.disabled(state == "checking")
+                }
+            } else {
+                if state == "failed" {
+                    Text(UIError(str(model.trelloLogin, "error", "")).localizedDescription).foregroundStyle(.red).font(.callout).fixedSize(horizontal: false, vertical: true)
+                }
+                HStack {
+                    Text(T("Not connected. Carry asks Trello only for permission to read.", "Bağlı değil. Carry Trello'dan yalnız okuma izni ister.")).foregroundStyle(.secondary)
+                    Spacer()
+                    Button(state == "failed" ? T("Try again", "Yeniden dene") : T("Connect to Trello", "Trello'ya bağlan")) { model.connectTrello() }.buttonStyle(.borderedProminent)
+                }
+            }
         }
     }
 }
@@ -2368,7 +2433,7 @@ struct SettingsView: View {
                 case "General": GeneralSettings(model: model)
                 case "Trello": ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
-                        PageIntro(icon: "square.stack", title: "Trello", text: T("Which of your Trello cards Home shows.", "Ana sayfanın Trello kartlarından hangilerini gösterdiği."))
+                        PageIntro(icon: "square.stack", title: "Trello", text: T("Your Trello connection, and which of your cards Home shows.", "Trello bağlantın ve ana sayfanın hangi kartlarını gösterdiği."))
                         TrelloSettings(model: model)
                     }.padding(30).frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -5036,25 +5101,14 @@ struct LoginSheet: View {
     @State private var name = ""
     @State private var guessed = ""
     @State private var typed = false
-    @State private var key = ""
-    @State private var token = ""
     @State private var error = ""
     @State private var working = false
     static let other = "\u{0}other"
     var names: [String] { model.profile["names"] as? [String] ?? [] }
     var domains: [String] { model.profile["email_domains"] as? [String] ?? [] }
-    var needsKey: Bool { model.profile["trello_key_known"] as? Bool != true }
     var picked: Binding<String> {
         Binding(get: { typed ? Self.other : name },
                 set: { value in if value == Self.other { typed = true; name = "" } else { typed = false; name = value } })
-    }
-    var authorizeURL: URL? {
-        if let url = model.profile["trello_authorize_url"] as? String { return URL(string: url) }
-        let k = key.trimmingCharacters(in: .whitespaces)
-        guard !k.isEmpty, var c = URLComponents(string: "https://trello.com/1/authorize") else { return nil }
-        c.queryItems = [URLQueryItem(name: "expiration", value: "never"), URLQueryItem(name: "scope", value: "read"),
-                        URLQueryItem(name: "response_type", value: "token"), URLQueryItem(name: "name", value: "Carry"), URLQueryItem(name: "key", value: k)]
-        return c.url
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -5100,32 +5154,10 @@ struct LoginSheet: View {
         Text(T("Home then shows the open cards assigned to you. Carry asks Trello only for permission to read: it never changes a card.",
                "Böylece ana sayfa sana atanmış açık kartları gösterir. Carry Trello'dan yalnız okuma izni ister: hiçbir kartı değiştirmez."))
             .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-        if needsKey {
-            SecureField(T("Trello API key (trello.com/app-key)", "Trello API anahtarı (trello.com/app-key)"), text: $key).textFieldStyle(.roundedBorder)
-            Text(T("The team's Trello key is not in the team notes yet, so this Mac needs one once. Once it is there, nobody is asked for it.",
-                   "Ekibin Trello anahtarı ekip notlarında (OKB) henüz yok; bu yüzden bu Mac'te bir kez gerekiyor. Oraya eklenince kimseye sorulmaz."))
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-        }
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text("1.").bold()
-            VStack(alignment: .leading, spacing: 6) {
-                Text(T("Allow Carry in Trello. Trello then shows a long token.", "Trello'da Carry'ye izin ver. Trello sana uzun bir token gösterir."))
-                Button(T("Allow in Trello", "Trello'da izin ver")) { if let url = authorizeURL { NSWorkspace.shared.open(url) } }.disabled(authorizeURL == nil)
-            }
-        }
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text("2.").bold()
-            VStack(alignment: .leading, spacing: 6) {
-                Text(T("Copy that token and paste it here.", "O token'ı kopyalayıp buraya yapıştır."))
-                SecureField("Token", text: $token).textFieldStyle(.roundedBorder)
-            }
-        }
+        TrelloConnect(model: model)
         HStack {
-            Button(T("Skip for now", "Şimdilik atla")) { dismiss() }
             Spacer()
-            if working { ProgressView().controlSize(.small) }
-            Button(T("Connect", "Bağla")) { connect() }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
-                .disabled(token.trimmingCharacters(in: .whitespaces).isEmpty || (needsKey && key.isEmpty) || working)
+            Button(model.trelloConnected ? T("Done", "Tamam") : T("Skip for now", "Şimdilik atla")) { dismiss() }
         }.padding(.top, 6)
     }
     /// The name a mail suggests, unless one was already chosen by hand.
@@ -5143,20 +5175,8 @@ struct LoginSheet: View {
             working = false; error = e.localizedDescription
         }) { value in
             working = false; model.profileChanged(value)
-            // Trello follows on its own only when the team notes hold the team's key: nobody is asked for an API key unasked.
+            // Trello follows only when the team notes hold the team's key; without it there would be nothing to click.
             if value["trello_connected"] as? Bool == true || value["trello_key_known"] as? Bool != true { dismiss() } else { model.loginStep = 1 }
-        }
-    }
-    func connect() {
-        error = ""; working = true
-        var fields: [String: Any] = ["token": token]
-        if needsKey { fields["key"] = key }
-        model.request("trello_connect", fields, clearError: false, quiet: true, orElse: { e in
-            working = false; error = e.localizedDescription
-        }) { value in
-            working = false; token = ""; key = ""; model.profileChanged(value)
-            model.notice = T("Trello is connected. Your open cards show on Home.", "Trello bağlandı. Açık kartların ana sayfada görünüyor.")
-            dismiss()
         }
     }
 }

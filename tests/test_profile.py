@@ -88,20 +88,33 @@ class ProfileTest(WorkspaceCase):
         self.assertEqual(view['names'], ['Deniz Kaya', 'İsmail', 'Sude'])
         self.assertFalse(view['trello_connected'])
         self.assertTrue(view['trello_key_known'])
-        self.assertIn('scope=read', view['trello_authorize_url'])
-        self.assertNotIn('trello_api_key', view)
+        self.assertNotIn('0123456789abcdef0123456789abcdef', json.dumps(view))
         self.assertEqual(profile.view(self.workspace, 'deniz.kaya@ornek.com.tr')['guess'], 'Deniz Kaya')
 
-    def test_trello_connects_with_the_team_key_and_only_a_pasted_token(self):
+    def test_trello_connects_in_one_click_under_the_team_key(self):
+        from carry.desktop import Bridge
+        bridge = Bridge()
+        call = lambda action, **fields: bridge.dispatch(dict(action=action, workspace=str(self.state), **fields))
+        with self.assertRaises(CarryError) as caught:
+            call('trello_login')
+        self.assertEqual(str(caught.exception), 'trello_team_key_missing')
+        self.assertEqual(call('trello_login_status'), dict(state='idle'))
         self.team_json({'trello_api_key': '0123456789abcdef0123456789abcdef'})
-        with patch.object(profile.trello, 'connect', return_value=dict(username='ismail', name='İsmail')) as connect, \
-                patch.object(profile.trello, 'credentials', return_value=None):
-            profile.connect_trello(self.workspace, ' tok ')
-        connect.assert_called_once_with(self.state, '0123456789abcdef0123456789abcdef', 'tok')
-        (self.team / '.carry' / 'team.json').unlink()
-        with patch.object(profile.trello, 'credentials', return_value=None), self.assertRaises(CarryError) as caught:
-            profile.connect_trello(self.workspace, 'tok')
-        self.assertEqual(str(caught.exception), 'trello_key_and_token_required')
+        with patch.object(profile.trello, 'PORT', 0):
+            first = call('trello_login', language='tr')
+            self.addCleanup(bridge.trello_login.stop)
+            self.assertEqual(first['state'], 'waiting')
+            self.assertIn('key=0123456789abcdef0123456789abcdef', first['authorize_url'])
+            self.assertIn('callback_method=fragment', first['authorize_url'])
+            waiting = bridge.trello_login
+            again = call('trello_login')
+            self.addCleanup(bridge.trello_login.stop)
+        # A second click replaces the first, whose page then answers no more.
+        self.assertEqual(waiting.result, dict(state='cancelled'))
+        self.assertNotEqual(again['authorize_url'], first['authorize_url'])
+        self.assertEqual(call('trello_login_status')['state'], 'waiting')
+        self.assertEqual(call('trello_login_cancel'), dict(state='cancelled'))
+        self.assertEqual(call('trello_login_status'), dict(state='cancelled'))
 
     def test_signing_out_forgets_the_profile_and_trello_but_keeps_the_notes(self):
         profile.save(self.workspace, 'ismail@ornek.com.tr', 'İsmail')

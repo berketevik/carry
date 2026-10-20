@@ -1,7 +1,8 @@
 """Local app bridge: one bounded JSON request/response, over private stdio pipes.
 
-No listener, telemetry, model downloads or shell execution. A fresh Workspace
-is loaded for every command so CLI/hook edits remain visible to the app.
+No telemetry, model downloads or shell execution, and no standing listener: only while a
+Trello sign-in waits does a loopback page take the browser's answer, for ten minutes at most.
+A fresh Workspace is loaded for every command so CLI/hook edits remain visible to the app.
 """
 import json
 import os
@@ -165,6 +166,7 @@ class Bridge:
         self.plans = {}
         self.vault_plans = {}
         self.login = None
+        self.trello_login = None
 
     def dispatch(self, request):
         if not isinstance(request, dict) or not isinstance(request.get('action'), str):
@@ -218,14 +220,26 @@ class Bridge:
             from . import work
             work.mark_done(ws, request.get('done'))
             return work.build(ws)
-        if action in ('profile', 'profile_save', 'profile_logout', 'trello_connect', 'trello_disconnect'):
+        if action == 'trello_login':
+            from . import profile
+            # A new click replaces the waiting one, which frees the port first.
+            if self.trello_login:
+                self.trello_login.cancel()
+            language = request.get('language') if request.get('language') in ('en', 'tr') else 'en'
+            self.trello_login = profile.trello_login(ws, language)
+            return self.trello_login.result
+        if action == 'trello_login_status':
+            return self.trello_login.result if self.trello_login else dict(state='idle')
+        if action == 'trello_login_cancel':
+            if self.trello_login:
+                self.trello_login.cancel()
+            return dict(state='cancelled')
+        if action in ('profile', 'profile_save', 'profile_logout', 'trello_disconnect'):
             from . import profile
             if action == 'profile_save':
                 return profile.save(ws, request.get('email'), request.get('name'))
             if action == 'profile_logout':
                 return profile.logout(ws)
-            if action == 'trello_connect':
-                return profile.connect_trello(ws, request.get('token'), request.get('key'))
             if action == 'trello_disconnect':
                 return profile.disconnect_trello(ws)
             return profile.view(ws, request.get('email'))
