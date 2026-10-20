@@ -50,12 +50,16 @@ TOOLS = [
     {
         "name": "carry_recall",
         "description": (
-            "Search the user's knowledge base (their own Markdown notes, and their "
-            "team's when connected) and return the most "
-            "relevant passages with citations, record ids, revisions and state. "
-            "Call it before answering anything about the user's own decisions, "
-            "projects or notes. Returns an explicit no-evidence state when nothing "
-            "matches; it never generates an answer itself."),
+            # Clients that load tools on demand find them by searching names and descriptions,
+            # so the words a question about the owner's work would use belong here.
+            "Search the user's notes and knowledge base (their own Markdown notes, such as an "
+            "Obsidian vault, and their team's when connected): what was done, decided or found "
+            "about a customer, brand, project, person or system, and when. Call it before "
+            "answering anything about the user's own work, decisions, projects, customers or "
+            "notes, before chat, mail or time-tracking tools. In Turkish: notlar, notlarım, "
+            "bilgi bankası, ne yapıldı, karar, müşteri, marka, proje. Returns the most relevant "
+            "passages with citations, record ids, revisions and state, or an explicit "
+            "no-evidence state when nothing matches; it never generates an answer itself."),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -87,8 +91,8 @@ TOOLS = [
     {
         "name": "carry_catalog",
         "description": (
-            "List every searchable file with its one-line description (or title), like a "
-            "folder index. Use it when carry_recall found nothing that answers: pick the "
+            "List every searchable file of the user's notes and knowledge base with its one-line "
+            "description (or title), like a folder index. Use it when carry_recall found nothing that answers: pick the "
             "files whose description fits, then call carry_recall with their terms. Returns "
             "no note bodies."),
         "inputSchema": {"type": "object", "properties": {
