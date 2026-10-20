@@ -17,7 +17,7 @@ BOARDS = [dict(id='b1', name='Ekip', lists=[dict(id='l1', name='IN PROGRESS'), d
 CARDS = [
     dict(id='c1', name='Son tarihsiz eski', idBoard='b1', idList='l1', due=None, dueComplete=False,
          shortUrl='https://trello.com/c/1', dateLastActivity='2026-10-01T10:00:00.000Z'),
-    dict(id='c2', name='Yarın teslim', idBoard='b2', idList='l2', due='2026-10-20T09:00:00.000Z', dueComplete=False,
+    dict(id='c2', name='Yarın teslim', idShort=213, idBoard='b2', idList='l2', due='2026-10-20T09:00:00.000Z', dueComplete=False,
          shortUrl='https://trello.com/c/2', dateLastActivity='2026-10-18T10:00:00.000Z'),
     dict(id='c3', name='Son tarihsiz yeni', idBoard='b1', idList='l1', due=None, dueComplete=False,
          shortUrl='https://trello.com/c/3', dateLastActivity='2026-10-19T10:00:00.000Z'),
@@ -152,6 +152,13 @@ class TrelloTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class CardNumberTest(unittest.TestCase):
+    def test_a_card_keeps_its_number_so_notes_can_name_it(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(trello, '_get', side_effect=api()):
+            result = trello.refresh(Path(tmp), ('k', 't'))
+        self.assertEqual({c['name']: c['number'] for c in result['cards']}['Yarın teslim'], 213)
 
 
 class KeychainTest(unittest.TestCase):

@@ -211,6 +211,13 @@ class Bridge:
             from . import trello
             trello.save_settings(ws.state_dir, boards=request.get('boards'), since=request.get('since'))
             return trello.view(ws.state_dir)
+        if action == 'work':
+            from . import work
+            return work.build(ws)
+        if action == 'work_done':
+            from . import work
+            work.mark_done(ws, request.get('done'))
+            return work.build(ws)
         if action in ('profile', 'profile_save', 'profile_logout', 'trello_connect', 'trello_disconnect'):
             from . import profile
             if action == 'profile_save':

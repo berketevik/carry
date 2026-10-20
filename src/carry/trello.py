@@ -29,7 +29,7 @@ CACHE = 'trello.json'
 SETTINGS = 'trello-settings.json'
 MAX_AGE = 300
 TIMEOUT = 15
-CARD_FIELDS = 'name,idBoard,idList,due,dueComplete,shortUrl,dateLastActivity'
+CARD_FIELDS = 'name,idShort,idBoard,idList,due,dueComplete,shortUrl,dateLastActivity'
 # Trello marks a card complete only when it has a due date; teams close the rest by moving it to such a list.
 DONE_LISTS = re.compile(r'\b(done|completed|tamamlan|bitti|bitenler)', re.I)
 _refreshing = threading.Lock()
@@ -165,7 +165,7 @@ def refresh(state_dir, creds=None):
                   boards=[dict(id=b['id'], name=b.get('name', '')) for b in boards],
                   cards=[dict(name=c.get('name', ''), board_id=lists[c['idList']][0], board=lists[c['idList']][1],
                               list=lists[c['idList']][2], due=c.get('due'), url=c.get('shortUrl', ''),
-                              touched=c.get('dateLastActivity')) for c in cards])
+                              touched=c.get('dateLastActivity'), number=c.get('idShort')) for c in cards])
     atomic_text(state_dir / CACHE, json.dumps(result, ensure_ascii=False))
     return result
 
