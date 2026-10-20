@@ -58,19 +58,20 @@ def mark_done(workspace, targets, today=None):
     atomic_text(path, json.dumps(dict(done=saved), ensure_ascii=False, indent=1) + '\n')
 
 
-def _vault_root(workspace):
+def _vault(workspace):
+    """(source id, root) of the vault the inbox recaps are in, or (None, None)."""
     from .vaultview import default_vault
     sid = default_vault(workspace)
     if not sid:
-        return None
+        return None, None
     source = workspace.source(sid)
     root = Path(source.root).expanduser()
-    return None if source.github or not root.is_dir() else root
+    return (None, None) if source.github or not root.is_dir() else (sid, root)
 
 
 def _from_digests(workspace, today):
     """(open items accepted and not done, decisions accepted lately) from the inbox recaps."""
-    root = _vault_root(workspace)
+    sid, root = _vault(workspace)
     if root is None:
         return [], []
     done = done_items(workspace.state_dir)
@@ -89,11 +90,11 @@ def _from_digests(workspace, today):
             day = it['said'] or it['date'] or parsed['created']
             if it['kind'].lower() in OPEN_KINDS and (rel, it['id']) not in done:
                 opens.append(dict(id=f'chat:{rel}:{it["id"]}', title=it['statement'], due=None, touched=day,
-                                  open=dict(kind='note', path=rel),
-                                  badges=[dict(kind=parsed['kind'], day=day, path=rel)],
+                                  open=dict(kind='note', source_id=sid, path=rel),
+                                  badges=[dict(kind=parsed['kind'], day=day, source_id=sid, path=rel)],
                                   done=[dict(digest=rel, item=it['id'])]))
             elif it['kind'].lower() in DECISION_KINDS and day >= since:
-                decisions.append(dict(text=it['statement'], day=day, digest=rel))
+                decisions.append(dict(text=it['statement'], day=day, source_id=sid, digest=rel))
     decisions.sort(key=lambda d: d['day'], reverse=True)
     return opens, decisions[:8]
 

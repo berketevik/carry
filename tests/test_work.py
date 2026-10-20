@@ -98,6 +98,7 @@ class WorkTest(WorkspaceCase):
         before = (self.vault / rel).read_text(encoding='utf-8')
         row = next(r for r in self.build(cards=[])['items'] if r['title'] == 'Kabul edilen iş')
         self.assertEqual(row['done'], [dict(digest=rel, item=digest.item_id('Kabul edilen iş'))])
+        self.assertEqual(row['open'], dict(kind='note', source_id='notes', path=rel))
         work.mark_done(self.workspace, row['done'])
         self.assertNotIn('Kabul edilen iş', self.titles(self.build(cards=[])))
         self.assertEqual((self.vault / rel).read_text(encoding='utf-8'), before)

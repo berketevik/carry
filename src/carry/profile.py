@@ -95,14 +95,16 @@ def load(state_dir):
     return saved if isinstance(saved, dict) and saved.get('email') and saved.get('name') else None
 
 
-def view(workspace):
-    """What the sign-in screen and the profile menu show. The Trello key itself stays in Python."""
+def view(workspace, email=None):
+    """What the sign-in screen and the profile menu show, with the name a mail being typed suggests.
+    The Trello key itself stays in Python."""
     allowed = team.sign_in(workspace)
     candidates = names(workspace)
     key = allowed['trello_api_key']
     current = load(workspace.state_dir)
+    email = email or (current or {}).get('email')
     return dict(profile=current, names=candidates, email_domains=allowed['email_domains'],
-                guess=guess(current['email'], candidates) if current else '',
+                guess=guess(email, candidates) if email else '',
                 trello_connected=trello.credentials() is not None, trello_key_known=bool(key),
                 trello_authorize_url=trello.authorize_url(key) if key else None)
 

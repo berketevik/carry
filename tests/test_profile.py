@@ -90,6 +90,7 @@ class ProfileTest(WorkspaceCase):
         self.assertTrue(view['trello_key_known'])
         self.assertIn('scope=read', view['trello_authorize_url'])
         self.assertNotIn('trello_api_key', view)
+        self.assertEqual(profile.view(self.workspace, 'deniz.kaya@ornek.com.tr')['guess'], 'Deniz Kaya')
 
     def test_trello_connects_with_the_team_key_and_only_a_pasted_token(self):
         self.team_json({'trello_api_key': '0123456789abcdef0123456789abcdef'})

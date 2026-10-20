@@ -228,7 +228,7 @@ class Bridge:
                 return profile.connect_trello(ws, request.get('token'), request.get('key'))
             if action == 'trello_disconnect':
                 return profile.disconnect_trello(ws)
-            return profile.view(ws)
+            return profile.view(ws, request.get('email'))
         if action == 'maintenance_status':
             maintenance.automatic(ws)
             return maintenance.job_status(ws)
