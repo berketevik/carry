@@ -7,7 +7,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-import _support  # noqa: F401
+import _support
 from carry import trello
 from carry.errors import CarryError
 
@@ -150,10 +150,6 @@ class TrelloTest(unittest.TestCase):
         self.assertFalse((self.state / trello.CACHE).exists())
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
 class CardNumberTest(unittest.TestCase):
     def test_a_card_keeps_its_number_so_notes_can_name_it(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(trello, '_get', side_effect=api()):
@@ -167,7 +163,11 @@ class KeychainTest(unittest.TestCase):
         failed = subprocess.CalledProcessError(1, ['/usr/bin/security', '-w', 'secret-token'])
         with patch.object(trello.sys, 'platform', 'darwin'), patch.object(trello.subprocess, 'run', side_effect=failed):
             with self.assertRaises(CarryError) as caught:
-                trello._keychain_write('token', 'secret-token')
+                _support.KEYCHAIN['write']('token', 'secret-token')
         self.assertEqual(str(caught.exception), 'trello_keychain_failed')
         self.assertIsNone(caught.exception.__cause__)
         self.assertNotIn('secret-token', repr(caught.exception))
+
+
+if __name__ == '__main__':
+    unittest.main()

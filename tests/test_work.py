@@ -124,10 +124,10 @@ class WorkTest(WorkspaceCase):
         self.assertLess(titles.index('Bugünkü iş'), titles.index('Fikir'))
 
     def test_without_a_profile_only_trello_and_chats(self):
-        profile.logout(self.workspace)
-        self.digest('2026-10-19', [('open item', 'Kabul edilen iş', 'accepted')])
         with patch.object(profile.trello, 'disconnect'):
-            result = self.build(cards=[])
+            profile.logout(self.workspace)
+        self.digest('2026-10-19', [('open item', 'Kabul edilen iş', 'accepted')])
+        result = self.build(cards=[])
         self.assertFalse(result['signed_in'])
         self.assertEqual(self.titles(result), ['Kabul edilen iş'])
 
