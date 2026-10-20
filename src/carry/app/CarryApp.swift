@@ -246,7 +246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     @Published var language = Lang.code {
         didSet { Lang.code = language; UserDefaults.standard.set(language, forKey: "language"); parseFiles() }
     }
-    @Published var settingsTab = "Search"
+    @Published var settingsTab = "General"
     @Published var connectionFormOpen = false
     @Published var settings: [String: Any] = [:]
     @Published var vault: [String: Any] = [:]
@@ -856,9 +856,8 @@ func pageName(_ key: String) -> String {
 }
 func tabName(_ key: String) -> String {
     switch key {
-    case "Search": return T("Search", "Arama")
+    case "Search": return T("Search and index", "Arama ve indeks")
     case "Sources": return T("Note folders", "Not klasörleri")
-    case "Index": return T("Index", "İndeks")
     case "Harvest": return T("Session recap", "Oturum özeti")
     case "Clients": return T("Assistants", "Asistanlar")
     default: return T("General", "Genel")
@@ -1963,6 +1962,9 @@ struct TrelloSettings: View {
                         Button(T("Connect Trello", "Trello'yu bağla")) { model.signIn(step: 1) }
                     }
                 } else {
+                    if let user = model.trello["username"] as? String, !user.isEmpty {
+                        Label(T("Connected as @\(user)", "@\(user) olarak bağlı"), systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                    }
                     Text(T("Home shows the open cards assigned to you on these boards. Cards in a Done list are left out.",
                            "Ana sayfa bu panolarda size atanmış açık kartları gösterir. Done listesindeki kartlar gösterilmez.")).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     ForEach(boards.indices, id: \.self) { i in
@@ -2029,7 +2031,6 @@ struct HarvestSummary: View {
 struct VaultView: View {
     @ObservedObject var model: Model
     @State private var query = ""
-    @State private var sort = "modified"
     @State private var selecting = false
     @State private var selected: Set<String> = []
     @State private var draftFolder = ""
@@ -2054,7 +2055,7 @@ struct VaultView: View {
             }
         }
         if !q.isEmpty { list = list.filter { $0.haystack.contains(q) } }
-        return sort == "name" ? list.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending } : list.sorted { $0.modified > $1.modified }
+        return list.sorted { $0.modified > $1.modified }
     }
     var approvable: [String] { filtered.filter(\.approvable).map(\.path) }
     /// Drafts folder by folder, so a whole group can be approved at once.
@@ -2141,7 +2142,6 @@ struct VaultView: View {
                         Text(T("Main folder", "Ana klasör")).tag("root")
                         ForEach(folders, id: \.self) { Text(T("Folder: ", "Klasör: ") + folderLabel($0)).tag("folder:" + $0) }
                     }.labelsHidden().fixedSize().frame(maxWidth: .infinity, alignment: .leading)
-                    Picker(L("Sort"), selection: $sort) { Text(T("Newest", "Son değişen")).tag("modified"); Text("A–Z").tag("name") }.pickerStyle(.segmented).labelsHidden().frame(width: 150)
                 }
                 if model.vaultFilter == "drafts" || model.vaultFilter == "inbox" {
                     Button { model.page = "Review" } label: {
@@ -2352,7 +2352,7 @@ struct NoteView: View {
 
 struct SettingsView: View {
     @ObservedObject var model: Model
-    let tabs = ["Search", "Index", "Harvest", "Sources", "Clients", "General"]
+    let tabs = ["General", "Sources", "Clients", "Harvest", "Search"]
     var body: some View {
         VStack(spacing: 0) {
             Picker(L("Settings"), selection: $model.settingsTab) { ForEach(tabs, id: \.self) { Text(tabName($0)).tag($0) } }
@@ -2361,11 +2361,10 @@ struct SettingsView: View {
                 // Search stays alive while hidden so unsaved edits survive a tab switch.
                 SearchSettings(model: model).opacity(model.settingsTab == "Search" ? 1 : 0).allowsHitTesting(model.settingsTab == "Search")
                 switch model.settingsTab {
-                case "Index": IndexSettings(model: model)
                 case "Sources": Sources(model: model)
                 case "Harvest": HarvestSettings(model: model)
                 case "Clients": Connections(model: model)
-                case "General": AdvancedSettings(model: model)
+                case "General": GeneralSettings(model: model)
                 default: EmptyView()
                 }
             }
@@ -2442,8 +2441,9 @@ struct SearchSettings: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                PageIntro(icon: "magnifyingglass", title: T("Search", "Arama"),
-                          text: T("How Carry finds the right notes when your assistant asks.", "Asistanınız sorduğunda Carry'nin doğru notları nasıl bulduğu."))
+                PageIntro(icon: "magnifyingglass", title: T("Search and index", "Arama ve indeks"),
+                          text: T("How Carry finds the right notes when your assistant asks. For this it keeps an index of your notes: it follows your changes by itself and can always be rebuilt; your notes never change.",
+                                  "Asistanın sorduğunda Carry'nin doğru notları nasıl bulduğu. Bunun için notlarından bir indeks tutar: değişikliklerini kendisi izler, her zaman yeniden oluşturulabilir; notların hiç değişmez."))
                 GroupBox(T("How should Carry search?", "Carry nasıl arasın?")) {
                     VStack(alignment: .leading, spacing: 16) {
                         Text(legacyChecker ? T("1. How should it find notes?", "1. Notları nasıl bulsun?") : T("How should it find notes?", "Notları nasıl bulsun?")).font(.headline)
@@ -2497,6 +2497,7 @@ struct SearchSettings: View {
                     }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
                 }
                 if preset.contains("jev") || str(model.settings, "preset", "").contains("jev") { JevForm(model: model) }
+                IndexSettings(model: model)
                 DisclosureGroup(T("Advanced", "Gelişmiş")) {
                     VStack(alignment: .leading, spacing: 16) {
                         GroupBox(L("Results handed to your assistant")) {
@@ -2514,6 +2515,7 @@ struct SearchSettings: View {
                                 }
                             }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
                         }
+                        IndexSettings(model: model, advanced: true)
                     }.padding(.top, 8)
                 }
             }.padding(30).frame(maxWidth: .infinity, alignment: .leading)
@@ -2531,46 +2533,57 @@ struct SearchSettings: View {
     }
 }
 
-/// Prompt capture, per assistant: whether it records, the last recorded event, pause or resume.
-/// Turning it on needs a project folder and a writable source, so that stays with the assistant's
-/// connection form; this view links there.
+/// Prompt capture, per assistant, on the Assistants tab: whether it records, the last record, pause or resume.
+/// Turning it on needs a project folder and a writable source, so that stays with the connection form below it.
 struct PromptCapture: View {
     @ObservedObject var model: Model
+    static let iso: ISO8601DateFormatter = { let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return f }()
+    func stateText(_ state: String) -> String {
+        switch state {
+        case "captured", "duplicate", "harness_event": return T("Recording your messages.", "Mesajlarını kaydediyor.")
+        case "paused": return T("Paused.", "Duraklatıldı.")
+        case "no_receipt": return T("Set up; nothing recorded yet. Restart the assistant and send a message in the project.", "Kuruldu; henüz kayıt yok. Asistanı yeniden başlatıp projede bir mesaj gönder.")
+        case "unsupported_version": return T("The assistant is too old: Claude Code 2.1.196 or Codex CLI 0.153.4 or newer is needed.", "Asistanın sürümü eski: Claude Code 2.1.196 ya da Codex CLI 0.153.4 veya üstü gerekir.")
+        case "hooks_disabled": return T("Hooks are turned off in this assistant. Turn them on, then set it up again.", "Bu asistanda kancalar kapalı. Açıp yeniden kur.")
+        case "client_unavailable": return T("The assistant was not found on this Mac.", "Asistan bu Mac'te bulunamadı.")
+        default: return T("The last message was not recorded (\(state)).", "Son mesaj kaydedilemedi (\(state)).")
+        }
+    }
     var body: some View {
         Text(T("Prompt capture", "Mesaj kaydı")).font(.title3.bold()).padding(.top, 8)
         Text(T("Optional. Records your own messages in a project word for word (replies and tool output are left out, secrets masked as best as possible); each one becomes an unaccepted draft under the writable source.",
-               "İsteğe bağlı. Bir projedeki kendi mesajlarınızı kelimesi kelimesine kaydeder (yanıtlar ve araç çıktıları alınmaz, gizli bilgiler elden geldiğince maskelenir); her biri yazılabilir kaynakta onaylanmamış bir taslak olur."))
+               "İsteğe bağlı. Bir projedeki kendi mesajlarını kelimesi kelimesine kaydeder (yanıtlar ve araç çıktıları alınmaz, gizli bilgiler elden geldiğince maskelenir); her biri yazılabilir klasörde onaylanmamış bir taslak olur."))
             .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-        if model.adapters.isEmpty {
-            GroupBox { Text(T("Not set up for any assistant.", "Hiçbir asistan için kurulmadı.")).foregroundStyle(.secondary).padding(12).frame(maxWidth: .infinity, alignment: .leading) }
-        }
         ForEach(model.adapters.indices, id: \.self) { i in
             let adapter = model.adapters[i]
-            GroupBox(str(adapter,"client").capitalized) {
+            let state = str(adapter, "state", "")
+            GroupBox(str(adapter, "client") == "claude" ? "Claude Code" : "Codex") {
                 VStack(alignment: .leading, spacing: 10) {
-                    LabeledContent(L("Capture capability"), value: str(adapter["capability"] as? [String: Any] ?? [:],"state"))
-                    LabeledContent(L("Persisted capture"), value: str(adapter,"state"))
+                    Text(stateText(state)).fixedSize(horizontal: false, vertical: true)
                     if let receipt = adapter["receipt"] as? [String: Any] {
-                        Text(L("Last successful event: ") + str(receipt,"last_success_at")).font(.caption)
-                        if let sid = receipt["source_id"] as? String, let path = receipt["event_path"] as? String { Button(L("Open raw event")) { model.openSource(sid, path) } }
+                        if let at = Self.iso.date(from: str(receipt, "last_success_at", "")) {
+                            Text(T("Last recorded: ", "Son kayıt: ") + at.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(.secondary)
+                        }
+                        if let sid = receipt["source_id"] as? String, let path = receipt["event_path"] as? String {
+                            Button(T("Open the last record", "Son kaydı aç")) { model.openSource(sid, path) }
+                        }
                     }
-                    if let action = adapter["action"] as? String { Text(action).font(.caption).foregroundStyle(.secondary) }
-                    Button(str(adapter,"state") == "paused" ? L("Resume capture") : L("Pause capture")) {
-                        model.run("pause", ["client": str(adapter,"client"), "paused": str(adapter,"state") != "paused"]) { _ in model.refresh() }
+                    Button(state == "paused" ? T("Resume", "Sürdür") : T("Pause", "Duraklat")) {
+                        model.run("pause", ["client": str(adapter, "client"), "paused": state != "paused"]) { _ in model.refresh() }
                     }
-                }.padding(12)
+                }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        Text(L("Native test: restart the selected client, complete its project and hook approvals, then submit ‘Carry connection test — synthetic Cedar note.’ Refresh here. Only a persisted receipt counts as capture success.")).font(.callout).foregroundStyle(.secondary)
-        Button(T("Set up prompt capture for a project…", "Bir proje için mesaj kaydını kur…")) {
-            model.settingsTab = "Clients"; model.connectionFormOpen = true
+        Button(model.adapters.isEmpty ? T("Set up prompt capture for a project…", "Bir proje için mesaj kaydını kur…") : T("Set it up for another project…", "Başka bir proje için kur…")) {
+            model.connectionFormOpen = true
         }
     }
 }
 
-/// The search index: how fresh it is, how it keeps up, and the checks and rebuild.
+/// The search index, on the Search and index tab: its state and rebuild, or (advanced) how it keeps up and the checks.
 struct IndexSettings: View {
     @ObservedObject var model: Model
+    var advanced = false
     @State private var autoRefresh = true
     @State private var refreshSeconds = 60
     @State private var githubSeconds = 300
@@ -2599,7 +2612,7 @@ struct IndexSettings: View {
     }
     func count(_ value: [String: Any], _ key: String) -> String { String(Int(num(value, key))) }
     @ViewBuilder var status: some View {
-        GroupBox {
+        GroupBox(T("Index", "İndeks")) {
             VStack(alignment: .leading, spacing: 8) {
                 LabeledContent(T("State", "Durum"), value: stateText(str(index, "state", "")))
                 LabeledContent(T("Notes indexed", "İndekslenen not"), value: count(index, "indexed_files") + " / " + count(index, "corpus_files"))
@@ -2607,10 +2620,7 @@ struct IndexSettings: View {
                 if num(index, "changed_files") > 0 { LabeledContent(T("Waiting to be indexed", "İndekslenmeyi bekleyen"), value: count(index, "changed_files")) }
                 if num(build, "at") > 0 { LabeledContent(T("Last updated", "Son güncelleme"), value: ago(num(build, "at"))) }
                 LabeledContent(T("Search by meaning", "Anlama göre arama"), value: str(embedding, "name") + " · " + str(embedding, "model"))
-                FlowLayout {
-                    Button(T("Rebuild the index", "İndeksi yeniden oluştur")) { model.run("index") { model.job = $0; model.notice = L("Rebuilding the index in the background.") } }
-                    Button(T("Refresh status", "Durumu yenile")) { model.refresh() }
-                }
+                Button(T("Rebuild the index", "İndeksi yeniden oluştur")) { model.run("index") { model.job = $0; model.notice = L("Rebuilding the index in the background.") } }
             }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
         }
     }
@@ -2649,15 +2659,8 @@ struct IndexSettings: View {
         }
     }
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                PageIntro(icon: "square.stack.3d.up", title: T("Index", "İndeks"),
-                          text: T("What Carry prepares from your notes so it can search them quickly. It follows your changes by itself and can always be rebuilt; your notes are never changed.",
-                                  "Carry'nin notlarınızda hızlı arama yapabilmek için hazırladığı bilgiler. Değişikliklerinizi kendisi izler ve her zaman yeniden oluşturulabilir; notlarınız hiç değişmez."))
-                status
-                freshness
-                checks
-            }.padding(30).frame(maxWidth: .infinity, alignment: .leading)
+        VStack(alignment: .leading, spacing: 16) {
+            if advanced { freshness; checks } else { status }
         }.onAppear(perform: load).onChange(of: pretty(retrieval)) { load() }
     }
 }
@@ -2669,10 +2672,6 @@ struct HarvestSettings: View {
     @State private var confirmReplace = false
     var schedule: [String: Any] { model.settings["schedule"] as? [String: Any] ?? [:] }
     var foreign: Bool { schedule["installed"] as? Bool == true && schedule["this_workspace"] as? Bool == false }
-    var language: Binding<String> {
-        Binding(get: { str(model.settings, "draft_language", "English") },
-                set: { value in model.run("harvest_language", ["language": value]) { model.settings = $0; model.loadVault(); model.notice = L("Draft language saved. It applies to every harvest: nightly, manual and at chat end.") } })
-    }
     func load() {
         enabled = schedule["installed"] as? Bool == true && !foreign
         if enabled { time = Calendar.current.date(bySettingHour: Int(num(schedule, "hour", 21)), minute: Int(num(schedule, "minute", 30)), second: 0, of: Date()) ?? time }
@@ -2688,16 +2687,9 @@ struct HarvestSettings: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                PageIntro(icon: "tray.and.arrow.down", title: T("Capture", "Yakalama"),
-                          text: T("What Carry takes from your chats. After you chat with your assistant in your notes folder, Carry picks out what is worth keeping (decisions, facts, preferences, unfinished work) into a draft; you go through it item by item on the Review page. Recording your prompts word for word is a separate, optional step below.",
-                                  "Carry'nin sohbetlerinizden aldıkları. Not klasörünüzde asistanınızla sohbet ettikten sonra Carry saklanmaya değer olanları (kararlar, bilgiler, tercihler, yarım kalan işler) bir taslağa çıkarır; siz İncele sayfasında madde madde geçersiniz. Mesajlarınızı kelimesi kelimesine kaydetmek ayrı ve isteğe bağlı bir adımdır, aşağıda."))
-                Text(T("Session recaps", "Oturum özetleri")).font(.title3.bold())
-                GroupBox(L("Drafts")) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack { Text(L("Language of drafts")); Picker(L("Language of drafts"), selection: language) { Text("Türkçe").tag("Turkish"); Text("English").tag("English") }.pickerStyle(.segmented).labelsHidden().fixedSize() }
-                        Text(L("Used by every harvest: nightly, manual and at chat end.") + T(" Saved automatically.", " Otomatik kaydedilir.")).font(.caption).foregroundStyle(.secondary)
-                    }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
-                }
+                PageIntro(icon: "tray.and.arrow.down", title: T("Session recap", "Oturum özeti"),
+                          text: T("After you chat with your assistant in your notes folder, Carry picks out what is worth keeping (decisions, facts, unfinished work) into a draft; you go through it item by item on the Review page. The language of the drafts is on the General tab.",
+                                  "Not klasöründe asistanınla sohbet ettikten sonra Carry saklanmaya değer olanları (kararlar, bilgiler, yarım kalan işler) bir taslağa çıkarır; sen İncele sayfasında madde madde geçersin. Taslakların dili Genel sekmesinde."))
                 GroupBox(L("Every evening")) {
                     VStack(alignment: .leading, spacing: 12) {
                         if foreign {
@@ -2707,10 +2699,10 @@ struct HarvestSettings: View {
                         DatePicker(L("Time"), selection: $time, displayedComponents: .hourAndMinute).fixedSize().disabled(!enabled)
                         if let vault = schedule["vault"] as? String, !foreign { Text(L("Vault: ") + vault).font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }
                         if schedule["installed"] as? Bool == true && schedule["loaded"] as? Bool == false && !foreign {
-                            Text(L("launchd has not loaded this job. Save the schedule again on the Harvest tab.")).foregroundStyle(.orange).font(.callout)
+                            Text(T("macOS has not picked up the evening run. Save the evening plan again.", "macOS akşam çalışmasını yüklememiş. Akşam planını yeniden kaydet.")).foregroundStyle(.orange).font(.callout)
                         }
                         Button(T("Save evening plan", "Akşam planını kaydet")) { if foreign { confirmReplace = true } else { save() } }.buttonStyle(.borderedProminent)
-                        Text(L("Runs through launchd (%@) while you are logged in.", str(schedule, "path", "~/Library/LaunchAgents/local.carry.harvest.plist"))).font(.caption).foregroundStyle(.secondary)
+                        Text(T("Runs while you are logged in to this Mac.", "Bu Mac'te oturumun açıkken çalışır.")).font(.caption).foregroundStyle(.secondary)
                     }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .confirmationDialog(L("Replace the other workspace’s nightly harvest?"), isPresented: $confirmReplace) {
@@ -2742,58 +2734,55 @@ struct HarvestSettings: View {
                                 Text(log.joined(separator: "\n")).font(.caption.monospaced()).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(.top, 6)
                             }
                         }
-                        FlowLayout {
+                        HStack {
                             if model.harvest["running"] as? Bool == true { ProgressView().controlSize(.small); Text(L("Harvest running…")) }
                             else { Button(L("Run harvest now")) { model.startHarvest() } }
-                            Button(L("Open full log")) { NSWorkspace.shared.open(URL(fileURLWithPath: str(model.settings, "state_dir", model.workspace)).appendingPathComponent("harvest.log")) }
-                            Button(T("Open Review", "İncele'yi aç")) { model.page = "Review" }
                         }
                     }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
                 }
-                PromptCapture(model: model)
             }.padding(30).frame(maxWidth: .infinity, alignment: .leading)
         }.onAppear(perform: load).onChange(of: pretty(schedule)) { load() }
     }
 }
 
-struct AdvancedSettings: View {
+struct GeneralSettings: View {
     @ObservedObject var model: Model
+    var draftLanguage: Binding<String> {
+        Binding(get: { str(model.settings, "draft_language", "English") },
+                set: { value in model.run("harvest_language", ["language": value]) { model.settings = $0; model.loadVault(); model.notice = L("Draft language saved. It applies to every harvest: nightly, manual and at chat end.") } })
+    }
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                PageIntro(icon: "gearshape", title: T("General", "Genel"), text: T("Language, Trello, help and troubleshooting.", "Dil, Trello, yardım ve sorun giderme."))
+                PageIntro(icon: "gearshape", title: T("General", "Genel"), text: T("Language, Trello and help.", "Dil, Trello ve yardım."))
                 GroupBox(L("Language")) {
                     VStack(alignment: .leading, spacing: 10) {
-                        HStack { Text(L("App language")); Picker(L("App language"), selection: $model.language) { Text("Türkçe").tag("tr"); Text("English").tag("en") }.pickerStyle(.segmented).labelsHidden().fixedSize() }
-                        Text(T("Changes Carry's own screens. The language of session recaps is set on the Session recap tab.", "Carry'nin ekranlarını değiştirir. Oturum özetlerinin dili Oturum özeti sekmesinden ayarlanır.")).font(.caption).foregroundStyle(.secondary)
-                    }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                        HStack { Text(L("App language")); Spacer(); Picker(L("App language"), selection: $model.language) { Text("Türkçe").tag("tr"); Text("English").tag("en") }.pickerStyle(.segmented).labelsHidden().fixedSize() }
+                        HStack { Text(T("Language of session recaps", "Oturum özetlerinin dili")); Spacer(); Picker(L("Language of drafts"), selection: draftLanguage) { Text("Türkçe").tag("Turkish"); Text("English").tag("English") }.pickerStyle(.segmented).labelsHidden().fixedSize() }
+                        Text(T("Recaps of your chats and meetings are written in this language. Saved as soon as you pick.", "Sohbet ve toplantı özetleri bu dilde yazılır. Seçtiğin an kaydedilir.")).font(.caption).foregroundStyle(.secondary)
+                    }.padding(12).frame(maxWidth: 520, alignment: .leading)
                 }
                 TrelloSettings(model: model)
                 GroupBox(T("Help", "Yardım")) {
                     VStack(alignment: .leading, spacing: 10) {
                         Text(T("New here, or setting up another Mac? The setup guide walks you through notes and assistants again. Nothing you already have is removed.",
-                               "Yeni misiniz ya da başka bir Mac mi kuruyorsunuz? Kurulum rehberi notlar ve asistanlar adımlarından yeniden geçirir. Mevcut hiçbir şey silinmez.")).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                        FlowLayout {
-                            Button(T("Open the setup guide", "Kurulum rehberini aç")) { model.startOnboarding() }
-                            Button(T("How Carry works", "Carry nasıl çalışır?")) { model.showGuide = true }
-                            Button(T("Show the usage tips on Home again", "Ana sayfadaki kullanım ipuçlarını yeniden göster")) { UserDefaults.standard.set(false, forKey: "hideHowTo"); model.page = "Overview" }
-                        }
+                               "Yeni misin ya da başka bir Mac mi kuruyorsun? Kurulum rehberi notlar ve asistanlar adımlarından yeniden geçirir. Mevcut hiçbir şey silinmez.")).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        Button(T("Open the setup guide", "Kurulum rehberini aç")) { model.startOnboarding() }
                     }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
                 }
-                DisclosureGroup(T("Troubleshooting", "Sorun giderme")) {
+                DisclosureGroup(T("Advanced", "Gelişmiş")) {
                     VStack(alignment: .leading, spacing: 16) {
                         GroupBox(T("Carry's settings folder", "Carry'nin ayar klasörü")) {
                             VStack(alignment: .leading, spacing: 10) {
                                 Text(model.workspace).font(.callout.monospaced()).textSelection(.enabled)
                                 Text(T("Holds Carry's settings and search data. Your notes are never stored here. Search data can always be rebuilt; do not delete this folder.",
-                                       "Carry'nin ayarlarını ve arama verilerini tutar. Notlarınız asla burada saklanmaz. Arama verileri her zaman yeniden oluşturulabilir; bu klasörü silmeyin.")).font(.caption).foregroundStyle(.secondary)
+                                       "Carry'nin ayarlarını ve arama verilerini tutar. Notların asla burada saklanmaz. Arama verileri her zaman yeniden oluşturulabilir; bu klasörü silme.")).font(.caption).foregroundStyle(.secondary)
                                 FlowLayout {
                                     Button(L("Show in Finder")) { NSWorkspace.shared.open(URL(fileURLWithPath: model.workspace)) }
                                     Button(T("Open another settings folder", "Başka bir ayar klasörü aç")) { model.chooseWorkspace(create: false) }
                                 }
                             }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        Button(T("Index and search service checks are on the Index tab", "İndeks ve arama hizmeti kontrolleri İndeks sekmesinde")) { model.settingsTab = "Index" }.buttonStyle(.link)
                         DisclosureGroup(L("Diagnostics")) { Text(pretty(model.snapshot.filter { $0.key != "activity" })).font(.system(.caption, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
                     }.padding(.top, 8)
                 }
@@ -3247,6 +3236,7 @@ struct Connections: View {
                                   "Carry'nin bilgi bankanıza bağladığı yapay zekâ araçları. Kullandıklarınızı bağlayın; not klasörünüzde açtığınızda Carry üzerinden notlarınızda arar ve hangi notları kullandıklarını gösterirler."))
                 AssistantCard(model: model, client: "claude")
                 AssistantCard(model: model, client: "codex")
+                PromptCapture(model: model)
                 DisclosureGroup(isExpanded: $model.connectionFormOpen) {
                 VStack(alignment: .leading, spacing: 18) {
                 GroupBox(L("Project connection")) {
@@ -5106,6 +5096,9 @@ struct LoginSheet: View {
             .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         if needsKey {
             SecureField(T("Trello API key (trello.com/app-key)", "Trello API anahtarı (trello.com/app-key)"), text: $key).textFieldStyle(.roundedBorder)
+            Text(T("The team's Trello key is not in the team notes yet, so this Mac needs one once. Once it is there, nobody is asked for it.",
+                   "Ekibin Trello anahtarı ekip notlarında (OKB) henüz yok; bu yüzden bu Mac'te bir kez gerekiyor. Oraya eklenince kimseye sorulmaz."))
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text("1.").bold()
@@ -5144,7 +5137,8 @@ struct LoginSheet: View {
             working = false; error = e.localizedDescription
         }) { value in
             working = false; model.profileChanged(value)
-            if value["trello_connected"] as? Bool == true { dismiss() } else { model.loginStep = 1 }
+            // Trello follows on its own only when the team notes hold the team's key: nobody is asked for an API key unasked.
+            if value["trello_connected"] as? Bool == true || value["trello_key_known"] as? Bool != true { dismiss() } else { model.loginStep = 1 }
         }
     }
     func connect() {
@@ -5214,6 +5208,7 @@ struct ProfileButton: View {
                 }
                 Divider()
                 item(T("Edit profile", "Profili düzenle"), "pencil") { model.signIn() }
+                item(T("Settings", "Ayarlar"), "gearshape") { model.page = "Settings" }
                 item(T("How Carry works", "Carry nasıl çalışır?"), "questionmark.circle") { model.showGuide = true }
                 Divider()
                 item(T("Sign out", "Çıkış yap"), "rectangle.portrait.and.arrow.right", role: .destructive) { confirmLogout = true }
@@ -5222,17 +5217,23 @@ struct ProfileButton: View {
                        "Şirket mailinle giriş yap: ana sayfa böylece Trello kartlarını ve seni bekleyen ekip notlarını gösterir."))
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 item(T("Sign in", "Giriş yap"), "person.crop.circle") { model.signIn() }
+                item(T("Settings", "Ayarlar"), "gearshape") { model.page = "Settings" }
                 item(T("How Carry works", "Carry nasıl çalışır?"), "questionmark.circle") { model.showGuide = true }
             }
         }.padding(16).frame(width: 280)
     }
 }
 
+extension Notification.Name {
+    /// The app menu's Settings… (⌘,): Settings is a page of the main window, opened from the profile menu.
+    static let openSettings = Notification.Name("carry.openSettings")
+}
+
 struct ContentView: View {
     @StateObject private var model = Model()
     private let ticks = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
     @Environment(\.openWindow) private var openWindow
-    let pages = [("Overview", "house"), ("Review", "checkmark.circle"), ("Meetings", "waveform"), ("Vault", "books.vertical"), ("Graph", "circle.hexagongrid"), ("Search", "magnifyingglass"), ("Settings", "gearshape")]
+    let pages = [("Overview", "house"), ("Review", "checkmark.circle"), ("Meetings", "waveform"), ("Vault", "books.vertical"), ("Graph", "circle.hexagongrid"), ("Search", "magnifyingglass")]
     var body: some View {
         Group { if model.onboarding { Onboarding(model: model) } else {
         NavigationSplitView {
@@ -5296,6 +5297,7 @@ struct ContentView: View {
             model.refresh()
         }
         .onReceive(MeetingRecorder.shared.$openMeetings.dropFirst()) { _ in model.page = "Meetings" }
+        .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in model.page = "Settings" }
     }
     func banner(_ text: String, color: Color) -> some View {
         HStack(alignment: .top) {
@@ -5309,7 +5311,11 @@ struct ContentView: View {
 @main struct CarryApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     var body: some Scene {
-        WindowGroup("Carry", id: "main") { ContentView() }.defaultSize(width: 1240, height: 820)
+        WindowGroup("Carry", id: "main") { ContentView() }.defaultSize(width: 1240, height: 820).commands {
+            CommandGroup(replacing: .appSettings) {
+                Button(T("Settings…", "Ayarlar…")) { NotificationCenter.default.post(name: .openSettings, object: nil) }.keyboardShortcut(",")
+            }
+        }
         MenuBarExtra(isInserted: $menuBar) { MeetingMenu() } label: { MeetingMenuLabel() }
     }
     @AppStorage("meetingMenuBar") private var menuBar = true
