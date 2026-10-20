@@ -97,7 +97,7 @@ def load(state_dir):
 
 def view(workspace, email=None):
     """What the sign-in screen and the profile menu show, with the name a mail being typed suggests.
-    The Trello key itself stays in Python."""
+    It says whether the team's Trello key is known, never the key."""
     allowed = team.sign_in(workspace)
     candidates = names(workspace)
     key = allowed['trello_api_key']

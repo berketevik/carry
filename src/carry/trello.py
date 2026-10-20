@@ -1,12 +1,13 @@
 """The owner's open Trello cards for the app's home page: read-only, cached in the state.
 
-Carry asks Trello for a read-only token (`scope=read`) under an API key the owner already
-has; both are read from TRELLO_API_KEY and TRELLO_TOKEN or the macOS Keychain (service
-carry-trello), never from workspace files. Only GET requests are made. The cards go to the
-state's trello.json and are fetched again in the background once they are five minutes old,
-so the page never waits for Trello; nothing is written into the notes. Which boards the page
-shows and from which day is the owner's choice in trello-settings.json, applied when the cards
-are read, so changing it never waits for Trello either.
+Carry asks Trello for a read-only token (`scope=read`) under an API key: the team's, from the
+team notes, or one the owner gives the CLI. Once connected, both are read from TRELLO_API_KEY
+and TRELLO_TOKEN or the macOS Keychain (service carry-trello), never from workspace files. Only
+GET requests are made. The cards go to the state's trello.json and are fetched again in the
+background once they are five minutes old, so the page never waits for Trello; nothing is
+written into the notes. Which boards the page shows and from which day is the owner's choice in
+trello-settings.json, applied when the cards are read, so changing it never waits for Trello
+either.
 
 In the app a person connects with one click (Login): the team's key comes from the team notes,
 Trello's permission page sends the browser back to this Mac with the token in the address's

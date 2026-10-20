@@ -161,8 +161,8 @@ class LoginTest(unittest.TestCase):
         self.connect = connect.start(); self.addCleanup(connect.stop)
         self.login = self.start()
 
-    def start(self, **options):
-        login = trello.Login(self.state, 'k' * 32, 'tr', port=0, **options)
+    def start(self, port=0):
+        login = trello.Login(self.state, 'k' * 32, 'tr', port=port)
         self.addCleanup(login.stop)
         return login
 
@@ -260,6 +260,17 @@ class LoginTest(unittest.TestCase):
             late = self.start()
         self.assertTrue(self.closed(late))
         self.assertEqual(late.result, dict(state='failed', error='trello_timeout'))
+
+    def test_the_same_port_opens_again_after_an_answer_or_cancel(self):
+        # The app always uses one port, so Try again must be able to take it back.
+        port = int(self.login.host.split(':')[1])
+        self.call('POST', self.login.path + '/token', dict(error='denied'))
+        self.assertTrue(self.closed(self.login))
+        again = self.start(port)
+        self.assertEqual(self.call('GET', again.path, login=again)[0], 200)
+        again.cancel()
+        third = self.start(port)
+        self.assertEqual(third.result['state'], 'waiting')
 
     def test_a_busy_port_is_named(self):
         port = int(self.login.host.split(':')[1])
