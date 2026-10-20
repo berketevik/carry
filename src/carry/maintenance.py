@@ -120,7 +120,9 @@ def run(workspace, action, arguments):
     if action == 'github_connect':
         github.connect(workspace, **arguments)
     elif action == 'github_sync':
-        result = github.sync(workspace, arguments['source_id'])
+        # Asked for by hand (the app's Sync button, carry github sync), so the same commit is
+        # downloaded again: that is how a snapshot an older Carry made is repaired.
+        result = github.sync(workspace, arguments['source_id'], again=True)
         states = sync_status(workspace)
         states[arguments['source_id']] = dict(result, checked_at=time.time())
         atomic_text(workspace.state_dir / 'github.status.json', json.dumps(states))
