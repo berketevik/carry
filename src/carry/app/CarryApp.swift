@@ -740,6 +740,13 @@ final class MarkdownDoc {
     }
 }
 
+/// A meeting to copy or share: its title, summary and minutes, never the transcript under them.
+func meetingText(_ note: [String: Any]) -> String {
+    let lines = str(note, "body", "").components(separatedBy: "\n")
+    let end = lines.firstIndex { ["## Transkript", "## Transcript"].contains($0.trimmingCharacters(in: .whitespaces)) } ?? lines.count
+    return lines[..<end].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
 /// Most notes repeat their title as the first heading; the header already shows it.
 func bodyWithoutTitle(_ note: [String: Any]) -> String {
     let body = str(note, "body", "")
@@ -2303,6 +2310,8 @@ struct NoteRow: View, Equatable {
 
 struct NoteView: View {
     @ObservedObject var model: Model
+    /// On the Meetings page a meeting shows only what is said in it, to copy or share.
+    var meetings = false
     @State private var confirmTrash = false
     var body: some View {
         let note = model.note
@@ -2316,6 +2325,7 @@ struct NoteView: View {
         } else {
             let front = note["frontmatter"] as? [String: Any] ?? [:]
             let absolute = str(note, "absolute", "")
+            let plain = meetings && str(front, "type") == "meeting"
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     HStack(spacing: 4) {
@@ -2325,11 +2335,11 @@ struct NoteView: View {
                         Button { model.closeNote() } label: { Image(systemName: "xmark") }.help(L("Close note")).keyboardShortcut(.cancelAction)
                     }.buttonStyle(.borderless)
                     Text(displayTitle(note)).font(.title.bold()).textSelection(.enabled)
-                    Text(str(note, "path")).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
+                    if !plain { Text(str(note, "path")).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled) }
                     // OKF v0.2: `status` is the lifecycle (draft, stable, deprecated); an effort's intensity has its own key.
                     let okfView = note["okf"] as? [String: Any] ?? [:]
                     let isDraft = okfView["status"] as? String == "draft" || front["draft"] as? Bool == true
-                    FlowLayout(spacing: 6) {
+                    if !plain { FlowLayout(spacing: 6) {
                         if let t = front["type"] as? String { Badge(text: metaValue(t), color: .accentColor) }
                         if let s = okfView["intensity"] as? String { Badge(text: metaValue(s)) }
                         if isDraft { Badge(text: L("draft"), color: .orange) }
@@ -2343,7 +2353,7 @@ struct NoteView: View {
                         default: Badge(text: L("indexed"), color: .green)
                         }
                         Text(L("modified ") + ago(num(note, "modified"))).font(.caption).foregroundStyle(.secondary)
-                    }
+                    } }
                     if let summary = (front["description"] as? String) ?? (front["summary"] as? String), !isDigestCount(summary) { Text(summary).italic().foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).textSelection(.enabled) }
                     let listed = model.item(str(note, "path"))
                     let inQueue = listed?.review == true
@@ -2376,15 +2386,24 @@ struct NoteView: View {
                             }
                         }.padding(12).background(Color.orange.opacity(0.08)).clipShape(RoundedRectangle(cornerRadius: 10))
                     }
-                    FlowLayout {
+                    if plain {
+                        let text = meetingText(note)
+                        HStack {
+                            Button(T("Copy", "Kopyala"), systemImage: "doc.on.doc") {
+                                NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
+                                model.notice = T("Copied: the summary and minutes, without the transcript.", "Kopyalandı: özet ve tutanak, transkript hariç.")
+                            }
+                            ShareLink(item: text, subject: Text(displayTitle(note))) { Label(T("Share", "Paylaş"), systemImage: "square.and.arrow.up") }
+                        }.controlSize(.small)
+                    } else { FlowLayout {
                         if !readOnly {
                             if obsidianInstalled { Button(L("Open in Obsidian"), systemImage: "arrow.up.forward.app") { if let u = obsidianURL(absolute) { NSWorkspace.shared.open(u) } } }
                             Button(T("Open in default app", "Varsayılan uygulamada aç"), systemImage: "square.and.pencil") { NSWorkspace.shared.open(URL(fileURLWithPath: absolute)) }
                         }
                         Button(L("Show in Finder"), systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: absolute)]) }
                         Button(L("Copy path"), systemImage: "doc.on.doc") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(absolute, forType: .string) }
-                    }.controlSize(.small)
-                    if !front.isEmpty {
+                    }.controlSize(.small) }
+                    if !front.isEmpty && !plain {
                         DisclosureGroup(T("Note details (\(front.count))", "Not bilgileri (\(front.count))")) {
                             Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 14, verticalSpacing: 6) {
                                 ForEach(front.keys.sorted(), id: \.self) { key in
@@ -4576,10 +4595,12 @@ var meetingMenuBar: Bool { UserDefaults.standard.object(forKey: "meetingMenuBar"
     var workspace: String { ProcessInfo.processInfo.environment["CARRY_DESKTOP_WORKSPACE"] ?? UserDefaults.standard.string(forKey: "workspace") ?? "" }
     static var locale: String { UserDefaults.standard.string(forKey: "meetingLocale") ?? (Lang.code == "tr" ? "tr-TR" : "en-US") }
 
+    private var suggested = ""  // the title the recording started with, before anyone typed
     func start(title: String? = nil) {
         guard !recording, !saving else { return }
         problem = ""; problemSettings = ""; notice = ""
         if let title { self.title = title }
+        suggested = title ?? ""
         AVCaptureDevice.requestAccess(for: .audio) { micAllowed in
             SFSpeechRecognizer.requestAuthorization { speech in
                 DispatchQueue.main.async { MainActor.assumeIsolated { self.begin(micAllowed, speech) } }
@@ -4684,7 +4705,9 @@ var meetingMenuBar: Bool { UserDefaults.standard.object(forKey: "meetingMenuBar"
     private func saveRequest(_ all: [Utterance], duration: Double, started: Date, title: String, micOnly: Bool, audio: URL?) -> [String: Any] {
         let iso = ISO8601DateFormatter(); iso.timeZone = .current
         // The note is in the language the meeting was transcribed in.
-        var request: [String: Any] = ["action": "meeting_save", "title": title, "started": iso.string(from: started), "duration": duration,
+        // A title nobody typed (empty, or the app's guess from the call) is replaced by the meeting's subject.
+        let auto = title.trimmingCharacters(in: .whitespaces).isEmpty || title == suggested
+        var request: [String: Any] = ["action": "meeting_save", "title": title, "title_auto": auto, "started": iso.string(from: started), "duration": duration,
                                       "language": MeetingRecorder.locale.hasPrefix("tr") ? "Turkish" : "English", "mic_only": micOnly,
                                       "segments": all.map { ["start": $0.start, "speaker": $0.speaker, "text": $0.text] }]
         if let audio { request["audio"] = audio.path }
@@ -4772,11 +4795,7 @@ var meetingMenuBar: Bool { UserDefaults.standard.object(forKey: "meetingMenuBar"
                     self.dropJournal(request)
                     let path = str(value, "path", "")
                     self.title = ""; self.changed += 1
-                    self.notice = value["whisper"] as? Bool == true
-                        ? T("Saved to \(path). Carry now transcribes it again on this Mac, deletes the audio and has your connected assistant summarise it; the items will wait on the Review page.",
-                            "\(path) dosyasına kaydedildi. Carry şimdi bu Mac'te yeniden yazıya döküyor, sesi siliyor ve bağlı asistanınıza özetletiyor; maddeler İncele sayfasında sizi bekleyecek.")
-                        : T("Saved to \(path). Your connected assistant summarises it; the items will wait on the Review page.",
-                            "\(path) dosyasına kaydedildi. Bağlı asistanınız özetliyor; maddeler İncele sayfasında sizi bekleyecek.")
+                    self.notice = T("Saved; the summary is on its way.", "Kaydedildi; özet hazırlanıyor.")
                     self.follow(path, str(value, "title", name))
                 case .failure(let e) where (e as? UIError)?.message == "meeting_transcript_empty"
                                             && ((request["segments"] as? [Any]) ?? []).isEmpty:
@@ -4881,8 +4900,8 @@ struct MeetingsView: View {
         HSplitView {
             VStack(alignment: .leading, spacing: 12) {
                 Text(pageName("Meetings")).font(.title.bold())
-                Text(T("Record a meeting on this Mac. Carry writes it down as it is said, from your microphone and, on macOS 14.2 or later, the sound of the call. When you stop, the transcript is saved to your notes; Whisper transcribes the audio again on this Mac, pausing while a call has the microphone, and the audio is deleted. Your connected assistant summarises it once. Its decisions, open items and facts wait for you on the Review page.",
-                       "Toplantıyı bu Mac'te kaydedin. Carry konuşulanı anında yazıya döker: mikrofonunuzdan ve macOS 14.2 ya da sonrasında görüşmenin sesinden. Durdurduğunuzda transkript notlarınıza kaydedilir; Whisper sesi bu Mac'te yeniden yazıya döker (mikrofon bir görüşmede açıkken bekler) ve ses silinir. Bağlı asistanınız bir kez özetler. Kararlar, açık işler ve bilgiler İncele sayfasında sizi bekler."))
+                Text(T("Record a meeting on this Mac. Carry writes down what is said and, when it ends, your connected assistant summarises it; the audio is not kept.",
+                       "Toplantıyı bu Mac'te kaydedin. Carry konuşulanı yazıya döker, bitince bağlı asistanınız özetler; ses saklanmaz."))
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 whisperBox
                 if !recorder.problem.isEmpty {
@@ -4917,7 +4936,7 @@ struct MeetingsView: View {
                 Toggle(T("Stay in the menu bar and ask when a meeting starts", "Menü çubuğunda kal, toplantı başlayınca sor"), isOn: $menuBar).font(.callout)
             }.padding(18).frame(minWidth: 320, idealWidth: 380, maxWidth: 480)
             if recorder.recording || recorder.saving { LiveTranscript(recorder: recorder).frame(minWidth: 380, maxWidth: .infinity) }
-            else { NoteView(model: model).frame(minWidth: 380, idealWidth: 480, maxWidth: .infinity) }
+            else { NoteView(model: model, meetings: true).frame(minWidth: 380, idealWidth: 480, maxWidth: .infinity) }
         }
         .onAppear(perform: load)
         .onChange(of: recorder.changed) { load() }
@@ -4956,8 +4975,8 @@ struct MeetingsView: View {
     @ViewBuilder var whisperBox: some View {
         let job = whisper["download"] as? [String: Any] ?? [:]
         if whisper["installed"] as? Bool == true {
-            Label(T("Whisper is ready: each meeting is transcribed again on this Mac once it ends.", "Whisper hazır: her toplantı bitince bu Mac'te yeniden yazıya dökülür."),
-                  systemImage: "checkmark.seal.fill").font(.callout).foregroundStyle(.green).fixedSize(horizontal: false, vertical: true)
+            Label(T("Whisper is ready", "Whisper hazır"), systemImage: "checkmark.seal.fill").font(.callout).foregroundStyle(.green)
+                .help(T("Each meeting is transcribed again on this Mac once it ends, then the audio is deleted.", "Her toplantı bitince bu Mac'te yeniden yazıya dökülür, sonra ses silinir."))
         } else if whisper["runtime"] as? Bool == true, !whisperAsked || downloading {
             VStack(alignment: .leading, spacing: 8) {
                 Text(T("More accurate transcripts", "Daha doğru transkript")).fontWeight(.medium)
@@ -4994,9 +5013,6 @@ struct MeetingsView: View {
                 switch status {
                 case "done":
                     Badge(text: T("Summary ready", "Özet hazır"), color: .green)
-                    if str(m, "digest", "") != "" {
-                        Button(T("Review items", "Maddeleri incele")) { model.page = "Review"; model.openNote(str(m, "digest"), source: source) }.buttonStyle(.link).font(.caption)
-                    }
                 case "failed":
                     Badge(text: T("No summary", "Özet çıkmadı"), color: .red)
                     Button(T("Retry", "Yeniden dene")) { model.run("meeting_summarize", ["path": str(m, "path")]) { _ in load() } }.buttonStyle(.link).font(.caption)

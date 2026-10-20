@@ -631,6 +631,10 @@ def cmd_meet(args):
         _print(found, args.json, [f"{m['started'][:16].replace('T', ' ')}  {m['status']:<8} {m['title']}" for m in found['meetings']]
                or ['no meetings yet'])
         return EXIT_OK
+    if args.meet_command == 'retitle':
+        report = meet.retitle(ws, args.path, root=args.vault, which=args.extractor)
+        _print(report, args.json, [f"{report['path']}: {report['title']}"])
+        return EXIT_OK
     if args.meet_command == 'download-whisper':
         from . import whisper_model
         report = meet.download_whisper(ws)
@@ -990,8 +994,11 @@ def build_parser():
     ms.add_argument("--extractor", help="claude:<model>, codex:<model> or apple:on-device (default: the connected assistant, "
                                         "claude:sonnet, else codex:gpt-6-astra)")
     ms.add_argument("--audio", help="the app's audio folder under <workspace>/meet-audio/: transcribe it with Whisper first, then delete it")
+    mr = mtsub.add_parser("retitle", help="name a summarised meeting by its subject, from its summary only (the file keeps its name)")
+    mr.add_argument("--path", required=True, help="the meeting inside the vault, e.g. 'sources/carry/meet/… .md'")
+    mr.add_argument("--extractor", help="claude:<model>, codex:<model> or apple:on-device (default: the connected assistant)")
     mtsub.add_parser("download-whisper", help="download the Whisper model (874 MB) that transcribes meetings again after they end")
-    for each in (mtsub.choices["list"], ms):
+    for each in (mtsub.choices["list"], ms, mr):
         each.add_argument("--vault", help="vault folder (default: the workspace's own notes, never a team's)")
     mt.set_defaults(func=cmd_meet)
 

@@ -458,7 +458,8 @@ class Bridge:
                 try:
                     saved = meet.save(ws, request.get('segments'), request.get('title', ''), request.get('started'),
                                       request.get('duration'), root=root, language=language,
-                                      mic_only=request.get('mic_only') is True, whisper=bool(audio))
+                                      mic_only=request.get('mic_only') is True, whisper=bool(audio),
+                                      title_auto=request.get('title_auto') is True)
                 except CarryError:
                     meet.drop_audio(ws, audio)
                     raise
