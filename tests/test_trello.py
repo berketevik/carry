@@ -357,6 +357,24 @@ class KeychainTest(unittest.TestCase):
         self.assertIsNone(caught.exception.__cause__)
         self.assertNotIn('secret-token', repr(caught.exception))
 
+    def test_windows_keeps_the_permission_in_the_credential_manager(self):
+        from carry import wincred
+        store = {}
+        with patch.object(trello.sys, 'platform', 'win32'), \
+                patch.object(wincred, 'write', side_effect=lambda target, user, secret: store.__setitem__(target, secret)), \
+                patch.object(wincred, 'read', side_effect=lambda target: store.get(target)), \
+                patch.object(wincred, 'delete', side_effect=lambda target: store.pop(target, None)):
+            _support.KEYCHAIN['write']('token', 'secret-token')
+            self.assertEqual(store, {'carry-trello:token': 'secret-token'})
+            self.assertEqual(_support.KEYCHAIN['read']('token'), 'secret-token')
+            _support.KEYCHAIN['delete']('token')
+            self.assertIsNone(_support.KEYCHAIN['read']('token'))
+            with patch.object(wincred, 'write', side_effect=OSError('denied: secret-token')):
+                with self.assertRaises(CarryError) as caught:
+                    _support.KEYCHAIN['write']('token', 'secret-token')
+        self.assertEqual(str(caught.exception), 'trello_keychain_failed')
+        self.assertNotIn('secret-token', repr(caught.exception))
+
 
 if __name__ == '__main__':
     unittest.main()

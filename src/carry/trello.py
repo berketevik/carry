@@ -2,7 +2,8 @@
 
 Carry asks Trello for a read-only token (`scope=read`) under an API key: the team's, from the
 team notes, or one the owner gives the CLI. Once connected, both are read from TRELLO_API_KEY
-and TRELLO_TOKEN or the macOS Keychain (service carry-trello), never from workspace files. Only
+and TRELLO_TOKEN or the macOS Keychain (service carry-trello; the Credential Manager on Windows),
+never from workspace files. Only
 GET requests are made. The cards go to the state's trello.json and are fetched again in the
 background once they are five minutes old, so the page never waits for Trello; nothing is
 written into the notes. Which boards the page leaves out and from which day is the owner's choice
@@ -66,7 +67,18 @@ def authorize_url(key, return_url=None):
     return f'https://trello.com/1/authorize?{urllib.parse.urlencode(fields)}'
 
 
+def _wincred_target(account):
+    """On Windows the Keychain item is a generic credential in the Credential Manager, as jev's key."""
+    return f'{KEYCHAIN}:{account}'
+
+
 def _keychain_read(account):
+    if sys.platform == 'win32':
+        from . import wincred
+        try:
+            return (wincred.read(_wincred_target(account)) or '').strip() or None
+        except (OSError, ValueError):  # ValueError: a credential another tool wrote, not UTF-16
+            return None
     if sys.platform != 'darwin':
         return None
     try:
@@ -80,6 +92,13 @@ def _keychain_read(account):
 
 
 def _keychain_write(account, value):
+    if sys.platform == 'win32':
+        from . import wincred
+        try:
+            wincred.write(_wincred_target(account), account, value)
+        except OSError:
+            raise CarryError('trello_keychain_failed') from None
+        return
     if sys.platform != 'darwin':
         raise CarryError('trello_needs_keychain')
     try:
@@ -91,6 +110,13 @@ def _keychain_write(account, value):
 
 
 def _keychain_delete(account):
+    if sys.platform == 'win32':
+        from . import wincred
+        try:
+            wincred.delete(_wincred_target(account))
+        except OSError:
+            pass  # nothing kept, or nothing Carry can remove: disconnecting goes on
+        return
     if sys.platform == 'darwin':
         subprocess.run(['/usr/bin/security', 'delete-generic-password', '-s', KEYCHAIN, '-a', account],
                        capture_output=True, timeout=10)
