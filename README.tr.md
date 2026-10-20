@@ -6,7 +6,7 @@
 
 Bilgi bankası, Markdown (`.md`) notlarından oluşan bir klasördür: sizin notlarınız (örneğin bir Obsidian vault'u), ekibinizin GitHub'daki notları ya da ikisi. Carry onu bilgisayarınızda dizinler ve asistanınıza onda arama yapacağı tek bir araç verir: `carry_recall`. Eylülde bir müşterinizin user ID'lerinin hatalı olduğunu bulup not alıyorsunuz. Kasımda onları düzeltmeye oturup asistanınıza soruyorsunuz: bilgi bankasında arar, ne bulduğunuzu söyler ve yazdığınız notun bağlantısını verir. Notlarınız olduğu yerde kalır; Carry onları okur, siz onaylamadan hiçbir şey yazılmaz.
 
-**Sürüm 0.16.0 · macOS 14+ · pilot**
+**Sürüm 0.17.0 · macOS 14+ · pilot**
 
 ## Başlayın
 
