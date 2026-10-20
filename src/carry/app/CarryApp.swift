@@ -5187,6 +5187,7 @@ struct LoginSheet: View {
     @State private var typed = false
     @State private var error = ""
     @State private var working = false
+    @State private var pending: Task<Void, Never>?
     static let other = "\u{0}other"
     var names: [String] { model.profile["names"] as? [String] ?? [] }
     var domains: [String] { model.profile["email_domains"] as? [String] ?? [] }
@@ -5212,7 +5213,14 @@ struct LoginSheet: View {
                "Şirket mailiniz, Carry'nin ana sayfada hangi Trello kartlarını ve ekip notlarını göstereceğini belirler. Şifre yok; mail yalnız bu Mac'te durur."))
             .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         TextField(T("Company mail", "Şirket mailiniz"), text: $email).textFieldStyle(.roundedBorder).textContentType(.emailAddress)
-            .onChange(of: email) { suggest() }
+            .onChange(of: email) {
+                // Asked once typing pauses, not at every key: each answer reads the team's names.
+                pending?.cancel()
+                pending = Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 400_000_000)
+                    if !Task.isCancelled { suggest() }
+                }
+            }
         if !domains.isEmpty {
             Text(T("Ends with ", "Şununla bitmeli: ") + domains.map { "@" + $0 }.joined(separator: T(" or ", " ya da "))).font(.caption).foregroundStyle(.secondary)
         }

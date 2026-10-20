@@ -30,6 +30,7 @@ OPEN_KINDS = ('open item', 'açık iş')
 DECISION_KINDS = ('decision', 'karar')
 DECISION_DAYS = 14
 INBOX_DIR = '+'
+_recaps = {}  # path: ((mtime, size), parsed) of the inbox recaps read so far
 
 
 def moment(touched):
@@ -82,6 +83,21 @@ def _vault(workspace):
     return (None, None) if source.github or not root.is_dir() else (sid, root)
 
 
+def _parsed(path):
+    """A recap parsed, again only once it changed: Home asks on every request (`_recaps`)."""
+    try:
+        info = path.stat()
+    except OSError:
+        return None
+    stamp, cached = (info.st_mtime_ns, info.st_size), _recaps.get(path)
+    if not cached or cached[0] != stamp:
+        try:
+            cached = _recaps[path] = (stamp, digest.parse(path.read_text(encoding='utf-8', errors='ignore')))
+        except OSError:
+            return None
+    return cached[1]
+
+
 def _from_digests(workspace, today):
     """(open items accepted and not done, decisions accepted lately) from the inbox recaps."""
     sid, root = _vault(workspace)
@@ -90,10 +106,13 @@ def _from_digests(workspace, today):
     done = done_items(workspace.state_dir)
     since = (today - datetime.timedelta(days=DECISION_DAYS)).isoformat()
     opens, decisions, seen = [], [], set()
-    for path in sorted((root / INBOX_DIR).glob('*.md'), key=lambda p: p.name, reverse=True):
-        try:
-            parsed = digest.parse(path.read_text(encoding='utf-8', errors='ignore'))
-        except OSError:
+    paths = sorted((root / INBOX_DIR).glob('*.md'), key=lambda p: p.name, reverse=True)
+    present = set(paths)
+    for gone in [p for p in _recaps if p.parent == root / INBOX_DIR and p not in present]:
+        del _recaps[gone]
+    for path in paths:
+        parsed = _parsed(path)
+        if parsed is None:
             continue
         rel = path.relative_to(root).as_posix()
         for it in parsed['items']:

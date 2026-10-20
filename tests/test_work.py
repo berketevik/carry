@@ -162,6 +162,23 @@ class WorkTest(WorkspaceCase):
         self.assertNotIn('Kabul edilen iş', self.titles(result))
         self.assertEqual(json.loads((self.state / work.DONE).read_text(encoding='utf-8'))['done'][0]['digest'], rel)
 
+    def test_a_note_or_recap_is_read_again_only_once_it_changed(self):
+        from carry import vaultview
+        self.digest('2026-10-19', [('open item', 'Kabul edilen iş', 'accepted')])
+        self.build(cards=[])
+        with patch.object(vaultview, '_meta', wraps=vaultview._meta) as meta, \
+                patch.object(work.digest, 'parse', wraps=digest.parse) as parse:
+            self.build(cards=[])
+            self.assertEqual((meta.call_count, parse.call_count), (0, 0))
+            self.okb('Bütçe', 'ismail', 'open', body='daha uzun bir gövde')
+            self.digest('2026-10-19', [('open item', 'Kabul edilen iş', 'accepted'), ('open item', 'Yeni iş', 'accepted')])
+            titles = self.titles(self.build(cards=[]))
+            self.assertEqual((meta.call_count, parse.call_count), (1, 1))
+        self.assertIn('Yeni iş', titles)
+        (self.team / 'Bütçe.md').unlink()
+        self.assertNotIn('Bütçe', self.titles(self.build(cards=[])))
+        self.assertNotIn(self.team.resolve() / 'Bütçe.md', profile._fronts)
+
     def test_the_latest_activity_compares_trello_times_note_times_and_chat_days(self):
         # Trello's time is UTC, a note's is local without a zone, a chat has its day alone (noon).
         day = datetime.datetime(2026, 10, 20)
