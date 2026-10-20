@@ -16,6 +16,7 @@ fragment, and a page on localhost hands it to Carry. That listener answers on lo
 a random path, and stops after the token or ten minutes. The CLI keeps the pasted token.
 """
 import datetime
+import errno
 import json
 import os
 import re
@@ -245,6 +246,7 @@ class Login:
         self.path = '/trello/' + secrets.token_urlsafe(16)
         self._lock = threading.Lock()
         self._stopped = False
+        self._closed = threading.Event()
         try:
             self.servers = [_Server(('127.0.0.1', PORT if port is None else port), _Handler)]
         except OSError:
@@ -252,8 +254,12 @@ class Login:
         port = self.servers[0].server_address[1]
         try:
             self.servers.append(_Server6(('::1', port), _Handler))
-        except OSError:
-            pass  # no IPv6 loopback: the browser reaches localhost on 127.0.0.1
+        except OSError as exc:
+            # Another app on [::1] would get the browser's answer, since localhost is often tried there first.
+            if exc.errno == errno.EADDRINUSE:
+                self.servers[0].server_close()
+                raise CarryError('trello_port_busy') from None
+            # Otherwise there is no IPv6 loopback: the browser reaches localhost on 127.0.0.1.
         self.host = f'localhost:{port}'
         self.origin = 'http://' + self.host
         for server in self.servers:
@@ -296,15 +302,20 @@ class Login:
         self.stop()
 
     def stop(self):
-        """Close the listener; a second call does nothing."""
+        """Close the listener. A second call, such as Try again while the answer is still closing
+        it, returns once both addresses are free, so the next sign-in can take the port."""
         with self._lock:
-            if self._stopped:
-                return
-            self._stopped = True
-        self.timer.cancel()
-        for server in self.servers:
-            server.shutdown()
-            server.server_close()
+            first, self._stopped = not self._stopped, True
+        if not first:
+            self._closed.wait(5)
+            return
+        try:
+            self.timer.cancel()
+            for server in self.servers:
+                server.shutdown()
+                server.server_close()
+        finally:
+            self._closed.set()
 
 
 def _saved_settings(state_dir):
