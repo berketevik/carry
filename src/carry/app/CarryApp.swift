@@ -1519,8 +1519,12 @@ struct DigestItemsView: View {
     @State private var fixed = ""
     @State private var showFolded = false
     var open: [[String: Any]] { items.filter { str($0, "decision", "") == "" } }
-    /// What one click accepts: every waiting item but the conflicts, which need the owner to choose.
-    var plain: [[String: Any]] { open.filter { !["conflict", "review"].contains(str($0, "section")) } }
+    /// What one click accepts, as `digest.accept_all` does: every waiting item but the conflicts, the
+    /// items marked To review and a statement that waits twice, which need the owner to choose.
+    var plain: [[String: Any]] {
+        let ids = open.map { str($0, "id") }
+        return open.filter { it in !["conflict", "review"].contains(str(it, "section")) && ids.filter { $0 == str(it, "id") }.count == 1 }
+    }
     func isOpenItem(_ it: [String: Any]) -> Bool { ["open item", "açık iş"].contains(str(it, "kind", "").lowercased()) }
     /// The item's kind in the app's language; recaps written before the language changed keep English tags.
     func tagName(_ it: [String: Any]) -> String {
@@ -1693,7 +1697,7 @@ struct DigestItemsView: View {
                 if let next { model.openNote(next) } else { model.reloadNote() }
             } else {
                 load(); model.reloadNote()
-                model.notice = T("\(accepted) item(s) accepted. The conflicts wait for your choice.", "\(accepted) madde kabul edildi. Çelişenler sizin seçiminizi bekliyor.")
+                model.notice = T("\(accepted) item(s) accepted. The others wait for your choice.", "\(accepted) madde kabul edildi. Kalanlar sizin seçiminizi bekliyor.")
             }
         }
     }

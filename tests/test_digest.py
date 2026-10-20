@@ -267,3 +267,19 @@ class ReviewHelpTest(unittest.TestCase):
         self.assertEqual((result['accepted'], result['waiting']), (3, 2))
         items = {it['statement']: it['decision'] for it in digest.items(self.ws, self.sid, self.rel)['items']}
         self.assertIsNone(items['Move the demo to Friday.'])
+
+    def test_a_statement_that_waits_twice_is_decided_copy_by_copy(self):
+        twice = DIGEST.replace('## Conflict candidates (review)', '- **open item:** Invite two colleagues to the repository.\n'
+                               '  > invite two colleagues *(exchange 5, owner)*\n\n## Conflict candidates (review)')
+        (self.root / self.rel).write_text(twice, encoding='utf-8')
+        # Both copies share one id: one click leaves them, and each decision takes the copy that still waits.
+        result = digest.accept_all(self.ws, self.sid, self.rel)
+        self.assertEqual((result['accepted'], result['waiting']), (2, 3))
+        item = digest.item_id('Invite two colleagues to the repository.')
+        digest.decide(self.ws, self.sid, self.rel, item, 'accept')
+        digest.decide(self.ws, self.sid, self.rel, item, 'skip')
+        decided = [it['decision'] for it in digest.items(self.ws, self.sid, self.rel)['items'] if it['id'] == item]
+        self.assertEqual(decided, ['accepted', 'skipped'])
+        with self.assertRaises(CarryError) as caught:
+            digest.decide(self.ws, self.sid, self.rel, item, 'accept')
+        self.assertEqual(str(caught.exception), 'item_already_decided')
