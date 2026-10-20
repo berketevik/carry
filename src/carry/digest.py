@@ -10,11 +10,17 @@ links it for conflict resolution. The digest line keeps the decision as a traili
 Obsidian hides it and the state pack still reads the line. Already recorded, done and dropped
 items are folded and need no decision. A digest leaves the review queue (its `status: draft`
 becomes `stable`, with the owner's check in `verified`) once no item waits.
+
+A decision can be taken back for two days (`undo`, newest first); a passed item can be settled
+later, once the owner knows (`unsure`, `settle`).
 """
 import datetime
 import hashlib
+import json
 from pathlib import Path
 import re
+import time
+import uuid
 
 from . import okf
 from .errors import CarryError
@@ -220,17 +226,92 @@ def items(ws, source_id, relative):
 def accept_all(ws, source_id, relative, today=None):
     """Accept every item that waits, except conflicts with a note and items marked To review
     (probably withdrawn): those need the owner to choose. So does a statement that waits twice:
-    both copies share one id, and the owner tells them apart."""
-    _, _, text, _ = _open(ws, source_id, relative)
-    waiting = [it for it in parse(text)['items'] if it['decision'] is None]
+    both copies share one id, and the owner tells them apart. One undo takes all of them back."""
+    root, _, text, _ = _open(ws, source_id, relative)
+    parsed = parse(text)
+    waiting = [it for it in parsed['items'] if it['decision'] is None]
     copies = {}
     for it in waiting:
         copies[it['id']] = copies.get(it['id'], 0) + 1
-    plain = [it['id'] for it in waiting if it['section'] not in ('conflict', 'review') and copies[it['id']] == 1]
+    chosen = [it for it in waiting if it['section'] not in ('conflict', 'review') and copies[it['id']] == 1]
+    plain = [it['id'] for it in chosen]
+    day = (today or datetime.date.today()).isoformat()
+    before = {relative: text, **{rel: _read(root, rel) for rel in {f'log/{_log_day(it, parsed, day)}.md' for it in chosen}}}
     result = dict(waiting=len(waiting), done=False, logged=None)
     for item in plain:
-        result = decide(ws, source_id, relative, item, 'accept', today=today)
-    return dict(accepted=len(plain), waiting=result['waiting'], done=result['done'], logged=result.get('logged'))
+        result = decide(ws, source_id, relative, item, 'accept', today=today, record=False)
+    undo_id = _remember(ws, source_id, relative, root, before) if plain else None
+    return dict(accepted=len(plain), waiting=result['waiting'], done=result['done'], logged=result.get('logged'), undo=undo_id)
+
+
+# -- undo ----------------------------------------------------------------------
+# A decision writes the recap and maybe a daily log. What both were before stays in this device's
+# state for a while, so the owner can take the decision back: the files come back exactly as they
+# were (the draft mark, a fixed statement's first wording, a log file that did not exist), and only
+# when nothing changed them since. Decisions of one recap are taken back newest first.
+
+UNDO_NAME = 'review-undo.json'
+UNDO_KEEP = 20          # decisions per recap
+UNDO_SECONDS = 2 * 86400
+
+
+def _read(root, rel):
+    path = Path(root) / rel
+    return path.read_text(encoding='utf-8') if path.is_file() else None
+
+
+def _sha(text):
+    return None if text is None else hashlib.sha1(text.encode('utf-8')).hexdigest()
+
+
+def _undo_load(ws):
+    try:
+        saved = json.loads((Path(ws.state_dir) / UNDO_NAME).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return {}
+    return saved if isinstance(saved, dict) else {}
+
+
+def _undo_save(ws, saved):
+    now = time.time()
+    kept = {key: [e for e in stack if now - e.get('at', 0) < UNDO_SECONDS][-UNDO_KEEP:] for key, stack in saved.items()}
+    atomic_text(Path(ws.state_dir) / UNDO_NAME, json.dumps({k: v for k, v in kept.items() if v}, ensure_ascii=False))
+
+
+def _remember(ws, source_id, relative, root, before):
+    """Keep what the files were before a decision (`before`: path → text, None for no file) and
+    what they are now; returns the id the owner takes it back with."""
+    saved = _undo_load(ws)
+    entry = dict(id=uuid.uuid4().hex[:12], at=time.time(),
+                 files={rel: [text, _sha(_read(root, rel))] for rel, text in before.items()})
+    saved.setdefault(f'{source_id}:{relative}', []).append(entry)
+    _undo_save(ws, saved)
+    return entry['id']
+
+
+def undo(ws, source_id, relative, undo_id):
+    """Take back the newest decision of a recap: its files as they were before it."""
+    from .vaultview import _editable, _local
+    _editable(ws, source_id)
+    _, root = _local(ws, source_id)
+    saved = _undo_load(ws)
+    stack = saved.get(f'{source_id}:{relative}') or []
+    if not stack or stack[-1].get('id') != undo_id:
+        raise CarryError('undo_not_available')
+    files = stack[-1]['files']
+    if any(_sha(_read(root, rel)) != after for rel, (_, after) in files.items()):
+        raise CarryError('undo_changed_since')
+    for rel, (text, _) in files.items():
+        target = resolve_within(root, rel)
+        if text is None:
+            target.unlink(missing_ok=True)
+        else:
+            atomic_text(target, text)
+    stack.pop()
+    _undo_save(ws, saved)
+    _, _, body, front = _open(ws, source_id, relative)
+    waiting = sum(1 for it in parse(body)['items'] if it['decision'] is None)
+    return dict(path=relative, undone=undo_id, waiting=waiting, draft=okf.is_draft(front))
 
 
 def _log_source(root, raw_entry):
@@ -268,9 +349,29 @@ def _append_log(root, day, language, entry, raw_entry, kind='chat'):
     return rel
 
 
-def decide(ws, source_id, relative, item, action, text=None, today=None):
+def _log_day(found, parsed, today):
+    """The day whose log an item goes to: the day it was said."""
+    return found['date'] or parsed['created'] or today
+
+
+def _entry(found, parsed, said, unsure=False):
+    """An item's daily-log line, with its source and quote; an unsure one says so in its tag."""
+    tag = found['tag']
+    if unsure:
+        # The doubt travels with the text: recall shows it to whoever reads the line.
+        from .harvest import LABELS
+        tag += ' · ' + LABELS.get(parsed['language'], LABELS['English'])['unsure']
+    where = f" ↔ {found['match']}" if found['match'] else ''
+    source = f"{parsed['raw']}, {found['unit']} {found['exchange']}" if found['exchange'] else parsed['raw']
+    entry = f"- **{tag}:** {said}{where} ({source})"
+    if found['quote']:
+        entry += f"\n  > {found['quote']}"
+    return entry
+
+
+def decide(ws, source_id, relative, item, action, text=None, today=None, record=True):
     """accept, fix (with new text), reject or pass (not sure) one item; the digest leaves the
-    queue when none waits."""
+    queue when none waits. `undo` in the result takes it back."""
     if action not in ACTIONS:
         raise CarryError('invalid_decision')
     statement = ' '.join((text or '').split())
@@ -299,21 +400,12 @@ def decide(ws, source_id, relative, item, action, text=None, today=None):
     if action == 'fix':
         line = line.replace(f":** {found['statement']}", f":** {statement}", 1)
     lines[found['line']] = f'{line} <!-- carry: {decision} {today} -->'
+    day = _log_day(found, parsed, today)
+    before = {relative: body, **({f'log/{day}.md': _read(root, f'log/{day}.md')} if decision != 'skipped' else {})}
     logged = None
     if decision != 'skipped':
-        said = statement or found['statement']
-        tag = found['tag']
-        if decision == 'unsure':
-            # The doubt travels with the text: recall shows it to whoever reads the line.
-            from .harvest import LABELS
-            tag += ' · ' + LABELS.get(parsed['language'], LABELS['English'])['unsure']
-        where = f" ↔ {found['match']}" if found['match'] else ''
-        source = f"{parsed['raw']}, {found['unit']} {found['exchange']}" if found['exchange'] else parsed['raw']
-        entry = f"- **{tag}:** {said}{where} ({source})"
-        if found['quote']:
-            entry += f"\n  > {found['quote']}"
-        logged = _append_log(root, found['date'] or parsed['created'] or today, parsed['language'], entry,
-                             parsed['raw_entry'], parsed['kind'])
+        entry = _entry(found, parsed, statement or found['statement'], unsure=decision == 'unsure')
+        logged = _append_log(root, day, parsed['language'], entry, parsed['raw_entry'], parsed['kind'])
     atomic_text(path, '\n'.join(lines))
     waiting = sum(1 for it in parse('\n'.join(lines))['items'] if it['decision'] is None)
     done = False
@@ -321,7 +413,74 @@ def decide(ws, source_id, relative, item, action, text=None, today=None):
         # Every item decided by the owner: the digest is human-reviewed (OKF §5.3).
         from .vaultview import clear_draft
         done = clear_draft(path, relative, actor=okf.owner(ws.state_dir)).get('changed', False)
-    return dict(item=item, decision=decision, logged=logged, waiting=waiting, done=done)
+    undo_id = _remember(ws, source_id, relative, root, before) if record else None
+    return dict(item=item, decision=decision, logged=logged, waiting=waiting, done=done, undo=undo_id)
+
+
+def unsure(ws, source_id):
+    """The items the owner passed as unsure, newest recap first, to settle once they know."""
+    from .harvest import recap_topic
+    from .vaultview import _local
+    _, root = _local(ws, source_id)
+    out = []
+    for path in sorted((root / '+').glob('*.md'), key=lambda p: p.name, reverse=True):
+        try:
+            text = path.read_text(encoding='utf-8', errors='ignore')
+        except OSError:
+            continue
+        if '<!-- carry: unsure ' not in text:
+            continue
+        front, _ = parse_frontmatter(text)
+        if not is_digest(front):
+            continue
+        parsed = parse(text)
+        rel = path.relative_to(root).as_posix()
+        out += [dict(path=rel, id=it['id'], statement=it['statement'], kind=it['kind'], tag=it['tag'],
+                     day=it['said'] or it['date'] or parsed['created'], meeting=parsed['kind'] == 'meeting',
+                     topic=recap_topic(root, front, look=False))
+                for it in parsed['items'] if it['decision'] == 'unsure']
+    return dict(items=out)
+
+
+def settle(ws, source_id, relative, item, action, text=None, today=None):
+    """Decide an item passed as unsure once the owner knows: accept or fix it (its daily-log line
+    loses the unsure mark, or gains the fixed text) or reject it (the line goes)."""
+    if action not in ('accept', 'fix', 'reject'):
+        raise CarryError('invalid_decision')
+    statement = ' '.join((text or '').split())
+    if action == 'fix' and not statement:
+        raise CarryError('fix_needs_text')
+    from .vaultview import _editable
+    _editable(ws, source_id)
+    root, path, body, front = _open(ws, source_id, relative)
+    if front.get('lock') is True:
+        raise CarryError('note_locked')
+    parsed = parse(body)
+    found = next((it for it in parsed['items'] if it['id'] == item and it['decision'] == 'unsure'), None)
+    if found is None:
+        raise CarryError('item_not_unsure')
+    today = (today or datetime.date.today()).isoformat()
+    decision = ACTIONS[action]
+    day = _log_day(found, parsed, today)
+    log_rel = f'log/{day}.md'
+    before = {relative: body, log_rel: _read(root, log_rel)}
+    old = _entry(found, parsed, found['statement'], unsure=True)
+    new = None if decision == 'skipped' else _entry(found, parsed, statement or found['statement'])
+    log = before[log_rel]
+    at = log.rfind(old) if log is not None else -1
+    if at >= 0:
+        end = at + len(old) + (1 if log[at + len(old):at + len(old) + 1] == '\n' and new is None else 0)
+        atomic_text(root / log_rel, log[:at] + (new or '') + log[end:])
+    elif new is not None:
+        _append_log(root, day, parsed['language'], new, parsed['raw_entry'], parsed['kind'])
+    lines = body.split('\n')
+    _, line = decision_of(lines[found['line']])
+    if action == 'fix':
+        line = line.replace(f":** {found['statement']}", f":** {statement}", 1)
+    lines[found['line']] = f'{line} <!-- carry: {decision} {today} -->'
+    atomic_text(path, '\n'.join(lines))
+    undo_id = _remember(ws, source_id, relative, root, before)
+    return dict(item=item, decision=decision, logged=None if new is None else log_rel, undo=undo_id)
 
 
 def _block(lines, n):

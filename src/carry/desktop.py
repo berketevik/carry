@@ -350,7 +350,7 @@ class Bridge:
             maintenance.start(Workspace.load(state))
             return result
         if action in ('vault_browse', 'vault_note', 'vault_resolve', 'vault_backlinks', 'vault_overview', 'vault_graph', 'note_create', 'note_approve', 'note_approve_many',
-                      'digest_items', 'digest_decide', 'digest_accept_all'):
+                      'digest_items', 'digest_decide', 'digest_accept_all', 'digest_undo', 'digest_unsure', 'digest_settle'):
             from . import vaultview
             sid = request.get('source_id') or vaultview.default_vault(ws)
             if not sid:
@@ -381,6 +381,19 @@ class Bridge:
             if action == 'digest_accept_all':
                 from . import digest
                 result = digest.accept_all(ws, sid, request['path'])
+                maintenance.start(ws)
+                return result
+            if action == 'digest_undo':
+                from . import digest
+                result = digest.undo(ws, sid, request['path'], request.get('undo', ''))
+                maintenance.start(ws)
+                return result
+            if action == 'digest_unsure':
+                from . import digest
+                return digest.unsure(ws, sid)
+            if action == 'digest_settle':
+                from . import digest
+                result = digest.settle(ws, sid, request['path'], request.get('item', ''), request.get('decision', ''), request.get('text'))
                 maintenance.start(ws)
                 return result
             if action == 'note_approve_many':
