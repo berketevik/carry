@@ -128,6 +128,37 @@ def cmd_owner(args):
     return EXIT_OK
 
 
+def cmd_trello(args):
+    """Your open Trello cards on the app's home page, read with a read-only token."""
+    from . import trello
+    workspace = open_workspace(args.workspace)
+    if args.trello_command == "connect":
+        import getpass
+        import webbrowser
+        key = os.environ.get("TRELLO_API_KEY", "").strip() or getpass.getpass("Trello API key: ").strip()
+        url = trello.authorize_url(key)
+        print("Allow Carry to read your Trello cards, then copy the token Trello shows:\n" + url, file=sys.stderr)
+        webbrowser.open(url)
+        member = trello.connect(workspace.state_dir, key, getpass.getpass("Token: "))
+        _print(member, args.json, [f"connected to Trello as {member['username']}; the app's home page shows your open cards"])
+        return EXIT_OK
+    if args.trello_command == "disconnect":
+        trello.disconnect(workspace.state_dir)
+        _print(dict(connected=False), args.json, ["disconnected from Trello"])
+        return EXIT_OK
+    result = trello.refresh(workspace.state_dir)
+    if not result.get("connected"):
+        lines = ["not connected: run carry trello connect"]
+    else:
+        # The boards and the day chosen in the app's settings, as on the home page.
+        result = trello.shown(workspace.state_dir, result)
+        lines = [f"{(c.get('due') or '')[:10]:10}  {c['board']} · {c['list']}: {c['name']}" for c in result.get("cards", [])] or ["no open cards assigned to you"]
+        if result.get("error"):
+            lines.append("error: " + result["error"])
+    _print(result, args.json, lines)
+    return EXIT_OK
+
+
 def cmd_team(args):
     from . import team
     workspace = open_workspace(args.workspace)
@@ -616,6 +647,10 @@ def cmd_meet(args):
         _print(found, args.json, [f"{m['started'][:16].replace('T', ' ')}  {m['status']:<8} {m['title']}" for m in found['meetings']]
                or ['no meetings yet'])
         return EXIT_OK
+    if args.meet_command == 'retitle':
+        report = meet.retitle(ws, args.path, root=args.vault, which=args.extractor)
+        _print(report, args.json, [f"{report['path']}: {report['title']}"])
+        return EXIT_OK
     if args.meet_command == 'download-whisper':
         from . import whisper_model
         report = meet.download_whisper(ws)
@@ -740,6 +775,13 @@ def build_parser():
     ow = sub.add_parser("owner", help="the owner's id in OKF `verified` (human:<id>), written when they approve a draft")
     ow.add_argument("--set", metavar="ID", help="a short id such as your first name; never an email address")
     ow.set_defaults(func=cmd_owner)
+
+    tr = sub.add_parser("trello", help="your open Trello cards on the app's home page (read-only)")
+    trs = tr.add_subparsers(dest="trello_command")
+    trs.add_parser("connect", help="ask Trello for a read-only token under your API key (TRELLO_API_KEY, or asked)")
+    trs.add_parser("cards", help="fetch and list your open cards (the default)")
+    trs.add_parser("disconnect", help="forget the key, the token, the cards and the board choice")
+    tr.set_defaults(func=cmd_trello)
 
     tm = sub.add_parser("team", help="the team knowledge base's shared search settings (.carry/team.json)")
     tm.add_argument("--apply", action="store_true", help="write the team's search settings into this workspace")
@@ -972,8 +1014,11 @@ def build_parser():
     ms.add_argument("--extractor", help="claude:<model>, codex:<model> or apple:on-device (default: the connected assistant, "
                                         "claude:sonnet, else codex:gpt-6-astra)")
     ms.add_argument("--audio", help="the app's audio folder under <workspace>/meet-audio/: transcribe it with Whisper first, then delete it")
+    mr = mtsub.add_parser("retitle", help="name a summarised meeting by its subject, from its summary only (the file keeps its name)")
+    mr.add_argument("--path", required=True, help="the meeting inside the vault, e.g. 'sources/carry/meet/… .md'")
+    mr.add_argument("--extractor", help="claude:<model>, codex:<model> or apple:on-device (default: the connected assistant)")
     mtsub.add_parser("download-whisper", help="download the Whisper model (874 MB) that transcribes meetings again after they end")
-    for each in (mtsub.choices["list"], ms):
+    for each in (mtsub.choices["list"], ms, mr):
         each.add_argument("--vault", help="vault folder (default: the workspace's own notes, never a team's)")
     mt.set_defaults(func=cmd_meet)
 

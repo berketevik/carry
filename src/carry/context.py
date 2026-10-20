@@ -11,7 +11,7 @@ from pathlib import Path
 import re
 import subprocess
 
-from .digest import decision_of
+from .digest import decision_of, item_id
 
 MAX_CHARS = 7000
 LOCAL = '.carry/local.json'
@@ -109,12 +109,20 @@ def pack(root, workspace=None, language=None, max_chars=MAX_CHARS, today=None):
         lines += [f'## {H["commits"]}', ''] + [f'- {l}' for l in log.splitlines()] + ['']
     opens, decisions, seen = [], [], set()
     digests = _digests(root, today=today)
+    done = set()
+    if workspace is not None:
+        from .work import done_items
+        done = done_items(workspace.state_dir)
     for day, path in digests:
+        rel = path.relative_to(root).as_posix()
         for kind, statement, assistant in _items(path):
             key = statement.lower()
             if key in seen:
                 continue
             seen.add(key)
+            # Marked done on the home page: the next chat is not told to pick it up again.
+            if (rel, item_id(re.sub(r' ↔ \[\[[^\]]+\]\]$', '', statement))) in done:
+                continue
             if kind in OPEN_TAGS:
                 opens.append(f'- {day.isoformat()}: {statement}')
             elif kind in DECISION_TAGS and not assistant:

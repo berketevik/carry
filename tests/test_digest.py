@@ -226,3 +226,44 @@ class DigestTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ReviewHelpTest(unittest.TestCase):
+    """Review says where a draft came from and accepts the plain items in one go."""
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
+        base = Path(self.tmp.name).resolve()
+        self.root = base / 'Vault'
+        vault.apply(vault.plan(self.root, language='English', workspace=base / 'ws', attach=True), git=False)
+        self.ws = Workspace.load(base / 'ws')
+        self.sid = vaultview.default_vault(self.ws)
+        self.rel = '+/2026-09-28 — session claude abcd1234.md'
+        text = DIGEST.replace('  - "[[2026-09-28 — claude abcd1234]]"',
+                              '  - {"resource": "/sources/carry/session/2026-09-28 — claude abcd1234.md", "title": "2026-09-28 — claude abcd1234"}')
+        (self.root / self.rel).write_text(text, encoding='utf-8')
+        raw = self.root / 'sources' / 'carry' / 'session' / '2026-09-28 — claude abcd1234.md'
+        raw.parent.mkdir(parents=True, exist_ok=True)
+        raw.write_text('---\ntype: raw\n---\n\n## Exchange 1\n\n**Owner:** When does the pilot ship?\nAnd who joins?\n\n'
+                       '**Assistant:** On 15 October.\n', encoding='utf-8')
+
+    def test_items_name_the_chat_they_came_from(self):
+        chat = digest.items(self.ws, self.sid, self.rel)['chat']
+        self.assertEqual(chat, dict(kind='chat', client='claude', day='2026-09-28', first='When does the pilot ship? And who joins?'))
+
+    def test_accept_all_takes_every_plain_item_and_leaves_the_conflict(self):
+        result = digest.accept_all(self.ws, self.sid, self.rel)
+        self.assertEqual((result['accepted'], result['waiting'], result['done']), (3, 1, False))
+        items = {it['statement']: it['decision'] for it in digest.items(self.ws, self.sid, self.rel)['items']}
+        self.assertEqual(items['The Mac mini has 16 GB.'], None)
+        self.assertEqual(items['Invite two colleagues to the repository.'], 'accepted')
+        self.assertIn('Invite two colleagues', (self.root / 'log' / '2026-09-28.md').read_text(encoding='utf-8'))
+
+    def test_accept_all_leaves_an_item_marked_to_review_for_the_owner(self):
+        # harvest puts an item it scores as probably withdrawn under To review: one click must not accept it.
+        doubtful = DIGEST.replace('## Already recorded', '## To review\n\n- **open item:** Move the demo to Friday.\n'
+                                  '  > move the demo to Friday *(exchange 5, owner)*\n\n## Already recorded')
+        (self.root / self.rel).write_text(doubtful, encoding='utf-8')
+        result = digest.accept_all(self.ws, self.sid, self.rel)
+        self.assertEqual((result['accepted'], result['waiting']), (3, 2))
+        items = {it['statement']: it['decision'] for it in digest.items(self.ws, self.sid, self.rel)['items']}
+        self.assertIsNone(items['Move the demo to Friday.'])

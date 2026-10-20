@@ -12,6 +12,20 @@ if str(SRC) not in sys.path:
 from carry.config import EmbeddingConfig, RetrievalConfig, SourceConfig, Workspace  # noqa: E402
 from carry.fixtures import install_fixture  # noqa: E402
 from carry import index as index_module  # noqa: E402
+from carry import trello  # noqa: E402
+
+# No test may reach the real Keychain: a test that signs out would delete the owner's own
+# Trello connection. Tests that check these helpers patch them, or use the saved originals.
+KEYCHAIN = dict(read=trello._keychain_read, write=trello._keychain_write, delete=trello._keychain_delete)
+
+
+def _no_keychain_write(account, value):
+    raise AssertionError("a test tried to write the real Keychain")
+
+
+trello._keychain_read = lambda account: None
+trello._keychain_write = _no_keychain_write
+trello._keychain_delete = lambda account: None
 
 HASHING = EmbeddingConfig(provider="hashing", dim=128)
 

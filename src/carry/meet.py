@@ -65,7 +65,7 @@ TYPES = ('decision', 'open_item', 'fact')
 SPEAKERS = ('me', 'others')
 
 LABELS = {
-    'Turkish': dict(me='Ben', others='Karşı taraf', meeting='Toplantı', summary='Özet', minutes='Tutanak',
+    'Turkish': dict(me='Ben', others='Karşı taraf', meeting='Toplantı', summary='Özet', minutes='Tutanak', min='dk',
                     transcript='Transkript', decision='Kararlar', open_item='Açık işler', fact='Bilgiler',
                     pending='Özet hazırlanıyor; Carry toplantı bitince bir kez özetler.',
                     whisper='Canlı transkript boş kaldı; transkripti bu Mac\'te Whisper yazıyor.',
@@ -76,7 +76,7 @@ LABELS = {
                     by='Özeti {who} çıkardı.',
                     nothing='Bu toplantıdan kaydedilecek bir karar, açık iş ya da bilgi çıkmadı.',
                     cut='Bütçe aşıldı: transkriptin {line}. satırdan sonrası özetlenmedi.'),
-    'English': dict(me='Me', others='Others', meeting='Meeting', summary='Summary', minutes='Minutes',
+    'English': dict(me='Me', others='Others', meeting='Meeting', summary='Summary', minutes='Minutes', min='min',
                     transcript='Transcript', decision='Decisions', open_item='Open items', fact='Facts',
                     pending='Summary in progress; Carry summarises once the meeting ends.',
                     whisper='The live transcript stayed empty; Whisper writes the transcript on this Mac.',
@@ -99,6 +99,10 @@ Exclude greetings, small talk, recognition noise and anything withdrawn later in
 
 MERGE = """These are the main points of a meeting, part by part, in {language}. Merge them into at most 8 points for the whole meeting, in order. Keep each point's line and quote exactly as given (choose one when you merge several).
 Return ONLY JSON: {{"items": [{{"statement": "<one sentence in {language}>", "line": <n>, "quote": "<the quote, unchanged>"}}]}}"""
+
+
+TITLE = """These are the main points of a meeting, in {language}. Give the meeting a short title in {language}, 2 to 7 words, naming what it was about: the brand, client or project first, then the topic, ending with the word for meeting ("toplantısı" in Turkish, "meeting" in English). No date, no app name, no quotes.
+Return ONLY JSON: {{"items": [{{"title": "<the title>"}}]}}"""
 
 
 def labels(language):
@@ -226,11 +230,13 @@ def _section(lines, L, mic_only=False):
     return head + '\n'.join(f"- **[{i + 1} · {_clock(x['start'])}] {L[x['speaker']]}:** {x['text']}" for i, x in enumerate(lines)) + '\n'
 
 
-def save(ws, segments, title='', started=None, duration=None, root=None, language=None, mic_only=False, whisper=False):
+def save(ws, segments, title='', started=None, duration=None, root=None, language=None, mic_only=False, whisper=False,
+         title_auto=False):
     """Write the transcript as a meeting note at once and return its path in the vault.
     `started` is the recording's start (ISO 8601, local time); `duration` its length in seconds;
     `mic_only` says the system audio could not be recorded. With `whisper` (the audio goes to
-    Whisper next) a meeting the live recognizer heard nothing of is saved too, for Whisper to fill."""
+    Whisper next) a meeting the live recognizer heard nothing of is saved too, for Whisper to fill.
+    With `title_auto` (nobody typed the title) the summary names the meeting by its subject."""
     root = meeting_vault(ws, root)
     language = language or harvest.draft_language(ws, root)
     L = labels(language)
@@ -251,11 +257,12 @@ def save(ws, segments, title='', started=None, duration=None, root=None, languag
     rel = f'{MEET_DIR}/{stem}.md'
     while (root / rel).exists():
         rel, n = f'{MEET_DIR}/{stem} ({n}).md', n + 1
-    summary = f'{name}, {when:%Y-%m-%d %H:%M}, {minutes} min'
+    summary = f"{name}, {when:%Y-%m-%d %H:%M}, {minutes} {L['min']}"
     text = (f'---\ntype: meeting\ndescription: {json.dumps(summary, ensure_ascii=False)}\ncreated: {when:%Y-%m-%d}\n'
             f'generated: {okf.flow(okf.event(okf.carry_actor()))}\n'
             f'started: {when.isoformat(timespec="seconds")}\nduration_minutes: {minutes}\nsource_type: meet\n'
             f'meet_language: {language}\nmeet_status: pending\n' + ('meet_mic_only: true\n' if mic_only else '') +
+            ('meet_title: auto\n' if title_auto else '') +
             f'---\n\n# {name}\n\n## {L["summary"]}\n\n*{L["pending"]}*\n\n'
             + (_section(lines, L, mic_only) if lines else f"## {L['transcript']}\n\n*{L['whisper']}*\n"))
     atomic_text(root / rel, text)
@@ -371,6 +378,46 @@ def extract(lines, language, which, ask=None):
     return points, items, dropped, cut
 
 
+def propose_title(points, language, which, ask=None):
+    """A title naming the meeting's subject, from its summary points only, never the
+    transcript; None when the assistant gives none."""
+    if not points:
+        return None
+    ask = ask or harvest.ask_agent
+    body = '\n'.join(f"- {p['statement']}" for p in points)
+    try:
+        answer = ask(TITLE.format(language=language), body, which, 'items')
+    except (CarryError, subprocess.SubprocessError, OSError):
+        return None
+    title = next((str(a['title']) for a in answer if str(a.get('title') or '').strip()), '')
+    return safe_title(title, language) if title else None
+
+
+def _saved_name(rel):
+    """The name the meeting was saved under: its file name after the time, without a ` (2)`."""
+    return re.sub(r' \(\d+\)$', '', Path(rel).stem.split(' — ', 1)[-1])
+
+
+def _describe(title, front, L):
+    """The note's one-line description: title, start and length."""
+    try:
+        at = f"{datetime.datetime.fromisoformat(str(front.get('started'))):%Y-%m-%d %H:%M}"
+    except ValueError:
+        at = str(front.get('created') or '')
+    return f"{title}, {at}, {front.get('duration_minutes')} {L['min']}"
+
+
+def _summary_points(body, L):
+    """The points under the note's summary heading, without their clock."""
+    out, inside = [], False
+    for l in body.splitlines():
+        if l.startswith('## '):
+            inside = l[3:].strip() == L['summary']
+        elif inside and l.startswith('- '):
+            out.append(dict(statement=re.sub(r'\s*\*\([\d:]+\)\*\s*$', '', l[2:]).strip()))
+    return out
+
+
 def _quote(it, L, day):
     return f"  > {it['quote']} *(segment {it['line']}, {it['speaker']}, {day})*"
 
@@ -429,19 +476,27 @@ def _own_front(text):
     return out
 
 
-def _front(text, front, status, **extra):
+def _front(text, front, status, describe=None, **extra):
     """The note's frontmatter for a rewrite: the owner's keys (tags, related, sources...) stay as
     they were written; Carry sets only type, source_type, `generated` (it rewrote the summary and
-    minutes) and meet_*."""
+    minutes) and meet_*, and the description when it named the meeting (`describe`)."""
     own = _own_front(text) or [f'{k}: {json.dumps(front[k], ensure_ascii=False) if k in ("description", "summary") else front[k]}'
                                for k in ('description', 'summary', 'created', 'started', 'duration_minutes')
                                if front.get(k) is not None]
+    if describe is not None:
+        kept, skip = [], False
+        for l in own:
+            if l and not l[0].isspace() and not l.startswith('-'):
+                skip = l.split(':', 1)[0].strip() == 'description'
+            if not skip:
+                kept.append(l)
+        own = [f'description: {json.dumps(describe, ensure_ascii=False)}'] + kept
     head = ['---', 'type: meeting'] + own + [f'generated: {okf.flow(okf.event(okf.carry_actor()))}', 'source_type: meet']
     if front.get('meet_language'):
         head.append(f"meet_language: {front['meet_language']}")
     head.append(f'meet_status: {status}')
     # Who wrote the transcript and whether the other side was heard outlive every rewrite.
-    extra = dict(dict(transcript=front.get('meet_transcript'), mic_only=front.get('meet_mic_only')), **extra)
+    extra = dict(dict(transcript=front.get('meet_transcript'), mic_only=front.get('meet_mic_only'), title=front.get('meet_title')), **extra)
     head += [f'meet_{k}: {json.dumps(v, ensure_ascii=False)}' for k, v in extra.items() if v]
     return '\n'.join(head + ['---', '', ''])
 
@@ -489,7 +544,7 @@ def _who(which):
     return f"{dict(claude='Claude', codex='Codex').get(client, client)} ({model})" if model else client
 
 
-def write_note(root, rel, front, title, body, points, items, language, digest_rel=None, cut=None, which=None):
+def write_note(root, rel, front, title, body, points, items, language, digest_rel=None, cut=None, which=None, describe=None):
     """The meeting note with its summary and minutes above the transcript, which stays as it was
     (read again here: the summary takes minutes, and the owner may have edited the note)."""
     L = labels(language)
@@ -509,7 +564,7 @@ def write_note(root, rel, front, title, body, points, items, language, digest_re
         out += [f"*{L['nothing']}*", '']
     if cut:
         out += [f"*{L['cut'].format(line=cut - 1)}*", '']
-    atomic_text(path, _front(text, front, 'done', digest=digest_rel, extractor=which) + '\n'.join(out) + '\n' + transcript)
+    atomic_text(path, _front(text, front, 'done', describe=describe, digest=digest_rel, extractor=which) + '\n'.join(out) + '\n' + transcript)
 
 
 def mark_failed(root, rel, error, language):
@@ -591,6 +646,13 @@ def summarize(ws, rel, root=None, language=None, which=None, audio=None):
             if len(failures) == 1:
                 raise CarryError(failures[0][1])
             raise CarryError('assistant_failed: ' + ' | '.join(f"{w.split(':')[0]}: {e.split(': ', 1)[-1]}" for w, e in failures))
+        describe = None
+        # Only a name nobody typed, and only while the heading is still the one Carry saved:
+        # a heading the owner wrote since, or a name Carry already gave it, stays.
+        if front.get('meet_title') == 'auto' and title == _saved_name(rel):
+            named = propose_title(points, language, which)
+            if named:
+                title, describe = named, _describe(named, front, labels(language))
         groups = dict(new=[], conflict=[], known=[])
         ran = False
         if items:
@@ -605,7 +667,7 @@ def summarize(ws, rel, root=None, language=None, which=None, audio=None):
         meta = dict(extractor=which, judge='agent' if ran else None, compared=ran, kind='meeting', meeting=rel,
                     dropped_without_quote=dropped)
         digest_rel = write_digest(root, rel, title, groups, meta, language, day) if items else None
-        write_note(root, rel, front, title, body, points, items, language, digest_rel, cut, which)
+        write_note(root, rel, front, title, body, points, items, language, digest_rel, cut, which, describe)
     except (CarryError, subprocess.SubprocessError, OSError) as exc:
         _record(ws, rel, status='failed', error=str(exc))
         try:
@@ -617,6 +679,53 @@ def summarize(ws, rel, root=None, language=None, which=None, audio=None):
     _record(ws, rel, status='done', digest=digest_rel)
     reindex(ws)
     return dict(path=rel, raw=False, digest=digest_rel, points=len(points), items=len(items), dropped=dropped, cut=cut)
+
+
+def retitle(ws, rel, root=None, which=None):
+    """Name a meeting summarised before Carry named meetings by their subject. Only its summary
+    points go to the assistant, never the transcript. The heading and description change, and
+    the heading of its digest on the Review page; the file keeps its name, so links to it hold."""
+    root = meeting_vault(ws, root)
+    path, text, front, body = _note(root, rel)  # a locked note is never rewritten
+    if front.get('type') != 'meeting':
+        raise CarryError('not_a_meeting')
+    if front.get('meet_status') != 'done':
+        raise CarryError('meeting_not_summarised')
+    language = note_language(front, body) or harvest.draft_language(ws, root)
+    L = labels(language)
+    points = _summary_points(body, L)
+    if not points:
+        raise CarryError('meeting_summary_empty')
+    chain = clients(ws, root, which)
+    if not chain:
+        raise CarryError('no_connected_assistant')
+    title = next((t for t in (propose_title(points, language, w) for w in chain) if t), None)
+    if not title:
+        raise CarryError('meeting_title_unavailable')
+    old = next((l[2:].strip() for l in body.splitlines() if l.startswith('# ')), None)
+    lines = body.lstrip('\n').split('\n')
+    at = next((i for i, l in enumerate(lines) if l.startswith('# ')), None)
+    if at is None:
+        lines[:0] = [f'# {title}', '']
+    else:
+        lines[at] = f'# {title}'
+    atomic_text(path, _front(text, front, 'done', describe=_describe(title, front, L), digest=front.get('meet_digest'),
+                             extractor=front.get('meet_extractor')) + '\n'.join(lines))
+    digest = str(front.get('meet_digest') or '')
+    if digest and old:
+        try:
+            dpath = resolve_within(root, digest)
+            dtext = dpath.read_text(encoding='utf-8')
+        except (CarryError, OSError):
+            dpath = None  # reviewed and gone: nothing to rename
+        if dpath:
+            renamed = dtext.replace(f"\n# {L['meeting']}: {old}\n", f"\n# {L['meeting']}: {title}\n", 1)
+            renamed = renamed.replace(f'description: {json.dumps(old + ":", ensure_ascii=False)[:-1]}',
+                                      f'description: {json.dumps(title + ":", ensure_ascii=False)[:-1]}', 1)
+            if renamed != dtext:
+                atomic_text(dpath, renamed)
+    reindex(ws)
+    return dict(path=rel, title=title, previous=old)
 
 
 # -- Whisper after the meeting --------------------------------------------------------
@@ -885,7 +994,7 @@ def listing(ws, root=None, limit=100):
     for path in sorted(folder.glob('*.md'), reverse=True)[:limit] if folder.is_dir() else []:
         rel = f'{MEET_DIR}/{path.name}'
         try:
-            front, _ = parse_frontmatter(path.read_text(encoding='utf-8'))
+            front, body = parse_frontmatter(path.read_text(encoding='utf-8'))
         except OSError:
             continue
         if front.get('type') != 'meeting':
@@ -894,7 +1003,8 @@ def listing(ws, root=None, limit=100):
         job = state.get(rel, {})
         if status != 'done' and job.get('status') in ('running', 'transcribing'):  # a retry runs over a failed one
             status = job['status'] if _alive(job.get('pid')) else 'failed'
-        title = path.stem.split(' — ', 1)[-1]
+        # The heading, which the summary may have renamed; the file keeps its first name.
+        title = next((l[2:].strip() for l in body.splitlines() if l.startswith('# ')), '') or path.stem.split(' — ', 1)[-1]
         out.append(dict(path=rel, title=title, started=str(front.get('started') or ''), minutes=front.get('duration_minutes'),
                         status=status, digest=front.get('meet_digest') or job.get('digest'),
                         error=front.get('meet_error') or (job.get('error') if status == 'failed' else None)))

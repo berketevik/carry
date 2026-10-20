@@ -1,7 +1,8 @@
 """Local app bridge: one bounded JSON request/response, over private stdio pipes.
 
-No listener, telemetry, model downloads or shell execution. A fresh Workspace
-is loaded for every command so CLI/hook edits remain visible to the app.
+No telemetry, model downloads or shell execution, and no standing listener: only while a
+Trello sign-in waits does a loopback page take the browser's answer, for ten minutes at most.
+A fresh Workspace is loaded for every command so CLI/hook edits remain visible to the app.
 """
 import json
 import os
@@ -168,6 +169,7 @@ class Bridge:
         self.plans = {}
         self.vault_plans = {}
         self.login = None
+        self.trello_login = None
 
     def dispatch(self, request):
         if not isinstance(request, dict) or not isinstance(request.get('action'), str):
@@ -207,6 +209,43 @@ class Bridge:
             return maintenance.start(ws, action, source_id=request['source_id'])
         if action == 'model_setup':
             return maintenance.start(ws, action, model=request['model'])
+        if action == 'trello':
+            from . import trello
+            return trello.view(ws.state_dir)
+        if action == 'trello_settings':
+            from . import trello
+            trello.save_settings(ws.state_dir, boards=request.get('boards'), since=request.get('since'))
+            return trello.view(ws.state_dir)
+        if action == 'work':
+            from . import work
+            return work.build(ws)
+        if action == 'work_done':
+            from . import work
+            work.mark_done(ws, request.get('done'))
+            return work.build(ws)
+        if action == 'trello_login':
+            from . import profile
+            # A new click replaces the waiting one, which frees the port first.
+            if self.trello_login:
+                self.trello_login.cancel()
+            language = request.get('language') if request.get('language') in ('en', 'tr') else 'en'
+            self.trello_login = profile.trello_login(ws, language)
+            return self.trello_login.result
+        if action == 'trello_login_status':
+            return self.trello_login.result if self.trello_login else dict(state='idle')
+        if action == 'trello_login_cancel':
+            if self.trello_login:
+                self.trello_login.cancel()
+            return dict(state='cancelled')
+        if action in ('profile', 'profile_save', 'profile_logout', 'trello_disconnect'):
+            from . import profile
+            if action == 'profile_save':
+                return profile.save(ws, request.get('email'), request.get('name'))
+            if action == 'profile_logout':
+                return profile.logout(ws)
+            if action == 'trello_disconnect':
+                return profile.disconnect_trello(ws)
+            return profile.view(ws, request.get('email'))
         if action == 'maintenance_status':
             maintenance.automatic(ws)
             return maintenance.job_status(ws)
@@ -311,7 +350,7 @@ class Bridge:
             maintenance.start(Workspace.load(state))
             return result
         if action in ('vault_browse', 'vault_note', 'vault_resolve', 'vault_backlinks', 'vault_overview', 'vault_graph', 'note_create', 'note_approve', 'note_approve_many',
-                      'digest_items', 'digest_decide'):
+                      'digest_items', 'digest_decide', 'digest_accept_all'):
             from . import vaultview
             sid = request.get('source_id') or vaultview.default_vault(ws)
             if not sid:
@@ -337,6 +376,11 @@ class Bridge:
             if action == 'digest_decide':
                 from . import digest
                 result = digest.decide(ws, sid, request['path'], request.get('item', ''), request.get('decision', ''), request.get('text'))
+                maintenance.start(ws)
+                return result
+            if action == 'digest_accept_all':
+                from . import digest
+                result = digest.accept_all(ws, sid, request['path'])
                 maintenance.start(ws)
                 return result
             if action == 'note_approve_many':
@@ -417,7 +461,8 @@ class Bridge:
                 try:
                     saved = meet.save(ws, request.get('segments'), request.get('title', ''), request.get('started'),
                                       request.get('duration'), root=root, language=language,
-                                      mic_only=request.get('mic_only') is True, whisper=bool(audio))
+                                      mic_only=request.get('mic_only') is True, whisper=bool(audio),
+                                      title_auto=request.get('title_auto') is True)
                 except CarryError:
                     meet.drop_audio(ws, audio)
                     raise

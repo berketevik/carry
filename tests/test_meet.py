@@ -164,6 +164,84 @@ class MeetTest(unittest.TestCase):
         self.assertIn('- **karar:** Ses diske yazılmaz. ([[2026-10-13 1430 — Carry Meet]], segment 2)', log)
         self.assertEqual(meet.listing(self.ws)['meetings'][0]['status'], 'done')
 
+    POINT = dict(type='summary', statement='Toplantı kaydının cihazda yazıya dökülmesi konuşuldu.', line=2,
+                 quote='Kayıtlar cihazda yazıya dökülecek')
+    DECISION = dict(type='decision', statement='Ses diske yazılmaz.', line=2, quote='ses diske yazılmayacak, buna karar verdik')
+
+    def test_a_meeting_nobody_named_is_named_by_its_subject_from_its_summary_only(self):
+        rel = meet.save(self.ws, SEGMENTS, title='Slack toplantısı', started='2026-10-13T14:30:00+03:00', duration=95,
+                        title_auto=True)['path']
+        ask, calls = agent([self.POINT, self.DECISION], [dict(title='Örnek Marka: kayıt toplantısı')])
+        with patch.object(harvest, 'ask_agent', side_effect=ask):
+            report = meet.summarize(self.ws, rel, which='claude:sonnet')
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[1]['body'], '- Toplantı kaydının cihazda yazıya dökülmesi konuşuldu.')  # no transcript line
+        front, body = parse_frontmatter((self.root / rel).read_text(encoding='utf-8'))
+        self.assertTrue(body.lstrip().startswith('# Örnek Marka kayıt toplantısı\n'))
+        self.assertEqual(front['description'], 'Örnek Marka kayıt toplantısı, 2026-10-13 14:30, 2 dk')
+        self.assertEqual(front['meet_title'], 'auto')
+        self.assertIn('- **[2 · 00:09] Karşı taraf:** Kayıtlar cihazda', body)
+        self.assertEqual(rel, 'sources/carry/meet/2026-10-13 1430 — Slack toplantısı.md')  # the file keeps its name
+        self.assertEqual(meet.listing(self.ws)['meetings'][0]['title'], 'Örnek Marka kayıt toplantısı')
+        self.assertIn('\n# Toplantı: Örnek Marka kayıt toplantısı\n', (self.root / report['digest']).read_text(encoding='utf-8'))
+
+    def test_a_heading_the_owner_wrote_after_saving_is_never_renamed(self):
+        rel = meet.save(self.ws, SEGMENTS, title='Slack toplantısı', started='2026-10-13T14:30:00+03:00', duration=95,
+                        title_auto=True)['path']
+        path = self.root / rel
+        path.write_text(path.read_text(encoding='utf-8').replace('# Slack toplantısı\n', '# Bütçe planı\n'), encoding='utf-8')
+        ask, calls = agent([self.POINT], [dict(title='Örnek Marka: kayıt toplantısı')])
+        with patch.object(harvest, 'ask_agent', side_effect=ask):
+            meet.summarize(self.ws, rel, which='claude:sonnet')
+        self.assertEqual(len(calls), 1)  # no title asked for
+        self.assertEqual(meet._saved_name('sources/carry/meet/2026-10-13 1430 — Slack toplantısı (2).md'), 'Slack toplantısı')
+        self.assertTrue(parse_frontmatter(path.read_text(encoding='utf-8'))[1].lstrip().startswith('# Bütçe planı\n'))
+
+    def test_a_meeting_carry_named_keeps_that_name_on_the_next_summary(self):
+        rel = meet.save(self.ws, SEGMENTS, title='Slack toplantısı', started='2026-10-13T14:30:00+03:00', duration=95,
+                        title_auto=True)['path']
+        for title in ('Örnek Marka kayıt toplantısı', 'Başka bir ad toplantısı'):
+            ask, _ = agent([self.POINT], [dict(title=title)])
+            with patch.object(harvest, 'ask_agent', side_effect=ask):
+                meet.summarize(self.ws, rel, which='claude:sonnet')
+        body = parse_frontmatter((self.root / rel).read_text(encoding='utf-8'))[1]
+        self.assertTrue(body.lstrip().startswith('# Örnek Marka kayıt toplantısı\n'))
+
+    def test_a_meeting_keeps_its_title_when_no_subject_comes_back(self):
+        rel = meet.save(self.ws, SEGMENTS, title='Slack toplantısı', started='2026-10-13T14:30:00+03:00', duration=95,
+                        title_auto=True)['path']
+        ask, calls = agent([self.POINT], [dict(statement='başlık değil')])
+        with patch.object(harvest, 'ask_agent', side_effect=ask):
+            meet.summarize(self.ws, rel, which='claude:sonnet')
+        front, body = parse_frontmatter((self.root / rel).read_text(encoding='utf-8'))
+        self.assertTrue(body.lstrip().startswith('# Slack toplantısı\n'))
+        self.assertEqual(front['description'], 'Slack toplantısı, 2026-10-13 14:30, 2 dk')
+
+    def test_an_older_meeting_is_renamed_from_its_summary_without_its_transcript(self):
+        rel = self.saved(title='Microsoft Teams toplantısı')['path']
+        with self.assertRaisesRegex(CarryError, 'meeting_not_summarised'):
+            meet.retitle(self.ws, rel, which='claude:sonnet')
+        ask, _ = agent([self.POINT, self.DECISION])
+        with patch.object(harvest, 'ask_agent', side_effect=ask):
+            report = meet.summarize(self.ws, rel, which='claude:sonnet')
+        before = (self.root / rel).read_text(encoding='utf-8')
+        ask, calls = agent([dict(title='Örnek Marka kayıt toplantısı')])
+        with patch.object(harvest, 'ask_agent', side_effect=ask):
+            renamed = meet.retitle(self.ws, rel, which='claude:sonnet')
+        self.assertEqual((renamed['title'], renamed['previous']), ('Örnek Marka kayıt toplantısı', 'Microsoft Teams toplantısı'))
+        self.assertEqual(calls[0]['body'], '- Toplantı kaydının cihazda yazıya dökülmesi konuşuldu.')
+        after = (self.root / rel).read_text(encoding='utf-8')
+        front, body = parse_frontmatter(after)
+        self.assertTrue(body.lstrip('\n').startswith('# Örnek Marka kayıt toplantısı\n'))
+        self.assertEqual(front['description'], 'Örnek Marka kayıt toplantısı, 2026-10-13 14:30, 2 dk')
+        self.assertEqual((front['meet_status'], front['meet_digest'], front['meet_extractor']), ('done', report['digest'], 'claude:sonnet'))
+        # Only the heading changed below the frontmatter: summary, minutes and transcript are as they were.
+        self.assertEqual(body.lstrip('\n').split('\n', 1)[1], parse_frontmatter(before)[1].lstrip('\n').split('\n', 1)[1])
+        draft = (self.root / report['digest']).read_text(encoding='utf-8')
+        self.assertIn('\n# Toplantı: Örnek Marka kayıt toplantısı\n', draft)
+        self.assertTrue(parse_frontmatter(draft)[0]['description'].startswith('Örnek Marka kayıt toplantısı: 1 new'))
+        self.assertEqual(meet.listing(self.ws)['meetings'][0]['title'], 'Örnek Marka kayıt toplantısı')
+
     def test_many_points_are_merged_into_one_short_summary(self):
         rel = self.saved()['path']
         point = lambda i: dict(type='summary', statement=f'Nokta {i}.', line=2, quote='Kayıtlar cihazda yazıya dökülecek')
@@ -300,9 +378,10 @@ class MeetTest(unittest.TestCase):
         bridge = desktop.Bridge()
         with patch.object(meet, 'spawn') as spawn, patch.object(desktop.maintenance, 'start'):
             saved = bridge.dispatch(dict(action='meeting_save', workspace=str(self.ws.state_dir), segments=SEGMENTS, language='English',
-                                         title='Bridge', started='2026-10-13T09:05:00+03:00', duration=40))
+                                         title='Bridge', title_auto=True, started='2026-10-13T09:05:00+03:00', duration=40))
         self.assertEqual(saved['path'], 'sources/carry/meet/2026-10-13 0905 — Bridge.md')
         self.assertIn('meet_language: English', (self.root / saved['path']).read_text(encoding='utf-8'))  # the app's Language
+        self.assertIn('meet_title: auto', (self.root / saved['path']).read_text(encoding='utf-8'))  # the summary names it
         spawn.assert_called_once()
         self.assertEqual(spawn.call_args.args[1:], (saved['path'], self.root))
         listed = bridge.dispatch(dict(action='meeting_list', workspace=str(self.ws.state_dir)))

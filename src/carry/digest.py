@@ -146,14 +146,58 @@ def note_side(ws, source_id, item):
     return path, lines[score.index(max(score))][:MATCH_TEXT]
 
 
+FIRST_PROMPT = 200
+OWNER_LINE = re.compile(r'^\*\*Owner:\*\* ?(.*)$')
+
+
+def source_chat(root, relative, parsed):
+    """Where a draft came from, for Review: the assistant and day from its name, and the chat's
+    first message from the raw chat, cut short. Meetings say only that they are one."""
+    if parsed['kind'] == 'meeting':
+        return dict(kind='meeting', day=parsed['created'])
+    stem = Path(relative).stem
+    m = re.match(r'^(\d{4}-\d{2}-\d{2}) — (?:session|harvest) (\w+) ', stem)
+    chat = dict(kind='chat', client=m.group(2) if m else '', day=m.group(1) if m else parsed['created'], first='')
+    resource = (parsed['raw_entry'] or {}).get('resource', '') if isinstance(parsed['raw_entry'], dict) else ''
+    if not resource.startswith('/'):
+        return chat
+    try:
+        raw = resolve_within(root, resource.lstrip('/')).read_text(encoding='utf-8', errors='ignore')
+    except (OSError, CarryError):
+        return chat
+    lines, said = raw.split('\n'), []
+    for n, line in enumerate(lines):
+        found = OWNER_LINE.match(line)
+        if found:
+            # The message runs until the reply or the next exchange.
+            said = [found.group(1)] + lines[n + 1:n + 20]
+            said = said[:next((i for i, l in enumerate(said) if l.startswith(('**Assistant:**', '## '))), len(said))]
+            break
+    text = ' '.join(' '.join(said).split())
+    chat['first'] = text if len(text) <= FIRST_PROMPT else text[:FIRST_PROMPT].rsplit(' ', 1)[0] + '…'
+    return chat
+
+
 def items(ws, source_id, relative):
-    _, _, text, front = _open(ws, source_id, relative)
+    root, _, text, front = _open(ws, source_id, relative)
     parsed = parse(text)
     for it in parsed['items']:
         if it['match'] and it['decision'] is None:
             it['match_path'], it['match_text'] = note_side(ws, source_id, it)
     waiting = sum(1 for it in parsed['items'] if it['decision'] is None)
-    return dict(path=relative, items=parsed['items'], waiting=waiting, draft=okf.is_draft(front))
+    return dict(path=relative, items=parsed['items'], waiting=waiting, draft=okf.is_draft(front),
+                chat=source_chat(root, relative, parsed))
+
+
+def accept_all(ws, source_id, relative, today=None):
+    """Accept every item that waits, except conflicts with a note and items marked To review
+    (probably withdrawn): those need the owner to choose."""
+    _, _, text, _ = _open(ws, source_id, relative)
+    plain = [it['id'] for it in parse(text)['items'] if it['decision'] is None and it['section'] not in ('conflict', 'review')]
+    result = dict(waiting=sum(1 for it in parse(text)['items'] if it['decision'] is None), done=False, logged=None)
+    for item in plain:
+        result = decide(ws, source_id, relative, item, 'accept', today=today)
+    return dict(accepted=len(plain), waiting=result['waiting'], done=result['done'], logged=result.get('logged'))
 
 
 def _log_source(root, raw_entry):
