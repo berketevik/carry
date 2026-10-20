@@ -1,5 +1,6 @@
 """GitHub snapshots: hostile archives, exact revisions, errors and source isolation."""
 import io
+import json
 import tarfile
 from unittest.mock import patch
 from dataclasses import replace
@@ -7,7 +8,7 @@ from dataclasses import replace
 from datetime import datetime
 
 from _support import WorkspaceCase, tree_digest
-from carry import commits, github, index, maintenance, vaultview
+from carry import commits, github, index, maintenance, team, vaultview
 from carry.config import Workspace
 from carry.errors import CarryError
 from carry.mcp_server import _format_recall
@@ -87,6 +88,26 @@ class GithubTest(WorkspaceCase):
         with patch.object(github, 'api', side_effect=self.fake_api), patch.object(github, 'download') as download:
             result = github.sync(ws, 'team')
         download.assert_not_called(); self.assertEqual(result['status'], 'unchanged')
+
+    def test_a_sync_asked_for_by_hand_downloads_the_same_commit_again(self):
+        # The snapshot an older Carry made at this commit: without the team's settings.
+        def old(repo, sha, path):
+            archive(path, {'repo/docs/release.md': '# Release\nDelivery is October 22.'})
+        with patch.object(github, 'api', side_effect=self.fake_api), patch.object(github, 'download', side_effect=old):
+            github.connect(self.workspace, 'team', 'acme/docs')
+        ws = Workspace.load(self.workspace.state_dir)
+        self.assertIsNone(team.sign_in(ws)['trello_api_key'])
+        key = 'f' * 32
+        def full(repo, sha, path):
+            archive(path, {'repo/docs/release.md': '# Release\nDelivery is October 22.',
+                           'repo/.carry/team.json': json.dumps(dict(trello_api_key=key))})
+        self.asked.clear()
+        with patch.object(github, 'api', side_effect=self.fake_api), patch.object(github, 'download', side_effect=full):
+            maintenance.run(ws, 'github_sync', dict(source_id='team'))
+        current = Workspace.load(ws.state_dir)
+        self.assertEqual(team.sign_in(current)['trello_api_key'], key)
+        self.assertEqual(index.health(current)['state'], 'fresh')
+        self.assertEqual(self.asked, [])  # the same bytes keep their commit dates
 
     def test_failed_download_keeps_source_and_index(self):
         self.note('Local', 'Known answer'); self.build()

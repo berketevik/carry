@@ -271,14 +271,16 @@ def connect(workspace, source_id, repository, branch='', folder='', progress=Non
     return _sync(workspace, source_id, config, adding=True, progress=progress)
 
 
-def sync(workspace, source_id, progress=None):
+def sync(workspace, source_id, progress=None, again=False):
+    """again: download the commit even when the snapshot already has it. A snapshot an older
+    Carry made lacks what Carry keeps now, such as the team's .carry/team.json."""
     source = workspace.source(source_id)
     if not source.github:
         raise CarryError('source_is_not_github')
-    return _sync(workspace, source_id, source.github, progress=progress)
+    return _sync(workspace, source_id, source.github, progress=progress, again=again)
 
 
-def _sync(workspace, source_id, config, adding=False, progress=None):
+def _sync(workspace, source_id, config, adding=False, progress=None, again=False):
     from .maintenance import job_progress
     progress = progress or (lambda **kw: job_progress(workspace, **kw))
     repo = repository_name(config['repository'])
@@ -286,7 +288,7 @@ def _sync(workspace, source_id, config, adding=False, progress=None):
     commit = api(f'/repos/{repo}/commits/{quote(config["branch"], safe="")}')['sha']
     if not re.fullmatch(r'[a-f0-9]{40}', commit):
         raise CarryError('github_invalid_commit')
-    if config.get('commit') == commit:
+    if config.get('commit') == commit and not again:
         updated_config = dict(config, synced_at=time.time())
         with writer_lock(workspace):
             current = Workspace.load(workspace.state_dir)
