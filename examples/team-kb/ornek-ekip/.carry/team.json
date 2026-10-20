@@ -1,0 +1,10 @@
+{
+  "min_carry_version": "0.16",
+  "email_domains": ["ornek.com.tr"],
+  "retrieval": {"top_k": 8},
+  "work": {
+    "inbox": "90_Inbox",
+    "handed": ["{name} için", "devir: {name}"],
+    "review_statuses": ["draft"]
+  }
+}
