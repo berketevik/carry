@@ -2017,6 +2017,24 @@ struct TrelloSettings: View {
     }
 }
 
+/// Every fold opens from its whole title row: macOS opens one only from its small arrow, so a click
+/// on the title (on "Advanced", say) did nothing.
+struct WholeRowDisclosure: DisclosureGroupStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button { withAnimation(.easeInOut(duration: 0.15)) { configuration.isExpanded.toggle() } } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(configuration.isExpanded ? 90 : 0))
+                    configuration.label
+                    Spacer(minLength: 0)
+                }.contentShape(Rectangle())
+            }.buttonStyle(.plain)
+            if configuration.isExpanded { configuration.content.padding(.leading, 18) }
+        }
+    }
+}
+
 /// Trello in one click, the same in the sign-in sheet and in Settings › Trello: the browser opens
 /// Trello's page, the person allows Carry, and Carry keeps the permission on its own. Nobody types a
 /// key or a token; without the team's key in the team notes there is only an explanation.
@@ -2033,7 +2051,21 @@ struct TrelloConnect: View {
                     Button(T("Disconnect", "Bağlantıyı kes")) { model.run("trello_disconnect") { model.profileChanged($0) } }
                 }
             } else if !model.trelloKeyKnown {
-                Text(UIError("trello_team_key_missing").localizedDescription).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                // The key reaches this Mac with the team notes: syncing them is the one thing to do here.
+                let team = model.sources.first { str($0, "scope", "") == "team" && $0["github"] is [String: Any] }
+                let syncing = str(model.job, "state") == "running" && str(model.job, "action", "") == "github_sync"
+                Text(T("The team's Trello key is not in Carry's copy of the team notes yet. If it was just added there, sync the team notes; Carry also does it by itself every few minutes.",
+                       "Ekibin Trello anahtarı Carry'deki ekip notlarında henüz yok. OKB'ye yeni eklendiyse ekip notlarını eşitle; Carry bunu birkaç dakikada bir kendisi de yapar."))
+                    .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                if let team {
+                    HStack(spacing: 8) {
+                        if syncing { ProgressView().controlSize(.small); Text(T("Syncing the team notes…", "Ekip notları eşitleniyor…")).foregroundStyle(.secondary) }
+                        Spacer()
+                        Button(T("Sync the team notes now", "Ekip notlarını şimdi eşitle")) {
+                            model.run("github_sync", ["source_id": str(team, "source_id", "")]) { model.job = $0 }
+                        }.disabled(syncing)
+                    }
+                }
             } else if model.trelloWaiting {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
@@ -5337,7 +5369,7 @@ struct ContentView: View {
 @main struct CarryApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     var body: some Scene {
-        WindowGroup("Carry", id: "main") { ContentView() }.defaultSize(width: 1240, height: 820).commands {
+        WindowGroup("Carry", id: "main") { ContentView().disclosureGroupStyle(WholeRowDisclosure()) }.defaultSize(width: 1240, height: 820).commands {
             CommandGroup(replacing: .appSettings) {
                 Button(T("Settings…", "Ayarlar…")) { NotificationCenter.default.post(name: .openSettings, object: nil) }.keyboardShortcut(",")
             }
