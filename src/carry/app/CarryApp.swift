@@ -1686,9 +1686,14 @@ struct DigestItemsView: View {
             items = v["items"] as? [[String: Any]] ?? []; chat = v["chat"] as? [String: Any] ?? [:]
         }
     }
+    /// A decision taken meanwhile elsewhere (the CLI, another window) shows the list as it is now.
+    func failed(_ e: Error) {
+        model.error = e.localizedDescription
+        if ["item_already_decided", "item_not_found"].contains((e as? UIError)?.message ?? "") { load(); model.reloadNote() }
+    }
     func acceptAll() {
         let next = model.nextDraft(after: path)
-        model.run("digest_accept_all", ["path": path, "source_id": model.noteSource]) { v in
+        model.request("digest_accept_all", ["path": path, "source_id": model.noteSource], clearError: true, quiet: false, orElse: failed) { v in
             let accepted = Int(num(v, "accepted"))
             model.loadWork()
             if v["done"] as? Bool == true {
@@ -1705,7 +1710,7 @@ struct DigestItemsView: View {
         var fields: [String: Any] = ["path": path, "source_id": model.noteSource, "item": id, "decision": decision]
         if let text { fields["text"] = text }
         let next = model.nextDraft(after: path)
-        model.run("digest_decide", fields) { v in
+        model.request("digest_decide", fields, clearError: true, quiet: false, orElse: failed) { v in
             editing = ""
             let logged = str(v, "logged", "")
             model.loadWork()
