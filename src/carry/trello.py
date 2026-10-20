@@ -41,12 +41,20 @@ MAX_AGE = 300
 TIMEOUT = 15
 CARD_FIELDS = 'name,idShort,idBoard,idList,due,dueComplete,shortUrl,dateLastActivity'
 # Trello marks a card complete only when it has a due date; teams close the rest by moving it to such a list.
-DONE_LISTS = re.compile(r'\b(done|completed|tamamlan|bitti|bitenler)', re.I)
+# Whole words only: "Tamamlanacaklar" (to be completed) and "Not done" are work still open.
+DONE_WORDS = {'done', 'completed', 'finished', 'tamamlandi', 'tamamlanan', 'tamamlananlar', 'bitti', 'biten', 'bitenler'}
+NOT_DONE = {'not', 'be', 'yet'}
+FOLD = str.maketrans('İIıŞşĞğÜüÖöÇç', 'iiissgguuoocc')
 # The team's key allows this origin in Trello, so the port is fixed.
 PORT = 47821
 LOGIN_TIMEOUT = 600
 TOKEN_SHAPE = re.compile(r'[A-Za-z0-9]{32,128}')
 _refreshing = threading.Lock()
+
+
+def is_done_list(name):
+    words = re.findall(r'[a-z0-9]+', (name or '').translate(FOLD).casefold())
+    return any(w in DONE_WORDS and (i == 0 or words[i - 1] not in NOT_DONE) for i, w in enumerate(words))
 
 
 def authorize_url(key, return_url=None):
@@ -326,7 +334,7 @@ def refresh(state_dir, creds=None):
         return result
     # Only the open lists of open boards come back, so a card on a closed board or list drops out here.
     lists = {l['id']: (b['id'], b.get('name', ''), l.get('name', '')) for b in boards for l in b.get('lists') or []}
-    cards = [c for c in cards if not c.get('dueComplete') and c.get('idList') in lists and not DONE_LISTS.search(lists[c['idList']][2])]
+    cards = [c for c in cards if not c.get('dueComplete') and c.get('idList') in lists and not is_done_list(lists[c['idList']][2])]
     # Cards with a due date first, the nearest at the top; the rest by the latest activity.
     cards.sort(key=lambda c: c.get('dateLastActivity') or '', reverse=True)
     cards.sort(key=lambda c: (not c.get('due'), c.get('due') or ''))

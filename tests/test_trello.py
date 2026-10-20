@@ -287,6 +287,15 @@ class LoginTest(unittest.TestCase):
         self.assertEqual(str(caught.exception), 'trello_port_busy')
 
 
+class DoneListTest(unittest.TestCase):
+    def test_only_lists_of_finished_work_count_as_done(self):
+        for name in ('Done', 'DONE ✅', 'Completed', 'Tamamlandı', 'TAMAMLANDI', 'Tamamlananlar', 'Bitti', 'Bitenler', 'Ekim: done'):
+            self.assertTrue(trello.is_done_list(name), name)
+        # Work still to finish, in either language, keeps its cards on Home.
+        for name in ('Tamamlanacaklar', 'Tamamlanmayanlar', 'Not done', 'To be completed', 'Yapılacaklar', 'Bitmeyenler', 'Doing'):
+            self.assertFalse(trello.is_done_list(name), name)
+
+
 class CardNumberTest(unittest.TestCase):
     def test_a_card_keeps_its_number_so_notes_can_name_it(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(trello, '_get', side_effect=api()):
