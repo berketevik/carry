@@ -858,6 +858,7 @@ func tabName(_ key: String) -> String {
     switch key {
     case "Search": return T("Search and index", "Arama ve indeks")
     case "Sources": return T("Note folders", "Not klasörleri")
+    case "Trello": return "Trello"
     case "Harvest": return T("Session recap", "Oturum özeti")
     case "Clients": return T("Assistants", "Asistanlar")
     default: return T("General", "Genel")
@@ -2352,7 +2353,7 @@ struct NoteView: View {
 
 struct SettingsView: View {
     @ObservedObject var model: Model
-    let tabs = ["General", "Sources", "Clients", "Harvest", "Search"]
+    let tabs = ["General", "Trello", "Sources", "Clients", "Harvest", "Search"]
     var body: some View {
         VStack(spacing: 0) {
             Picker(L("Settings"), selection: $model.settingsTab) { ForEach(tabs, id: \.self) { Text(tabName($0)).tag($0) } }
@@ -2365,6 +2366,12 @@ struct SettingsView: View {
                 case "Harvest": HarvestSettings(model: model)
                 case "Clients": Connections(model: model)
                 case "General": GeneralSettings(model: model)
+                case "Trello": ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+                        PageIntro(icon: "square.stack", title: "Trello", text: T("Which of your Trello cards Home shows.", "Ana sayfanın Trello kartlarından hangilerini gösterdiği."))
+                        TrelloSettings(model: model)
+                    }.padding(30).frame(maxWidth: .infinity, alignment: .leading)
+                }
                 default: EmptyView()
                 }
             }
@@ -2754,7 +2761,7 @@ struct GeneralSettings: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                PageIntro(icon: "gearshape", title: T("General", "Genel"), text: T("Language, Trello and help.", "Dil, Trello ve yardım."))
+                PageIntro(icon: "gearshape", title: T("General", "Genel"), text: T("Language and help.", "Dil ve yardım."))
                 GroupBox(L("Language")) {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack { Text(L("App language")); Spacer(); Picker(L("App language"), selection: $model.language) { Text("Türkçe").tag("tr"); Text("English").tag("en") }.pickerStyle(.segmented).labelsHidden().fixedSize() }
@@ -2762,7 +2769,6 @@ struct GeneralSettings: View {
                         Text(T("Recaps of your chats and meetings are written in this language. Saved as soon as you pick.", "Sohbet ve toplantı özetleri bu dilde yazılır. Seçtiğin an kaydedilir.")).font(.caption).foregroundStyle(.secondary)
                     }.padding(12).frame(maxWidth: 520, alignment: .leading)
                 }
-                TrelloSettings(model: model)
                 GroupBox(T("Help", "Yardım")) {
                     VStack(alignment: .leading, spacing: 10) {
                         Text(T("New here, or setting up another Mac? The setup guide walks you through notes and assistants again. Nothing you already have is removed.",
