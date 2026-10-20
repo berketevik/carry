@@ -393,6 +393,11 @@ def propose_title(points, language, which, ask=None):
     return safe_title(title, language) if title else None
 
 
+def _saved_name(rel):
+    """The name the meeting was saved under: its file name after the time, without a ` (2)`."""
+    return re.sub(r' \(\d+\)$', '', Path(rel).stem.split(' — ', 1)[-1])
+
+
 def _describe(title, front, L):
     """The note's one-line description: title, start and length."""
     try:
@@ -642,7 +647,9 @@ def summarize(ws, rel, root=None, language=None, which=None, audio=None):
                 raise CarryError(failures[0][1])
             raise CarryError('assistant_failed: ' + ' | '.join(f"{w.split(':')[0]}: {e.split(': ', 1)[-1]}" for w, e in failures))
         describe = None
-        if front.get('meet_title') == 'auto':
+        # Only a name nobody typed, and only while the heading is still the one Carry saved:
+        # a heading the owner wrote since, or a name Carry already gave it, stays.
+        if front.get('meet_title') == 'auto' and title == _saved_name(rel):
             named = propose_title(points, language, which)
             if named:
                 title, describe = named, _describe(named, front, labels(language))

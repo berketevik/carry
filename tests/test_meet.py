@@ -179,11 +179,33 @@ class MeetTest(unittest.TestCase):
         front, body = parse_frontmatter((self.root / rel).read_text(encoding='utf-8'))
         self.assertTrue(body.lstrip().startswith('# Örnek Marka kayıt toplantısı\n'))
         self.assertEqual(front['description'], 'Örnek Marka kayıt toplantısı, 2026-10-13 14:30, 2 dk')
-        self.assertEqual(front['meet_title'], 'auto')  # a retry names it again
+        self.assertEqual(front['meet_title'], 'auto')
         self.assertIn('- **[2 · 00:09] Karşı taraf:** Kayıtlar cihazda', body)
         self.assertEqual(rel, 'sources/carry/meet/2026-10-13 1430 — Slack toplantısı.md')  # the file keeps its name
         self.assertEqual(meet.listing(self.ws)['meetings'][0]['title'], 'Örnek Marka kayıt toplantısı')
         self.assertIn('\n# Toplantı: Örnek Marka kayıt toplantısı\n', (self.root / report['digest']).read_text(encoding='utf-8'))
+
+    def test_a_heading_the_owner_wrote_after_saving_is_never_renamed(self):
+        rel = meet.save(self.ws, SEGMENTS, title='Slack toplantısı', started='2026-10-13T14:30:00+03:00', duration=95,
+                        title_auto=True)['path']
+        path = self.root / rel
+        path.write_text(path.read_text(encoding='utf-8').replace('# Slack toplantısı\n', '# Bütçe planı\n'), encoding='utf-8')
+        ask, calls = agent([self.POINT], [dict(title='Örnek Marka: kayıt toplantısı')])
+        with patch.object(harvest, 'ask_agent', side_effect=ask):
+            meet.summarize(self.ws, rel, which='claude:sonnet')
+        self.assertEqual(len(calls), 1)  # no title asked for
+        self.assertEqual(meet._saved_name('sources/carry/meet/2026-10-13 1430 — Slack toplantısı (2).md'), 'Slack toplantısı')
+        self.assertTrue(parse_frontmatter(path.read_text(encoding='utf-8'))[1].lstrip().startswith('# Bütçe planı\n'))
+
+    def test_a_meeting_carry_named_keeps_that_name_on_the_next_summary(self):
+        rel = meet.save(self.ws, SEGMENTS, title='Slack toplantısı', started='2026-10-13T14:30:00+03:00', duration=95,
+                        title_auto=True)['path']
+        for title in ('Örnek Marka kayıt toplantısı', 'Başka bir ad toplantısı'):
+            ask, _ = agent([self.POINT], [dict(title=title)])
+            with patch.object(harvest, 'ask_agent', side_effect=ask):
+                meet.summarize(self.ws, rel, which='claude:sonnet')
+        body = parse_frontmatter((self.root / rel).read_text(encoding='utf-8'))[1]
+        self.assertTrue(body.lstrip().startswith('# Örnek Marka kayıt toplantısı\n'))
 
     def test_a_meeting_keeps_its_title_when_no_subject_comes_back(self):
         rel = meet.save(self.ws, SEGMENTS, title='Slack toplantısı', started='2026-10-13T14:30:00+03:00', duration=95,
