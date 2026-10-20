@@ -85,6 +85,7 @@ class ProfileTest(WorkspaceCase):
         with patch.object(profile.trello, 'credentials', return_value=None):
             view = profile.view(self.workspace)
         self.assertIsNone(view['profile'])
+        self.assertTrue(view['team_connected'])
         self.assertEqual(view['names'], ['Deniz Kaya', 'İsmail', 'Sude'])
         self.assertFalse(view['trello_connected'])
         self.assertTrue(view['trello_key_known'])
@@ -95,6 +96,12 @@ class ProfileTest(WorkspaceCase):
         with patch.object(profile.trello, 'credentials', return_value=('k', 't')):
             view = profile.view(self.workspace)
         self.assertEqual((view['trello_connected'], view['trello_revoked']), (False, True))
+
+    def test_with_only_their_own_notes_nobody_is_asked_to_sign_in(self):
+        own = Workspace.create(self.base / 'state3', sources=[SourceConfig('corpus', self.corpus)],
+                               embedding=HASHING, retrieval=RetrievalConfig(top_k=6, auto_refresh=False))
+        with patch.object(profile.trello, 'credentials', return_value=None):
+            self.assertFalse(profile.view(own)['team_connected'])
 
     def test_trello_connects_in_one_click_under_the_team_key(self):
         from carry.desktop import Bridge

@@ -305,11 +305,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var signedIn: Bool { !me.isEmpty }
     var trelloConnected: Bool { profile["trello_connected"] as? Bool == true }
     var trelloRevoked: Bool { profile["trello_revoked"] as? Bool == true }
+    /// Sign-in is for a team: with only their own notes nobody is asked for a company mail.
+    var teamConnected: Bool { profile["team_connected"] as? Bool == true }
     func loadProfile() {
         run("profile", clearError: false, quiet: true) { value in
             if !same(value, self.profile) { self.profile = value }
             // Offered once on a Mac set up before sign-in existed; afterwards from the profile button.
-            if !(value["profile"] is [String: Any]) && !self.onboarding && !UserDefaults.standard.bool(forKey: "loginOffered") {
+            if !(value["profile"] is [String: Any]) && value["team_connected"] as? Bool == true && !self.onboarding
+                && !UserDefaults.standard.bool(forKey: "loginOffered") {
                 UserDefaults.standard.set(true, forKey: "loginOffered")
                 self.signIn()
             }
@@ -1801,7 +1804,7 @@ struct WorkList: View {
     var trello: [String: Any] { model.work["trello"] as? [String: Any] ?? [:] }
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            if !model.signedIn {
+            if !model.signedIn && model.teamConnected {
                 HStack(spacing: 12) {
                     Image(systemName: "person.crop.circle").font(.title2).foregroundStyle(Color.accentColor)
                     Text(T("Sign in with your company mail to see your Trello cards and the team notes waiting for you here.",
@@ -1809,7 +1812,7 @@ struct WorkList: View {
                     Spacer()
                     Button(T("Sign in", "Giriş yap")) { model.signIn() }.buttonStyle(.borderedProminent)
                 }.padding(12).background(Color.accentColor.opacity(0.07)).clipShape(RoundedRectangle(cornerRadius: 10))
-            } else if trello["connected"] as? Bool != true && !model.work.isEmpty {
+            } else if model.signedIn && trello["connected"] as? Bool != true && !model.work.isEmpty {
                 let revoked = str(trello, "error", "") == "trello_unauthorized"
                 HStack {
                     Text(revoked ? UIError("trello_unauthorized").localizedDescription
@@ -5259,11 +5262,14 @@ struct ProfileButton: View {
                 ZStack {
                     Circle().fill(model.signedIn ? Color.accentColor : Color.secondary.opacity(0.25))
                     if model.signedIn { Text(initials).font(.caption.bold()).foregroundStyle(.white) }
-                    else { Image(systemName: "person.fill").foregroundStyle(.secondary) }
+                    else { Image(systemName: model.teamConnected ? "person.fill" : "gearshape").foregroundStyle(.secondary) }
                 }.frame(width: 30, height: 30)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(model.signedIn ? str(model.me, "name") : T("Sign in", "Giriş yap")).fontWeight(.medium).lineLimit(1)
-                    Text(model.signedIn ? str(model.me, "email") : T("See your own work", "Kendi işlerinizi görün")).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                    Text(model.signedIn ? str(model.me, "name") : model.teamConnected ? T("Sign in", "Giriş yap") : T("Settings and help", "Ayarlar ve yardım"))
+                        .fontWeight(.medium).lineLimit(1)
+                    if model.signedIn || model.teamConnected {
+                        Text(model.signedIn ? str(model.me, "email") : T("See your own work", "Kendi işlerinizi görün")).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                    }
                 }
                 Spacer(minLength: 0)
             }.contentShape(Rectangle())
@@ -5303,10 +5309,12 @@ struct ProfileButton: View {
                 Divider()
                 item(T("Sign out", "Çıkış yap"), "rectangle.portrait.and.arrow.right", role: .destructive) { confirmLogout = true }
             } else {
-                Text(T("Sign in with your company mail: Home then shows your Trello cards and the team notes waiting for you.",
-                       "Şirket mailinizle giriş yapın: ana sayfa böylece Trello kartlarınızı ve sizi bekleyen ekip notlarını gösterir."))
-                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                item(T("Sign in", "Giriş yap"), "person.crop.circle") { model.signIn() }
+                if model.teamConnected {
+                    Text(T("Sign in with your company mail: Home then shows your Trello cards and the team notes waiting for you.",
+                           "Şirket mailinizle giriş yapın: ana sayfa böylece Trello kartlarınızı ve sizi bekleyen ekip notlarını gösterir."))
+                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    item(T("Sign in", "Giriş yap"), "person.crop.circle") { model.signIn() }
+                }
                 item(T("Settings", "Ayarlar"), "gearshape") { model.page = "Settings" }
                 item(T("How Carry works", "Carry nasıl çalışır?"), "questionmark.circle") { model.showGuide = true }
             }

@@ -103,7 +103,9 @@ def view(workspace, email=None):
     key = allowed['trello_api_key']
     current = load(workspace.state_dir)
     email = email or (current or {}).get('email')
-    return dict(profile=current, names=candidates, email_domains=allowed['email_domains'],
+    # Sign-in is for a team: with only their own notes nobody is asked for a company mail.
+    return dict(profile=current, team_connected=any(s.scope == 'team' for s in workspace.sources),
+                names=candidates, email_domains=allowed['email_domains'],
                 guess=guess(email, candidates) if email else '',
                 trello_connected=trello.credentials() is not None and not trello.revoked(workspace.state_dir),
                 trello_revoked=trello.revoked(workspace.state_dir), trello_key_known=bool(key))
