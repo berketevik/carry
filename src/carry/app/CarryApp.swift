@@ -136,6 +136,9 @@ struct UIError: LocalizedError {
         case "trello_timeout": return T("Trello did not answer within ten minutes. Try again.", "Trello'dan on dakika içinde yanıt gelmedi. Yeniden deneyin.")
         case "trello_token_invalid": return T("Trello's answer could not be read. Try again.", "Trello'nun yanıtı okunamadı. Yeniden deneyin.")
         case "item_already_decided", "item_not_found": return T("This item was already decided; the list is refreshed.", "Bu madde zaten karara bağlanmış; liste yenilendi.")
+        case "item_not_unsure": return T("This item is no longer marked unsure; the list is refreshed.", "Bu madde artık şüpheli değil; liste yenilendi.")
+        case "undo_not_available": return T("Only the latest decision of a recap can be taken back, for two days.", "Bir özetin yalnızca en son kararı, iki gün içinde geri alınabilir.")
+        case "undo_changed_since": return T("The recap or its daily note changed after this decision, so it cannot be taken back. Change the daily note by hand if needed.", "Bu karardan sonra özet ya da günlük not değişti; o yüzden geri alınamıyor. Gerekirse günlük notu elle düzeltin.")
         default:
             if message.hasPrefix("trello_unreachable") || message.hasPrefix("trello_http") {
                 return T("Trello could not be reached. Check your connection; Carry tries again by itself.", "Trello'ya ulaşılamadı. Bağlantınızı kontrol edin; Carry kendisi yeniden dener.")
@@ -242,6 +245,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     @Published var busy = false
     @Published var error = ""
     @Published var notice = ""
+    /// The Review decision the notice reports and may take back: path, source_id, undo id, and the notice it belongs to.
+    @Published var undoable: [String: Any] = [:]
+    /// Bumped when a recap's files go back after an undo, so its questions are read again.
+    @Published var digestEpoch = 0
+    /// Bumped after any Review decision, so the list of unsure items is read again.
+    @Published var reviewChanged = 0
     @Published var localTest = "Not tested"
     @Published var githubLogin: [String: Any] = [:]
     @Published var repositories: [[String: Any]] = []
@@ -593,6 +602,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             .sorted { num($0, "modified") > num($1, "modified") }.map { str($0, "path") }
         guard let i = drafts.firstIndex(of: path) else { return drafts.first { $0 != path } }
         return drafts.dropFirst(i + 1).first ?? drafts.prefix(i).first
+    }
+    /// Show what a Review decision did, with Undo while that notice is up.
+    func decided(_ result: [String: Any], path: String, source: String, notice: String) {
+        self.notice = notice
+        let id = str(result, "undo", "")
+        undoable = id.isEmpty ? [:] : ["path": path, "source_id": source, "undo": id, "notice": notice]
+        reviewChanged += 1
+    }
+    func undoDecision() {
+        let it = undoable
+        undoable = [:]
+        request("digest_undo", ["path": str(it, "path"), "source_id": str(it, "source_id"), "undo": str(it, "undo")], clearError: true, quiet: false, orElse: nil) { _ in
+            self.loadVault(); self.loadWork()
+            self.digestEpoch += 1; self.reviewChanged += 1
+            self.openNote(str(it, "path"))
+            self.notice = T("Taken back. The item waits for your answer again.", "Geri alındı. Madde yeniden cevabınızı bekliyor.")
+        }
     }
     func startHarvest() {
         run("harvest_now") { value in
@@ -1417,6 +1443,9 @@ struct ReviewView: View {
     @State private var folder = ""
     @State private var picked: Set<String> = []
     @State private var confirmAll = false
+    /// What the owner passed as unsure, in every recap, to settle once they know.
+    @State private var unsure: [[String: Any]] = []
+    @State private var showUnsure = false
     func top(_ f: [String: Any]) -> String { str(f, "path").contains("/") ? String(str(f, "path").split(separator: "/")[0]) : "" }
     var all: [[String: Any]] { model.reviewFiles }
     var drafts: [[String: Any]] { folder.isEmpty ? all : all.filter { top($0) == folder } }
@@ -1490,6 +1519,7 @@ struct ReviewView: View {
                         }.padding(10).background(Color.accentColor.opacity(0.08)).clipShape(RoundedRectangle(cornerRadius: 8))
                     }
                 }
+                if !unsure.isEmpty { unsureList }
             }.padding(18).frame(minWidth: 300, idealWidth: 360, maxWidth: 460)
             NoteView(model: model).frame(minWidth: 380, idealWidth: 480, maxWidth: .infinity)
         }
@@ -1499,8 +1529,53 @@ struct ReviewView: View {
             Text(T("Their draft mark is removed; the text does not change. Approve only what you trust without reading.",
                    "Taslak işaretleri kaldırılır; metin değişmez. Yalnızca okumadan güvendiğiniz taslakları onaylayın."))
         }
-        .onAppear(perform: openFirst)
+        .onAppear { openFirst(); loadUnsure() }
         .onChange(of: all.count) { openFirst() }  // the list may arrive after the page opens
+        .onChange(of: model.reviewChanged) { loadUnsure() }
+    }
+    /// Items passed as unsure stay here after their recap left Review: right or wrong, once known.
+    var unsureList: some View {
+        DisclosureGroup(isExpanded: $showUnsure) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(Array(unsure.enumerated()), id: \.offset) { _, it in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(str(it, "statement")).font(.callout).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                            HStack(spacing: 6) {
+                                Button { model.openNote(str(it, "path")) } label: { Text(unsureOrigin(it)).lineLimit(1) }
+                                    .buttonStyle(.link).font(.caption).help(T("Open the recap", "Özeti aç"))
+                                Spacer()
+                                Button(T("Right", "Doğru")) { settle(it, "accept") }.controlSize(.small)
+                                    .help(T("Saved as settled: the unsure mark goes from the daily note.", "Kesin olarak kaydedilir: günlük nottaki şüpheli işareti kalkar."))
+                                Button(T("Wrong", "Yanlış")) { settle(it, "reject") }.controlSize(.small)
+                                    .help(T("It goes from the daily note.", "Günlük nottan silinir."))
+                            }
+                        }
+                        Divider()
+                    }
+                }.padding(.top, 6)
+            }.frame(maxHeight: 260)
+        } label: {
+            Label(T("Not sure (\(unsure.count))", "Emin olmadıklarınız (\(unsure.count))"), systemImage: "questionmark.circle").foregroundStyle(.orange).fontWeight(.medium)
+        }
+    }
+    func unsureOrigin(_ it: [String: Any]) -> String {
+        let topic = str(it, "topic", "")
+        let from = !topic.isEmpty ? topic : (it["meeting"] as? Bool == true ? T("A meeting", "Bir toplantı") : T("A chat", "Bir sohbet"))
+        return from + " · " + dayLabel(str(it, "day", ""))
+    }
+    func loadUnsure() {
+        guard !model.workspace.isEmpty else { return }
+        model.run("digest_unsure", ["source_id": model.vaultSource], quiet: true) { v in unsure = v["items"] as? [[String: Any]] ?? [] }
+    }
+    func settle(_ it: [String: Any], _ decision: String) {
+        let path = str(it, "path"), source = model.vaultSource
+        model.request("digest_settle", ["path": path, "source_id": source, "item": str(it, "id"), "decision": decision], clearError: true, quiet: false, orElse: nil) { v in
+            model.loadWork()
+            model.decided(v, path: path, source: source, notice: decision == "accept"
+                          ? T("Saved as settled; the unsure mark is gone from the daily note.", "Kesin olarak kaydedildi; günlük nottaki şüpheli işareti kalktı.")
+                          : T("Removed from the daily note.", "Günlük nottan silindi."))
+        }
     }
     func openFirst() {
         let paths = Set(all.map { str($0, "path") })
@@ -1521,6 +1596,11 @@ struct DigestItemsView: View {
     @State private var editing = ""
     @State private var fixed = ""
     @State private var showFolded = false
+    /// One question at a time, with its keyboard shortcuts (the default), or every question at once.
+    @AppStorage("reviewOneByOne") private var oneByOne = true
+    /// Shortcuts only on the Review page with one question shown: on the Notes page its search field
+    /// takes ⌘⌫ and ⌘→, and with every card shown a shortcut would not say which one it answers.
+    var keys: Bool { oneByOne && model.page == "Review" && editing.isEmpty }
     /// Items given here show at once (a preview); otherwise they load when the view appears.
     init(model: Model, path: String, meeting: Bool = false, items: [[String: Any]] = [], chat: [String: Any] = [:]) {
         _model = ObservedObject(wrappedValue: model); self.path = path; self.meeting = meeting
@@ -1577,14 +1657,27 @@ struct DigestItemsView: View {
                        "Doğruysa kaydedin, bir yeri yanlışsa düzeltin, hiç doğru değilse reddedin: hiçbir yere yazılmaz. Emin değilseniz pas geçin: “şüpheli” işaretiyle yazılır."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
-            // By position: a statement that waits twice has one id (see `plain`).
-            ForEach(Array(open.enumerated()), id: \.offset) { _, it in card(it) }
-            // After the questions, not before them: one click should follow reading, not replace it.
-            if plain.count > 1 {
-                VStack(alignment: .leading, spacing: 4) {
-                    Button(T("All \(plain.count) are right, save them", "\(plain.count) maddenin hepsi doğru, kaydet")) { acceptAll() }
-                    if plain.count < open.count {
-                        Text(T("Conflicts with your notes and items marked To review stay for you to choose.", "Notlarınızla çelişenler ve İncelenecek maddeler sizin seçmeniz için kalır.")).font(.caption).foregroundStyle(.secondary)
+            if oneByOne, let first = open.first {
+                HStack {
+                    Text(T("Question \(decided.count + 1) of \(decided.count + open.count)", "Soru \(decided.count + 1) / \(decided.count + open.count)"))
+                        .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    Spacer()
+                    if open.count > 1 { Button(T("Show all", "Hepsini göster")) { oneByOne = false }.buttonStyle(.link).font(.caption) }
+                }
+                card(first)
+            } else if !open.isEmpty {
+                if open.count > 1 {
+                    HStack { Spacer(); Button(T("One at a time", "Tek tek sor")) { oneByOne = true }.buttonStyle(.link).font(.caption) }
+                }
+                // By position: a statement that waits twice has one id (see `plain`).
+                ForEach(Array(open.enumerated()), id: \.offset) { _, it in card(it) }
+                // After the questions, not before them: one click should follow reading, not replace it.
+                if plain.count > 1 {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Button(T("All \(plain.count) are right, save them", "\(plain.count) maddenin hepsi doğru, kaydet")) { acceptAll() }
+                        if plain.count < open.count {
+                            Text(T("Conflicts with your notes and items marked To review stay for you to choose.", "Notlarınızla çelişenler ve İncelenecek maddeler sizin seçmeniz için kalır.")).font(.caption).foregroundStyle(.secondary)
+                        }
                     }
                 }
             }
@@ -1672,10 +1765,14 @@ struct DigestItemsView: View {
     }
     @ViewBuilder func buttons(_ it: [String: Any]) -> some View {
         let id = str(it, "id")
+        let save = keys ? KeyboardShortcut(.return, modifiers: .command) : nil
+        let fix = keys ? KeyboardShortcut("e", modifiers: .command) : nil
+        let pass = keys ? KeyboardShortcut(.rightArrow, modifiers: .command) : nil
+        let reject = keys ? KeyboardShortcut(.delete, modifiers: .command) : nil
         if editing == id {
             FlowLayout(spacing: 8) {
                 Button(T("Save it like this", "Böyle kaydet")) { decide(id, "fix", fixed) }.buttonStyle(.borderedProminent)
-                    .disabled(fixed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(fixed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty).keyboardShortcut(.return, modifiers: .command).help("⌘↩")
                 Button(T("Cancel", "Vazgeç")) { editing = "" }
             }
         } else {
@@ -1689,20 +1786,25 @@ struct DigestItemsView: View {
                     if isConflict(it) {
                         // Carry never edits the note: the chat's side goes to the daily note, the note stays as it is.
                         Button(meeting ? T("The meeting's", "Toplantıdaki") : T("The chat's", "Sohbetteki")) { decide(id, "accept") }.buttonStyle(.borderedProminent)
-                            .help(T("Saved to the daily note; your note stays as it is until you change it.", "Günlük nota yazılır; notunuz siz değiştirene kadar olduğu gibi kalır."))
+                            .keyboardShortcut(save).help(T("Saved to the daily note; your note stays as it is until you change it.", "Günlük nota yazılır; notunuz siz değiştirene kadar olduğu gibi kalır."))
                         Button(T("The note's", "Nottaki")) { decide(id, "reject", notice: T("Your note stays as it is; this was saved nowhere.", "Notunuz olduğu gibi kaldı; bu hiçbir yere yazılmadı.")) }
-                            .help(T("Nothing is saved; your note stays as it is.", "Hiçbir şey yazılmaz; notunuz olduğu gibi kalır."))
+                            .keyboardShortcut(reject).help(T("Nothing is saved; your note stays as it is.", "Hiçbir şey yazılmaz; notunuz olduğu gibi kalır."))
                         Button(T("Fix…", "Düzelt…")) { editing = id; fixed = str(it, "statement") }
-                            .help(T("Write what is right, then save it.", "Doğrusunu yazın, öyle kaydedilsin."))
-                        Button(T("Not sure", "Emin değilim")) { decide(id, "pass") }.help(unsure)
+                            .keyboardShortcut(fix).help(T("Write what is right, then save it.", "Doğrusunu yazın, öyle kaydedilsin."))
+                        Button(T("Not sure", "Emin değilim")) { decide(id, "pass") }.keyboardShortcut(pass).help(unsure)
                     } else {
-                        Button(T("Right, save it", "Doğru, kaydet")) { decide(id, "accept") }.buttonStyle(.borderedProminent).help(saved)
+                        Button(T("Right, save it", "Doğru, kaydet")) { decide(id, "accept") }.buttonStyle(.borderedProminent).keyboardShortcut(save).help(saved)
                         Button(T("Fix…", "Düzelt…")) { editing = id; fixed = str(it, "statement") }
-                            .help(T("Correct the text, then save it.", "Metni düzeltin, öyle kaydedilsin."))
-                        Button(T("Not sure, pass", "Emin değilim, pas geç")) { decide(id, "pass") }.help(unsure)
+                            .keyboardShortcut(fix).help(T("Correct the text, then save it.", "Metni düzeltin, öyle kaydedilsin."))
+                        Button(T("Not sure, pass", "Emin değilim, pas geç")) { decide(id, "pass") }.keyboardShortcut(pass).help(unsure)
                         Button(T("Wrong, reject", "Yanlış, reddet")) { decide(id, "reject") }
-                            .help(T("It is saved nowhere.", "Hiçbir yere yazılmaz."))
+                            .keyboardShortcut(reject).help(T("It is saved nowhere.", "Hiçbir yere yazılmaz."))
                     }
+                }
+                if keys {
+                    Text(isConflict(it) ? T("⌘↩ the chat's · ⌘⌫ the note's · ⌘E fix · ⌘→ not sure", "⌘↩ sohbetteki · ⌘⌫ nottaki · ⌘E düzelt · ⌘→ emin değilim")
+                                        : T("⌘↩ save · ⌘E fix · ⌘→ pass · ⌘⌫ reject", "⌘↩ kaydet · ⌘E düzelt · ⌘→ pas geç · ⌘⌫ reddet"))
+                        .font(.caption).foregroundStyle(.tertiary)
                 }
             }
         }
@@ -1767,36 +1869,53 @@ struct DigestItemsView: View {
     }
     func acceptAll() {
         let next = model.nextDraft(after: path)
-        model.request("digest_accept_all", ["path": path, "source_id": model.noteSource], clearError: true, quiet: false, orElse: failed) { v in
+        let source = model.noteSource
+        model.request("digest_accept_all", ["path": path, "source_id": source], clearError: true, quiet: false, orElse: failed) { v in
             let accepted = Int(num(v, "accepted"))
             model.loadWork()
             if v["done"] as? Bool == true {
                 model.loadVault()
-                model.notice = T("\(accepted) item(s) accepted; the draft left Review.", "\(accepted) madde kabul edildi; taslak İncele'den çıktı.")
+                model.decided(v, path: path, source: source, notice: T("\(accepted) item(s) accepted; the draft left Review.", "\(accepted) madde kabul edildi; taslak İncele'den çıktı."))
                 if let next { model.openNote(next) } else { model.reloadNote() }
             } else {
                 load(); model.reloadNote()
-                model.notice = T("\(accepted) item(s) accepted. The others wait for your choice.", "\(accepted) madde kabul edildi. Kalanlar sizin seçiminizi bekliyor.")
+                model.decided(v, path: path, source: source, notice: T("\(accepted) item(s) accepted. The others wait for your choice.", "\(accepted) madde kabul edildi. Kalanlar sizin seçiminizi bekliyor."))
             }
         }
+    }
+    /// What the owner answered in this recap, the answer just given included: "4 saved, 1 unsure, 1 rejected".
+    func summary(adding decision: String) -> String {
+        var counts = ["saved": 0, "unsure": 0, "rejected": 0]
+        let kind = ["accepted": "saved", "fixed": "saved", "accept": "saved", "fix": "saved", "unsure": "unsure", "pass": "unsure", "skipped": "rejected", "reject": "rejected"]
+        for d in decided.map({ str($0, "decision") }) + [decision] { if let k = kind[d] { counts[k, default: 0] += 1 } }
+        var parts: [String] = []
+        if counts["saved"]! > 0 { parts.append(T("\(counts["saved"]!) saved", "\(counts["saved"]!) kaydedildi")) }
+        if counts["unsure"]! > 0 { parts.append(T("\(counts["unsure"]!) unsure", "\(counts["unsure"]!) şüpheli")) }
+        if counts["rejected"]! > 0 { parts.append(T("\(counts["rejected"]!) rejected", "\(counts["rejected"]!) reddedildi")) }
+        return parts.joined(separator: ", ")
     }
     func decide(_ id: String, _ decision: String, _ text: String? = nil, notice: String? = nil) {
         var fields: [String: Any] = ["path": path, "source_id": model.noteSource, "item": id, "decision": decision]
         if let text { fields["text"] = text }
         let next = model.nextDraft(after: path)
+        let source = model.noteSource
+        let total = summary(adding: decision)
         model.request("digest_decide", fields, clearError: true, quiet: false, orElse: failed) { v in
             editing = ""
             let logged = str(v, "logged", "")
             model.loadWork()
             if v["done"] as? Bool == true {
                 model.loadVault()
-                model.notice = T("Every item is decided; the digest left the review list.", "Tüm maddeler karara bağlandı; taslak inceleme listesinden çıktı.")
+                // The whole recap at a glance before the next one opens.
+                let said = meeting ? T("Every item of this meeting is answered: \(total).", "Bu toplantının tüm maddeleri cevaplandı: \(total).")
+                                   : T("Every item of this chat is answered: \(total).", "Bu sohbetin tüm maddeleri cevaplandı: \(total).")
+                model.decided(v, path: path, source: source, notice: said + (next == nil ? "" : T(" The next recap is open.", " Sıradaki özet açıldı.")))
                 if let next { model.openNote(next) } else { model.reloadNote() }
             } else {
                 load(); model.reloadNote()
-                if let notice { model.notice = notice }
-                else if str(v, "decision") == "skipped" { model.notice = T("Rejected; it was saved nowhere.", "Reddedildi; hiçbir yere yazılmadı.") }
-                else if !logged.isEmpty { model.notice = savedNotice(logged, unsure: str(v, "decision") == "unsure") }
+                let said = notice ?? (str(v, "decision") == "skipped" ? T("Rejected; it was saved nowhere.", "Reddedildi; hiçbir yere yazılmadı.")
+                                      : logged.isEmpty ? "" : savedNotice(logged, unsure: str(v, "decision") == "unsure"))
+                if !said.isEmpty { model.decided(v, path: path, source: source, notice: said) }
             }
         }
     }
@@ -2502,7 +2621,8 @@ struct NoteView: View {
                     if readOnly {
                         EmptyView()
                     } else if inQueue && listed?.digest == true {
-                        DigestItemsView(model: model, path: str(note, "path"), meeting: str(front, "provenance", "") == "meeting").id(str(note, "path"))
+                        // An undo puts the recap's file back: its questions are read again.
+                        DigestItemsView(model: model, path: str(note, "path"), meeting: str(front, "provenance", "") == "meeting").id("\(str(note, "path"))#\(model.digestEpoch)")
                     } else if isDraft && front["lock"] as? Bool != true {
                         VStack(alignment: .leading, spacing: 10) {
                             Label(inQueue ? T("Draft: read it, and approve it if it is right.", "Taslak: okuyun, doğruysa onaylayın.")
@@ -5526,7 +5646,12 @@ struct ContentView: View {
     func banner(_ text: String, color: Color) -> some View {
         HStack(alignment: .top) {
             Text(text).font(.callout).textSelection(.enabled); Spacer()
-            Button { model.error = ""; model.notice = "" } label: { Image(systemName: "xmark") }.buttonStyle(.plain)
+            // A Review decision can be taken back while its notice is up.
+            if !model.undoable.isEmpty && str(model.undoable, "notice") == text {
+                // No ⌘Z: in the Fix field it undoes typing, and must never undo a decision.
+                Button(T("Undo", "Geri al")) { model.undoDecision() }.controlSize(.small)
+            }
+            Button { model.error = ""; model.notice = ""; model.undoable = [:] } label: { Image(systemName: "xmark") }.buttonStyle(.plain)
         }.padding(12).foregroundStyle(color).background(color.opacity(0.07))
     }
 }

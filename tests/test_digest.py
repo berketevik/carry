@@ -180,6 +180,81 @@ class DigestTest(unittest.TestCase):
                    if it['decision'] is None and it['statement'] != 'Invite two colleagues to the repository.']
         self.assertTrue(results[-1]['done'])
 
+    def test_undo_puts_the_files_back_as_they_were_newest_first(self):
+        items = self.ids()
+        start = (self.root / self.rel).read_text(encoding='utf-8')
+        first = digest.decide(self.ws, self.sid, self.rel, items['The pilot ships on 15 October.']['id'], 'fix', 'The pilot ships on 22 October.')
+        self.assertTrue((self.root / 'log' / '2026-09-27.md').exists())
+        second = digest.decide(self.ws, self.sid, self.rel, items['Invite two colleagues to the repository.']['id'], 'reject')
+        with self.assertRaisesRegex(CarryError, 'undo_not_available'):
+            digest.undo(self.ws, self.sid, self.rel, first['undo'])  # not the newest
+        digest.undo(self.ws, self.sid, self.rel, second['undo'])
+        result = digest.undo(self.ws, self.sid, self.rel, first['undo'])
+        # The fixed statement's first wording, and no daily log the decision had created.
+        self.assertEqual((self.root / self.rel).read_text(encoding='utf-8'), start)
+        self.assertFalse((self.root / 'log' / '2026-09-27.md').exists())
+        self.assertEqual(result['waiting'], 4)
+        with self.assertRaisesRegex(CarryError, 'undo_not_available'):
+            digest.undo(self.ws, self.sid, self.rel, first['undo'])
+
+    def test_undo_brings_a_finished_recap_back_to_review_and_refuses_after_an_edit(self):
+        items = self.ids()
+        results = [digest.decide(self.ws, self.sid, self.rel, it['id'], 'accept') for it in items.values() if it['decision'] is None]
+        self.assertTrue(results[-1]['done'])
+        self.assertTrue(digest.undo(self.ws, self.sid, self.rel, results[-1]['undo'])['draft'])
+        files = {f['path']: f for f in vaultview.browse(self.ws, self.sid)['files']}
+        self.assertTrue(files[self.rel]['review'])
+        log = self.root / 'log' / '2026-09-27.md'
+        log.write_text(log.read_text(encoding='utf-8') + '\nA line the owner added.\n', encoding='utf-8')
+        with self.assertRaisesRegex(CarryError, 'undo_changed_since'):
+            digest.undo(self.ws, self.sid, self.rel, results[-2]['undo'])
+        self.assertIn('A line the owner added.', log.read_text(encoding='utf-8'))
+
+    def test_accept_all_is_taken_back_in_one_undo(self):
+        start = (self.root / self.rel).read_text(encoding='utf-8')
+        result = digest.accept_all(self.ws, self.sid, self.rel)
+        self.assertEqual(result['accepted'], 3)
+        digest.undo(self.ws, self.sid, self.rel, result['undo'])
+        self.assertEqual((self.root / self.rel).read_text(encoding='utf-8'), start)
+        self.assertFalse((self.root / 'log').exists() and any((self.root / 'log').glob('2026-09-2*.md')))
+
+    def test_an_unsure_item_is_listed_and_settled_later(self):
+        items = self.ids()
+        digest.decide(self.ws, self.sid, self.rel, items['The build takes 32 seconds.']['id'], 'pass')
+        digest.decide(self.ws, self.sid, self.rel, items['The pilot ships on 15 October.']['id'], 'pass')
+        digest.decide(self.ws, self.sid, self.rel, items['Invite two colleagues to the repository.']['id'], 'accept')
+        listed = {it['statement']: it for it in digest.unsure(self.ws, self.sid)['items']}
+        self.assertEqual(set(listed), {'The build takes 32 seconds.', 'The pilot ships on 15 October.'})
+        self.assertEqual(listed['The build takes 32 seconds.']['path'], self.rel)
+        log = self.root / 'log' / '2026-09-27.md'
+        # Accepted once the owner knows: the log line loses its unsure mark, in place.
+        r = digest.settle(self.ws, self.sid, self.rel, listed['The build takes 32 seconds.']['id'], 'accept')
+        self.assertEqual((r['decision'], r['logged']), ('accepted', 'log/2026-09-27.md'))
+        text = log.read_text(encoding='utf-8')
+        self.assertIn('- **fact:** The build takes 32 seconds. ([[2026-09-28 — claude abcd1234]], exchange 3)', text)
+        self.assertNotIn('fact · unsure', text)
+        # Rejected: the line goes, the rest of the log stays.
+        digest.settle(self.ws, self.sid, self.rel, listed['The pilot ships on 15 October.']['id'], 'reject')
+        text = log.read_text(encoding='utf-8')
+        self.assertNotIn('15 October', text)
+        self.assertIn('32 seconds', text)
+        self.assertEqual(digest.unsure(self.ws, self.sid)['items'], [])
+        decisions = {it['statement']: it['decision'] for it in digest.parse((self.root / self.rel).read_text(encoding='utf-8'))['items']}
+        self.assertEqual((decisions['The build takes 32 seconds.'], decisions['The pilot ships on 15 October.']), ('accepted', 'skipped'))
+        with self.assertRaisesRegex(CarryError, 'item_not_unsure'):
+            digest.settle(self.ws, self.sid, self.rel, listed['The build takes 32 seconds.']['id'], 'reject')
+
+    def test_settling_with_a_fix_rewrites_the_line_and_can_be_taken_back(self):
+        items = self.ids()
+        digest.decide(self.ws, self.sid, self.rel, items['The build takes 32 seconds.']['id'], 'pass')
+        log = self.root / 'log' / '2026-09-27.md'
+        before = (log.read_text(encoding='utf-8'), (self.root / self.rel).read_text(encoding='utf-8'))
+        r = digest.settle(self.ws, self.sid, self.rel, items['The build takes 32 seconds.']['id'], 'fix', 'The build takes 40 seconds.')
+        self.assertIn('- **fact:** The build takes 40 seconds.', log.read_text(encoding='utf-8'))
+        self.assertIn('**fact:** The build takes 40 seconds. <!-- carry: fixed ', (self.root / self.rel).read_text(encoding='utf-8'))
+        digest.undo(self.ws, self.sid, self.rel, r['undo'])
+        self.assertEqual((log.read_text(encoding='utf-8'), (self.root / self.rel).read_text(encoding='utf-8')), before)
+
     def test_a_conflict_shows_the_line_of_the_note_it_contradicts(self):
         (self.root / 'notes' / 'Mac mini.md').write_text('---\ntype: thing\n---\n# Mac mini\n\nIt runs the local server.\nThe Mac mini has 8 GB of memory.\n', encoding='utf-8')
         conflict = next(it for it in digest.items(self.ws, self.sid, self.rel)['items'] if it['section'] == 'conflict')
