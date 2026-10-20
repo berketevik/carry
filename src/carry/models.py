@@ -97,11 +97,10 @@ def search_preset(semantic, judge):
 
 
 def semantic_engine():
-    """Ollama when it is installed; otherwise the model built into Carry (the same engine, llama.cpp)."""
-    from . import llama_model, ollama_setup
-    if ollama_setup.status()['installed'] or not llama_model.runtime_available():
-        return 'embeddinggemma'
-    return 'embeddinggemma_builtin'
+    """The model built into Carry wherever llama.cpp is installed, even with Ollama there, so search
+    by meaning never depends on the Ollama app running; Ollama only where it is not (Windows)."""
+    from . import llama_model
+    return 'embeddinggemma_builtin' if llama_model.runtime_available() else 'embeddinggemma'
 
 
 def setup(workspace, model):

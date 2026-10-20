@@ -48,6 +48,18 @@ class SetupTest(unittest.TestCase):
         install.assert_not_called()
         self.assertEqual(calls, ['semantic_assistant'])
 
+    def test_semantic_search_uses_the_built_in_model_where_ollama_is_installed(self):
+        from carry import llama_model, models, ollama_setup
+        calls = []
+        with redirect_stdout(io.StringIO()), \
+                patch.object(ollama_setup, 'status', return_value=dict(installed=True, brew='/opt/homebrew/bin/brew', installer='/opt/homebrew/bin/brew', running=False)), \
+                patch.object(ollama_setup, 'start', side_effect=AssertionError('Ollama not needed')), \
+                patch.object(llama_model, 'runtime_available', return_value=True), \
+                patch.object(models, 'setup', side_effect=lambda ws, preset: calls.append(preset)):
+            code = setup_wizard.run(state_dir=str(self.base / 'ws'), assume_yes=True, vault_path=str(self.base / 'Vault'), animation=False, app=False)
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, ['semantic_assistant'])
+
     def test_semantic_falls_back_to_keywords_without_ollama_or_the_runtime(self):
         from carry import llama_model, models, ollama_setup
         calls = []

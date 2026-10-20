@@ -18,7 +18,7 @@ Carry does not upload notes anywhere and uses no online service of its own. Pass
 
 ![How Carry works](assets/how-it-works.svg)
 
-- Carry searches by words and by meaning. The meaning model (`embeddinggemma`, 8-bit, about 330 MB, downloaded once) runs inside Carry on llama.cpp, the engine Ollama uses, on the GPU of an Apple Silicon Mac (on the CPU of an Intel Mac); where [Ollama](https://ollama.com) is installed Carry uses it instead, with the same results. Windows has no built-in model and searches by words unless Ollama is there. Search by meaning catches synonyms and Turkish/English matches.
+- Carry searches by words and by meaning. The meaning model (`embeddinggemma`, 8-bit, about 330 MB, downloaded once) runs inside Carry on llama.cpp, the engine Ollama uses, on the GPU of an Apple Silicon Mac (on the CPU of an Intel Mac), even where [Ollama](https://ollama.com) is installed, so search never depends on the Ollama app running. Windows has no built-in model and searches by meaning through Ollama when it is there, otherwise by words. Search by meaning catches synonyms and Turkish/English matches.
 - The two result lists are combined. The owner's own assistant then keeps only the passages that really answer: in Claude Code the `carry-recall` subagent (Claude Sonnet) does this, in Codex the same subagent on Codex's GPT model. It runs on the owner's existing subscription; in Claude Code it adds a few cents per question.
 
 ## Installing Carry for someone
@@ -70,7 +70,7 @@ Recommended: a new folder at `~/Vault`; tell them where it will be in plain word
 
 Downloading makes a git copy in `~/<repo name>`, which is also where the owner opens Claude to write to it. It needs GitHub's `gh` tool and one sign-in (below).
 
-Search by meaning needs no question: setup downloads Carry's own model (about 330 MB) unless Ollama is already installed.
+Search by meaning needs no question: setup downloads Carry's own model (about 330 MB), also where Ollama is already installed.
 
 ### Missing programs, in this order
 
@@ -111,7 +111,7 @@ Then run the one line that matches the answers. `--team` is the repository the t
 | Own notes, new folder, and the team's | `carry --workspace WS setup --yes --vault ~/Vault --language Turkish --team owner/repo` |
 | Only the team's | `carry --workspace WS setup --yes --connect team --team owner/repo` |
 
-Each creates Carry's folder, sets up search by meaning (Ollama if installed, otherwise Carry's own model), builds the macOS app and scans the notes. A new notes folder comes with `CLAUDE.md`, `AGENTS.md`, the `carry-recall` subagents and the MCP settings, and `git init`. The team's knowledge base is downloaded to `~/<repo name>` (an existing git copy there is used as it is), added read-only and marked as team knowledge, and Claude Code and Codex are connected there too, with a server that searches only the team's sources (`--scope team`) so a chat in the team folder never reads the owner's own notes. This device's connection files are added to that clone's `.git/info/exclude`, so they never end up in a team commit. Building the app takes a minute or two; say so before running it ("Birkaç dakika sürebilir, pencereyi kapatma.").
+Each creates Carry's folder, sets up search by meaning with Carry's own model (Ollama only on Windows), builds the macOS app and scans the notes. A new notes folder comes with `CLAUDE.md`, `AGENTS.md`, the `carry-recall` subagents and the MCP settings, and `git init`. The team's knowledge base is downloaded to `~/<repo name>` (an existing git copy there is used as it is), added read-only and marked as team knowledge, and Claude Code and Codex are connected there too, with a server that searches only the team's sources (`--scope team`) so a chat in the team folder never reads the owner's own notes. This device's connection files are added to that clone's `.git/info/exclude`, so they never end up in a team commit. Building the app takes a minute or two; say so before running it ("Birkaç dakika sürebilir, pencereyi kapatma.").
 
 **An existing folder of their own notes** (or a team copy elsewhere): run `carry --workspace WS setup` without `--yes` and give the answers, or without the wizard:
 

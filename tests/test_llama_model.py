@@ -61,12 +61,32 @@ class LlamaModelTest(unittest.TestCase):
                 self.assertRaisesRegex(ProviderUnavailable, 'model_not_installed'):
             llama_model.embed(['text'], directory=self.base / 'empty')
 
-    def test_engine_prefers_ollama_then_the_built_in_model(self):
-        cases = [(True, True, 'embeddinggemma'), (False, True, 'embeddinggemma_builtin'), (False, False, 'embeddinggemma')]
+    def test_engine_prefers_the_built_in_model_even_with_ollama_installed(self):
+        cases = [(True, True, 'embeddinggemma_builtin'), (False, True, 'embeddinggemma_builtin'),
+                 (True, False, 'embeddinggemma'), (False, False, 'embeddinggemma')]
         for installed, runtime, engine in cases:
             with patch.object(ollama_setup, 'status', return_value=dict(installed=installed)), \
                     patch.object(llama_model, 'runtime_available', return_value=runtime):
                 self.assertEqual(models.semantic_engine(), engine)
+
+    def test_turning_search_on_keeps_the_built_in_model_where_ollama_is_installed(self):
+        ws_dir = self.base / 'ws'
+        with redirect_stdout(io.StringIO()):
+            cli.main(['--workspace', str(ws_dir), 'init', '--embedding', 'hashing'])
+        data = json.loads((ws_dir / 'workspace.json').read_text(encoding='utf-8'))
+        data['embedding'].update(provider='llama', model='embeddinggemma')
+        (ws_dir / 'workspace.json').write_text(json.dumps(data), encoding='utf-8')
+        with patch.object(ollama_setup, 'status', return_value=dict(installed=True)), \
+                patch.object(ollama_setup, 'ensure', side_effect=AssertionError('Ollama not needed')), \
+                patch.object(ollama_setup, 'start', side_effect=AssertionError('Ollama not needed')), \
+                patch.object(llama_model, 'runtime_available', return_value=True), \
+                patch.object(llama_model, 'download'), \
+                patch.object(LlamaEmbedding, 'probe', return_value=(True, 'ok')), \
+                patch('carry.index.build', return_value=dict(status='built')), \
+                redirect_stdout(io.StringIO()):
+            code = cli.main(['--workspace', str(ws_dir), 'search', '--semantic', 'on'])
+        self.assertEqual(code, 0)
+        self.assertEqual(Workspace.load(ws_dir).embedding.provider, 'llama')
 
     def test_setup_activates_the_built_in_model_and_search_needs_no_ollama(self):
         ws_dir = self.base / 'ws'
