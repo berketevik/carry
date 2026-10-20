@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 import _support  # noqa: F401
-from carry import context, digest, harvest, vault, vaultview
+from carry import context, digest, harvest, vault, vaultview, work
 from carry.config import Workspace
 from carry.errors import CarryError
 
@@ -151,6 +151,35 @@ class DigestTest(unittest.TestCase):
         self.assertIn('The build takes 32 seconds.', body)
         self.assertNotIn('<!--', body)
 
+    def test_reject_saves_nothing_and_pass_saves_it_marked_unsure(self):
+        items = self.ids()
+        r = digest.decide(self.ws, self.sid, self.rel, items['The pilot ships on 15 October.']['id'], 'reject')
+        self.assertEqual((r['decision'], r['logged']), ('skipped', None))
+        self.assertFalse((self.root / 'log' / '2026-09-27.md').exists())
+        r = digest.decide(self.ws, self.sid, self.rel, items['The build takes 32 seconds.']['id'], 'pass')
+        self.assertEqual((r['decision'], r['logged']), ('unsure', 'log/2026-09-27.md'))
+        log = (self.root / 'log' / '2026-09-27.md').read_text(encoding='utf-8')
+        self.assertIn('- **fact · unsure, the owner was not certain:** The build takes 32 seconds. ([[2026-09-28 — claude abcd1234]], exchange 3)', log)
+        self.assertNotIn('15 October', log)
+        self.assertIn('<!-- carry: unsure ', (self.root / self.rel).read_text(encoding='utf-8'))
+        self.assertNotIn('<!--', vaultview.note(self.ws, self.sid, self.rel)['body'])
+        with self.assertRaisesRegex(CarryError, 'invalid_decision'):
+            digest.decide(self.ws, self.sid, self.rel, items['The Mac mini has 16 GB.']['id'], 'maybe')
+
+    def test_a_passed_open_item_stays_off_the_work_list_and_the_state_pack(self):
+        day = datetime.date(2026, 9, 28)
+        items = self.ids()
+        digest.decide(self.ws, self.sid, self.rel, items['Invite two colleagues to the repository.']['id'], 'pass')
+        self.assertNotIn('Invite two colleagues', context.pack(self.root, today=day))
+        opens, _ = work._from_digests(self.ws, day)
+        self.assertEqual(opens, [])
+        self.assertIn('**open item · unsure, the owner was not certain:** Invite two colleagues',
+                      (self.root / 'log' / '2026-09-28.md').read_text(encoding='utf-8'))
+        # A passed item is decided: the recap still leaves Review once nothing else waits.
+        results = [digest.decide(self.ws, self.sid, self.rel, it['id'], 'pass') for it in items.values()
+                   if it['decision'] is None and it['statement'] != 'Invite two colleagues to the repository.']
+        self.assertTrue(results[-1]['done'])
+
     def test_a_conflict_shows_the_line_of_the_note_it_contradicts(self):
         (self.root / 'notes' / 'Mac mini.md').write_text('---\ntype: thing\n---\n# Mac mini\n\nIt runs the local server.\nThe Mac mini has 8 GB of memory.\n', encoding='utf-8')
         conflict = next(it for it in digest.items(self.ws, self.sid, self.rel)['items'] if it['section'] == 'conflict')
@@ -248,7 +277,26 @@ class ReviewHelpTest(unittest.TestCase):
 
     def test_items_name_the_chat_they_came_from(self):
         chat = digest.items(self.ws, self.sid, self.rel)['chat']
-        self.assertEqual(chat, dict(kind='chat', client='claude', day='2026-09-28', first='When does the pilot ship? And who joins?'))
+        self.assertEqual(chat, dict(kind='chat', client='claude', day='2026-09-28', topic='', first='When does the pilot ship? And who joins?'))
+
+    def test_a_recap_is_listed_and_shown_by_its_chat_name(self):
+        text = (self.root / self.rel).read_text(encoding='utf-8').replace('type: output\n', 'type: output\ntitle: "pilot tarihi"\n', 1)
+        (self.root / self.rel).write_text(text, encoding='utf-8')
+        files = {f['path']: f for f in vaultview.browse(self.ws, self.sid)['files']}
+        self.assertEqual(files[self.rel]['topic'], 'pilot tarihi')
+        self.assertEqual(vaultview.note(self.ws, self.sid, self.rel)['topic'], 'pilot tarihi')
+        self.assertEqual(digest.items(self.ws, self.sid, self.rel)['chat']['topic'], 'pilot tarihi')
+        self.assertNotIn('topic', files['LLM-GUIDE.md'])  # only recaps carry one
+
+    def test_an_item_from_the_assistant_says_what_the_owner_had_asked(self):
+        # Review asks "you asked this, the assistant answered that": the owner's message of the cited exchange.
+        raw = self.root / 'sources' / 'carry' / 'session' / '2026-09-28 — claude abcd1234.md'
+        raw.write_text(raw.read_text(encoding='utf-8') + '\n## Exchange 3\n\n**Owner:** How long does the build take now?\n\n'
+                       '**Assistant:** The build takes 32 seconds on the Mac mini.\n', encoding='utf-8')
+        items = {it['statement']: it for it in digest.items(self.ws, self.sid, self.rel)['items']}
+        self.assertEqual(items['The build takes 32 seconds.']['asked'], 'How long does the build take now?')
+        self.assertNotIn('asked', items['The pilot ships on 15 October.'])  # the owner's own words need no question
+        self.assertNotIn('asked', items['The Mac mini has 16 GB.'])
 
     def test_accept_all_takes_every_plain_item_and_leaves_the_conflict(self):
         result = digest.accept_all(self.ws, self.sid, self.rel)

@@ -7,7 +7,8 @@ Three sources, one row per piece of work, the sources as badges:
   and inbox notes whose title hands them to the person ("{name} için"). Without the rules nothing
   waits; their notes are counted, not listed.
 - Chats and meetings: open items the owner accepted in Review. An item not yet decided waits in
-  Review, not here; a skipped one is gone; a decision goes to the daily log and the decisions list.
+  Review, not here; a rejected one is gone, one passed as unsure is only in the daily log; a
+  decision goes to the daily log and the decisions list.
 An item stays until the person marks it done. Done is kept in the state (work-done.json), never in
 the notes, and the state pack a new chat starts from leaves done items out too.
 

@@ -1431,8 +1431,8 @@ struct ReviewView: View {
         HSplitView {
             VStack(alignment: .leading, spacing: 12) {
                 Text(pageName("Review")).font(.title.bold())
-                Text(T("After a chat or a meeting, Carry picks out what seems worth keeping and asks you here. Is it right? Accept it: it goes to that day's daily note, and open items also join your work on Home. Not right? Fix or skip it; a skipped item shows up nowhere.",
-                       "Bir sohbetten ya da toplantıdan sonra Carry saklanmaya değer görünenleri çıkarır ve burada size sorar. Doğruysa kabul edin: o günün günlük notuna yazılır, açık işler ayrıca ana sayfadaki İşleriniz listesine girer. Doğru değilse düzeltin ya da atlayın; atladığınız madde hiçbir yerde görünmez."))
+                Text(T("After a chat or a meeting, Carry picks out what seems worth keeping and asks you about each: this is what was said, so this is what I would save; is it right? Right: it goes to that day's daily note, and open items also join your work on Home. Wrong in a detail: fix it. Not right at all: reject it and it is saved nowhere. Not sure: pass, and it is saved marked unsure.",
+                       "Bir sohbetten ya da toplantıdan sonra Carry saklanmaya değer görünenleri çıkarır ve her birini size sorar: şöyle konuşmuştunuz, bu yüzden şunu kaydediyorum, doğru mu? Doğruysa o günün günlük notuna yazılır, açık işler ayrıca ana sayfadaki İşleriniz listesine girer. Bir yeri yanlışsa düzeltin. Hiç doğru değilse reddedin: hiçbir yere yazılmaz. Emin değilseniz pas geçin: “şüpheli” işaretiyle yazılır."))
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 if model.pendingReview > 0 {
                     Button { model.page = "Proposals" } label: {
@@ -1508,8 +1508,10 @@ struct ReviewView: View {
     }
 }
 
-/// A chat digest, item by item: accept, fix or skip. Items already recorded, done or dropped
-/// need no decision and stay folded. Accepted items go to the log of the day they were said.
+/// A chat digest, item by item, each asked as a question: what was said, what Carry would save
+/// from it, is that right? Accept, fix, reject (saved nowhere) or pass (not sure: saved marked
+/// unsure). Items already recorded, done or dropped need no decision and stay folded. Saved items
+/// go to the log of the day they were said.
 struct DigestItemsView: View {
     @ObservedObject var model: Model
     let path: String
@@ -1548,7 +1550,11 @@ struct DigestItemsView: View {
                 } else {
                     let client = str(chat, "client", "")
                     let name = client == "claude" ? "Claude" : client == "codex" ? "Codex" : client.capitalized
-                    Text(T("From a \(name) chat · \(dayLabel(str(chat, "day", "")))", "\(name) sohbetinden · \(dayLabel(str(chat, "day", "")))")).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    let day = dayLabel(str(chat, "day", ""))
+                    let topic = str(chat, "topic", "")
+                    Text(topic.isEmpty ? T("From a \(name) chat · \(day)", "\(name) sohbetinden · \(day)")
+                                       : T("From the chat “\(topic)” · \(name) · \(day)", "“\(topic)” sohbetinden · \(name) · \(day)"))
+                        .font(.caption.weight(.semibold)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     if str(chat, "first", "") != "" {
                         Text(T("It began with: ", "Sohbet şöyle başlamıştı: ") + "“" + str(chat, "first") + "”").font(.callout).italic().fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
                     }
@@ -1556,7 +1562,8 @@ struct DigestItemsView: View {
             }
         }
     }
-    var decided: [[String: Any]] { items.filter { ["accepted", "fixed", "skipped"].contains(str($0, "decision", "")) } }
+    var decided: [[String: Any]] { items.filter { ["accepted", "fixed", "skipped", "unsure"].contains(str($0, "decision", "")) } }
+    var unsure: Int { items.filter { str($0, "decision", "") == "unsure" }.count }
     var folded: [[String: Any]] { items.filter { str($0, "decision", "") == "folded" } }
     func sectionName(_ key: String) -> String {
         switch key {
@@ -1575,9 +1582,14 @@ struct DigestItemsView: View {
                                : (meeting ? T("\(open.count) item(s) from this meeting wait for your answer.", "Bu toplantıdan \(open.count) madde cevabınızı bekliyor.")
                                        : T("\(open.count) item(s) from this chat wait for your answer.", "Bu sohbetten \(open.count) madde cevabınızı bekliyor.")),
                   systemImage: "checklist").foregroundStyle(.orange).fontWeight(.medium)
+            if !open.isEmpty {
+                Text(T("For each one: right, save it. Wrong in a detail, fix it. Not right at all, reject it: it is saved nowhere. Not sure, pass: it is saved marked unsure, so it is not taken as settled.",
+                       "Her biri için: doğruysa kaydedin. Bir yeri yanlışsa düzeltin. Hiç doğru değilse reddedin: hiçbir yere yazılmaz. Emin değilseniz pas geçin: “şüpheli” işaretiyle yazılır, kesin bilgi sayılmaz."))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
             if plain.count > 1 {
                 HStack(spacing: 10) {
-                    Button(T("Accept all \(plain.count)", "\(plain.count) maddenin hepsini kabul edin")) { acceptAll() }.buttonStyle(.borderedProminent)
+                    Button(T("All \(plain.count) are right, save them", "\(plain.count) maddenin hepsi doğru, kaydet")) { acceptAll() }.buttonStyle(.borderedProminent)
                     if plain.count < open.count {
                         Text(T("Conflicts with your notes and items marked To review stay for you to choose.", "Notlarınızla çelişenler ve İncelenecek maddeler sizin seçmeniz için kalır.")).font(.caption).foregroundStyle(.secondary)
                     }
@@ -1587,7 +1599,8 @@ struct DigestItemsView: View {
                 card(open.first { str($0, "id") == id } ?? [:])
             }
             if !decided.isEmpty {
-                Text(T("\(decided.count) decided", "\(decided.count) madde karara bağlandı")).font(.caption).foregroundStyle(.secondary)
+                Text(unsure > 0 ? T("\(decided.count) decided, \(unsure) of them marked unsure", "\(decided.count) madde karara bağlandı; \(unsure) tanesi şüpheli")
+                                : T("\(decided.count) decided", "\(decided.count) madde karara bağlandı")).font(.caption).foregroundStyle(.secondary)
             }
             if !folded.isEmpty {
                 DisclosureGroup(isExpanded: $showFolded) {
@@ -1613,25 +1626,77 @@ struct DigestItemsView: View {
             }
         }
     }
-    func quoteLine(_ it: [String: Any]) -> String {
-        let unit = str(it, "unit", "exchange") == "segment" ? T("  · line ", "  · satır ") : T("  · exchange ", "  · mesaj ")
-        let at: String = str(it, "exchange", "") != "" ? unit + str(it, "exchange") : ""
-        return "“" + str(it, "quote") + "”" + at
+    /// One thing that was said, with where it is: "· exchange 3" in the raw chat, "· line 12" in a transcript.
+    @ViewBuilder func spoken(_ who: String, _ text: String, _ it: [String: Any]? = nil) -> some View {
+        let unit = str(it ?? [:], "unit", "exchange") == "segment" ? T("  · line ", "  · satır ") : T("  · exchange ", "  · mesaj ")
+        let at: String = it != nil && str(it ?? [:], "exchange", "") != "" ? unit + str(it ?? [:], "exchange") : ""
+        VStack(alignment: .leading, spacing: 1) {
+            Text(who).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            Text("“" + text + "”" + at).font(.callout).italic().fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+        }
+    }
+    /// What was said that the item comes from: "You said …", or "You asked …" and "The assistant
+    /// answered …" when the assistant's words carry it. Nothing when the digest kept no quote.
+    @ViewBuilder func said(_ it: [String: Any]) -> some View {
+        let quote = str(it, "quote", "")
+        if !quote.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                if meeting {
+                    spoken(T("In the meeting it was said:", "Toplantıda şöyle geçti:"), quote, it)
+                } else if str(it, "speaker", "") == "assistant" {
+                    if str(it, "asked", "") != "" {
+                        spoken(T("You asked:", "Siz şunu sormuştunuz:"), str(it, "asked"))
+                        spoken(T("The assistant answered:", "Asistan şöyle cevap vermişti:"), quote, it)
+                    } else {
+                        spoken(T("The assistant said:", "Asistan şöyle demişti:"), quote, it)
+                    }
+                } else {
+                    spoken(T("You said:", "Siz şöyle demiştiniz:"), quote, it)
+                }
+            }
+        }
+    }
+    /// The question's middle: "So I am saving this decision:", the kind in plain words.
+    func saving(_ it: [String: Any]) -> String {
+        let what: (String, String)
+        switch str(it, "kind", "").lowercased() {
+        case "decision", "karar": what = ("this decision", "şu kararı")
+        case "fact", "olgu": what = ("this fact", "şu bilgiyi")
+        case "preference", "tercih": what = ("this preference of yours", "şu tercihinizi")
+        case "open item", "açık iş": what = ("this as work still to do", "şunu yapılacak iş olarak")
+        default: what = ("this", "şunu")
+        }
+        if str(it, "quote", "") != "" { return T("So I am saving \(what.0):", "Bu yüzden \(what.1) kaydediyorum:") }
+        let upper = what.1.prefix(1).uppercased() + String(what.1.dropFirst())
+        return T("I am saving \(what.0):", upper + " kaydediyorum:")
+    }
+    @ViewBuilder func caveat(_ text: String) -> some View {
+        Label(text, systemImage: "exclamationmark.circle").font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
     }
     @ViewBuilder func buttons(_ it: [String: Any]) -> some View {
         let id = str(it, "id")
-        FlowLayout(spacing: 8) {
-            if editing == id {
-                Button(T("Save and accept", "Kaydet ve kabul et")) { decide(id, "fix", fixed) }.buttonStyle(.borderedProminent)
+        if editing == id {
+            FlowLayout(spacing: 8) {
+                Button(T("Save it like this", "Böyle kaydet")) { decide(id, "fix", fixed) }.buttonStyle(.borderedProminent)
                     .disabled(fixed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Button(T("Cancel", "Vazgeç")) { editing = "" }
-            } else {
-                Button(T("Accept", "Kabul et")) { decide(id, "accept") }.buttonStyle(.borderedProminent)
-                Button(T("Fix…", "Düzelt…")) { editing = id; fixed = str(it, "statement") }
-                Button(T("Skip", "Atla")) { decide(id, "skip") }
-                Text(isOpenItem(it) ? T("Accepted, it goes to the daily note and stays in your work on Home until you mark it done.", "Kabul ederseniz günlük nota yazılır ve Bitti diyene kadar ana sayfada İşleriniz listesinde durur.")
-                                    : T("Accepted, it goes to that day's daily note.", "Kabul ederseniz o günün günlük notuna yazılır."))
-                    .font(.caption).foregroundStyle(.secondary)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(T("Is this right?", "Doğru mu?")).fontWeight(.semibold)
+                FlowLayout(spacing: 8) {
+                    Button(T("Right, save it", "Doğru, kaydet")) { decide(id, "accept") }.buttonStyle(.borderedProminent)
+                    Button(T("Fix…", "Düzelt…")) { editing = id; fixed = str(it, "statement") }
+                        .help(T("Correct the text, then save it.", "Metni düzeltin, öyle kaydedilsin."))
+                    Button(T("Wrong, reject", "Yanlış, reddet")) { decide(id, "reject") }
+                        .help(T("It is saved nowhere.", "Hiçbir yere yazılmaz."))
+                    Button(T("Not sure, pass", "Emin değilim, pas geç")) { decide(id, "pass") }
+                        .help(T("It is saved marked unsure, so your assistant does not take it as settled. It does not join your work on Home.",
+                                "“Şüpheli” işaretiyle yazılır; asistanınız onu kesin bilgi saymaz. Ana sayfadaki İşleriniz listesine girmez."))
+                }
+                Text(isOpenItem(it) ? T("Saved, it goes to the daily note and stays in your work on Home until you mark it done.", "Kaydederseniz günlük nota yazılır ve Bitti diyene kadar ana sayfada İşleriniz listesinde durur.")
+                                    : T("Saved, it goes to that day's daily note.", "Kaydederseniz o günün günlük notuna yazılır."))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -1657,25 +1722,29 @@ struct DigestItemsView: View {
                     .font(.caption).fixedSize(horizontal: false, vertical: true)
             }
             if conflict {
-                Text(T("Accepting saves this version to the daily note and leaves the note as it is; you decide which one is right.",
-                       "Kabul ederseniz bu hâli günlük nota yazılır, not olduğu gibi kalır; hangisinin doğru olduğuna siz karar verin."))
+                Text(T("Saving writes this version to the daily note and leaves the note as it is; you decide which one is right.",
+                       "Kaydederseniz bu hâli günlük nota yazılır, not olduğu gibi kalır; hangisinin doğru olduğuna siz karar verin."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }.padding(8).background((conflict ? Color.red : Color.secondary).opacity(0.05)).clipShape(RoundedRectangle(cornerRadius: 6))
     }
     @ViewBuilder func card(_ it: [String: Any]) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             header(it)
-            if str(it, "section") == "conflict" && editing != str(it, "id") {
-                Text(meeting ? T("This meeting says", "Bu toplantıda geçen") : T("This chat says", "Bu sohbette geçen")).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            said(it)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(saving(it)).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                if editing == str(it, "id") {
+                    TextField(T("Corrected text", "Düzeltilmiş metin"), text: $fixed, axis: .vertical).textFieldStyle(.roundedBorder)
+                } else {
+                    Text(str(it, "statement")).fontWeight(.medium).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                }
             }
-            if editing == str(it, "id") {
-                TextField(T("Corrected text", "Düzeltilmiş metin"), text: $fixed, axis: .vertical).textFieldStyle(.roundedBorder)
-            } else {
-                Text(str(it, "statement")).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+            if str(it, "tag").contains(" · ") {
+                caveat(T("This was the assistant's suggestion or result; you had not confirmed it.", "Bu asistanın önerisi ya da sonucuydu; siz onaylamamıştınız."))
             }
-            if str(it, "quote", "") != "" {
-                Text(quoteLine(it)).font(.caption).italic().foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if str(it, "section") == "review" {
+                caveat(T("Later in the chat this may have been taken back.", "Sohbetin ilerisinde bundan vazgeçilmiş olabilir."))
             }
             if str(it, "section") == "conflict" || (str(it, "match", "") != "" && str(it, "match_text", "") != "") { noteSide(it) }
             buttons(it)
@@ -1721,7 +1790,9 @@ struct DigestItemsView: View {
                 if let next { model.openNote(next) } else { model.reloadNote() }
             } else {
                 load(); model.reloadNote()
-                if !logged.isEmpty { model.notice = T("Saved to \(logged).", "\(logged) dosyasına kaydedildi.") }
+                if str(v, "decision") == "skipped" { model.notice = T("Rejected; it was saved nowhere.", "Reddedildi; hiçbir yere yazılmadı.") }
+                else if str(v, "decision") == "unsure" && !logged.isEmpty { model.notice = T("Saved to \(logged), marked unsure.", "\(logged) dosyasına şüpheli olarak kaydedildi.") }
+                else if !logged.isEmpty { model.notice = T("Saved to \(logged).", "\(logged) dosyasına kaydedildi.") }
             }
         }
     }
@@ -1960,6 +2031,9 @@ func displayTitle(_ f: [String: Any]) -> String {
     let day = out.string(from: date) + group(6)
     let client = group(2)
     if !client.isEmpty {
+        // The chat's own name, as Claude Code or Codex lists it ("mac mini ssh bağlantısı"), when Carry found one.
+        let topic = str(f, "topic", "")
+        if !topic.isEmpty { return topic.prefix(1).uppercased(with: Lang.locale) + String(topic.dropFirst()) + " · " + day }
         let name = client == "claude" ? "Claude" : client == "codex" ? "Codex" : client.capitalized
         return T("\(name) chat · \(day)", "\(name) sohbeti · \(day)")
     }
