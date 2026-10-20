@@ -120,7 +120,24 @@ struct UIError: LocalizedError {
         case "setting_out_of_range", "invalid_setting": return L("One of the values is outside its allowed range. Check the numbers and save again.")
         case "invalid_schedule_time": return L("Choose a valid time for the nightly harvest.")
         case "no_sources": return L("Add a Markdown folder or vault in Settings › Sources first.")
-        default: return message
+        case "index_failed": return T("The search index could not be updated this time, usually because a note changed while it was being prepared. Carry tries again by itself within a minute; your notes are fine.",
+                                      "Arama indeksi bu sefer güncellenemedi; çoğu zaman tam o sırada bir not değiştiği için olur. Carry bir dakika içinde kendisi yeniden dener; notlarınıza bir şey olmadı.")
+        case "profile_invalid_email": return T("Enter your company mail, like name@company.com.", "Şirket mailinizi girin, örneğin ad@sirket.com.")
+        case "profile_name_required": return T("Choose your name, or write it if it is not in the list.", "Adınızı seçin; listede yoksa yazın.")
+        case "profile_email_domain": return T("Use your company mail; this one is not on your team's domain.", "Şirket mailinizi kullanın; bu mail ekibinizin alan adında değil.")
+        case "trello_unauthorized": return T("Trello did not accept this token. Allow Carry in Trello again and paste the new token.", "Trello bu token'ı kabul etmedi. Trello'da Carry'ye yeniden izin verip yeni token'ı yapıştırın.")
+        case "trello_key_and_token_required": return T("Paste the token Trello showed (and the API key if asked).", "Trello'nun gösterdiği token'ı yapıştırın (istenirse API anahtarını da).")
+        case "trello_keychain_failed", "trello_needs_keychain": return T("The token could not be saved in the Keychain. Try again.", "Token Anahtar Zinciri'ne kaydedilemedi. Tekrar deneyin.")
+        case "item_already_decided", "item_not_found": return T("This item was already decided; the list is refreshed.", "Bu madde zaten karara bağlanmış; liste yenilendi.")
+        default:
+            if message.hasPrefix("trello_unreachable") || message.hasPrefix("trello_http") {
+                return T("Trello could not be reached. Check your connection; Carry tries again by itself.", "Trello'ya ulaşılamadı. Bağlantınızı kontrol edin; Carry kendisi yeniden dener.")
+            }
+            // A code nobody has worded yet: say so in a sentence, the code kept for whoever helps.
+            if message.range(of: #"^[a-z0-9_.:-]+$"#, options: .regularExpression) != nil {
+                return T("Something did not work (\(message)). Try again; if it keeps happening, tell your team.", "Bir şey yolunda gitmedi (\(message)). Tekrar deneyin; sürerse ekibinize söyleyin.")
+            }
+            return message
         }
     }
 }
@@ -272,9 +289,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         trelloAsked = Date()
         run("trello", clearError: false, quiet: true) { value in if !same(value, self.trello) { self.trello = value } }
     }
+    /// Who signed in on this Mac (`profile` is null until someone does), the names the team notes
+    /// use, and whether Trello is connected.
+    @Published var profile: [String: Any] = [:]
+    @Published var showLogin = false
+    @Published var loginStep = 0
+    var me: [String: Any] { profile["profile"] as? [String: Any] ?? [:] }
+    var signedIn: Bool { !me.isEmpty }
+    var trelloConnected: Bool { profile["trello_connected"] as? Bool == true }
+    func loadProfile() {
+        run("profile", clearError: false, quiet: true) { value in
+            if !same(value, self.profile) { self.profile = value }
+            // Offered once on a Mac set up before sign-in existed; afterwards from the profile button.
+            if !(value["profile"] is [String: Any]) && !self.onboarding && !UserDefaults.standard.bool(forKey: "loginOffered") {
+                UserDefaults.standard.set(true, forKey: "loginOffered")
+                self.signIn()
+            }
+        }
+    }
+    func signIn(step: Int = 0) { loginStep = step; showLogin = true }
+    /// İşlerin: the signed-in person's work from Trello, the team notes and accepted chat items.
+    @Published var work: [String: Any] = [:]
+    func loadWork() { run("work", clearError: false, quiet: true) { value in if !same(value, self.work) { self.work = value } } }
+    /// After the profile or Trello changed: everything that depends on who is signed in.
+    func profileChanged(_ value: [String: Any]) { profile = value; loadTrello(); loadWork() }
     func tick() {
         guard !workspace.isEmpty, !busy else { return }
-        if Date().timeIntervalSince(trelloAsked) > 60 { loadTrello() }
+        if Date().timeIntervalSince(trelloAsked) > 60 { loadTrello(); loadWork() }
         if ["starting", "waiting_for_browser"].contains(str(githubLogin, "state")) {
             run("github_login_status", clearError: false, quiet: true) { value in
                 self.githubLogin = value
@@ -386,7 +427,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             self.snapshot = $0
             if self.sources.isEmpty { self.onboarding = true }
             self.loadAssistants()
-            self.loadSettings(); self.loadVault(); self.reloadNote(); self.loadTrello()
+            self.loadSettings(); self.loadVault(); self.reloadNote(); self.loadTrello(); self.loadProfile(); self.loadWork()
             self.run("harvest_status", clearError: false, quiet: true) { self.harvest = $0 }
             if ProcessInfo.processInfo.environment["CARRY_MEASURE_STARTUP"] == "1" { print("carry_workspace_ready"); fflush(stdout) }
         }
@@ -1342,19 +1383,19 @@ struct ReviewView: View {
         HSplitView {
             VStack(alignment: .leading, spacing: 12) {
                 Text(pageName("Review")).font(.title.bold())
-                Text(T("What waits in your Inbox. Open a session recap and accept, fix or skip each item; accepted items go to that day's daily note. Other captures you approve as a whole. Notes your assistants write elsewhere are searchable as they are and do not wait here; find them with the Drafts filter on the Notes page.",
-                       "Gelen kutunuzda bekleyenler. Bir sohbet taslağını açıp her maddeyi kabul edin, düzeltin ya da atlayın; kabul edilenler o günün günlük notuna gider. Diğer kayıtları bütün olarak onaylarsınız. Asistanlarınızın başka klasörlere yazdığı notlar olduğu gibi aranabilir ve burada beklemez; Notlar sayfasındaki Taslaklar filtresiyle bulursunuz."))
+                Text(T("After a chat or a meeting, Carry picks out what seems worth keeping and asks you here. Is it right? Accept it: it goes to that day's daily note, and open items also join your work on Home. Not right? Fix or skip it; a skipped item shows up nowhere.",
+                       "Bir sohbetten ya da toplantıdan sonra Carry saklanmaya değer görünenleri çıkarır ve burada sana sorar. Doğruysa kabul et: o günün günlük notuna yazılır, açık işler ayrıca ana sayfadaki İşlerin listesine girer. Doğru değilse düzelt ya da atla; atladığın madde hiçbir yerde görünmez."))
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 if model.pendingReview > 0 {
                     Button { model.page = "Proposals" } label: {
-                        Label(T("\(model.pendingReview) change proposal(s) wait for your answer", "\(model.pendingReview) değişiklik önerisi cevabınızı bekliyor"), systemImage: "exclamationmark.bubble")
+                        Label(T("\(model.pendingReview) change proposal(s) wait for your answer", "\(model.pendingReview) değişiklik önerisi cevabını bekliyor"), systemImage: "exclamationmark.bubble")
                             .frame(maxWidth: .infinity, alignment: .leading).padding(10).background(Color.orange.opacity(0.1)).clipShape(RoundedRectangle(cornerRadius: 8))
                     }.buttonStyle(.plain)
                 }
                 if all.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         Label(T("Nothing to review", "İncelenecek bir şey yok"), systemImage: "checkmark.circle").font(.headline).foregroundStyle(.green)
-                        Text(T("New drafts appear here after your chats and your assistants' work.", "Sohbetlerinizden ve asistanlarınızın çalışmalarından sonra yeni taslaklar burada görünür.")).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        Text(T("New drafts appear here after your chats and your assistants' work.", "Sohbetlerinden ve toplantılarından sonra Carry'nin sorduğu maddeler burada görünür.")).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }.padding(.top, 20)
                     Spacer()
                 } else {
@@ -1381,7 +1422,7 @@ struct ReviewView: View {
                                         Image(systemName: picked.contains(path) ? "checkmark.square.fill" : "square").font(.title3).foregroundStyle(picked.contains(path) ? Color.accentColor : .secondary)
                                     }.buttonStyle(.plain).help(T("Select", "Seç"))
                                 } else {
-                                    Image(systemName: "checklist").font(.title3).foregroundStyle(.orange).help(T("Decide item by item", "Madde madde karar verin"))
+                                    Image(systemName: "checklist").font(.title3).foregroundStyle(.orange).help(T("Decide item by item", "Madde madde karar ver"))
                                 }
                                 Button { model.openNote(path) } label: {
                                     VStack(alignment: .leading, spacing: 2) {
@@ -1408,7 +1449,7 @@ struct ReviewView: View {
             Button(T("Approve all", "Hepsini onayla")) { model.approveMany(bulk.map { str($0, "path") }) }
         } message: {
             Text(T("Their draft mark is removed; the text does not change. Approve only what you trust without reading.",
-                   "Taslak işaretleri kaldırılır; metin değişmez. Yalnızca okumadan güvendiğiniz taslakları onaylayın."))
+                   "Taslak işaretleri kaldırılır; metin değişmez. Yalnızca okumadan güvendiğin taslakları onayla."))
         }
         .onAppear(perform: openFirst)
         .onChange(of: all.count) { openFirst() }  // the list may arrive after the page opens
@@ -1426,10 +1467,43 @@ struct DigestItemsView: View {
     let path: String
     var meeting = false
     @State private var items: [[String: Any]] = []
+    @State private var chat: [String: Any] = [:]
     @State private var editing = ""
     @State private var fixed = ""
     @State private var showFolded = false
     var open: [[String: Any]] { items.filter { str($0, "decision", "") == "" } }
+    /// What one click accepts: every waiting item but the conflicts, which need the owner to choose.
+    var plain: [[String: Any]] { open.filter { str($0, "section") != "conflict" } }
+    func isOpenItem(_ it: [String: Any]) -> Bool { ["open item", "açık iş"].contains(str(it, "kind", "").lowercased()) }
+    /// The item's kind in the app's language; recaps written before the language changed keep English tags.
+    func tagName(_ it: [String: Any]) -> String {
+        let name: String
+        switch str(it, "kind", "").lowercased() {
+        case "open item", "açık iş": name = T("open item", "açık iş")
+        case "decision", "karar": name = T("decision", "karar")
+        case "fact", "olgu": name = T("fact", "bilgi")
+        case "preference", "tercih": name = T("preference", "tercih")
+        default: name = str(it, "tag")
+        }
+        return str(it, "tag").contains(" · ") ? name + T(" · assistant's suggestion", " · asistanın önerisi") : name
+    }
+    /// Which chat this is, in the words people use: "Claude chat · 19 October" and its first message.
+    @ViewBuilder var origin: some View {
+        if !chat.isEmpty {
+            VStack(alignment: .leading, spacing: 3) {
+                if str(chat, "kind") == "meeting" {
+                    Text(T("From a meeting", "Bir toplantıdan")).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                } else {
+                    let client = str(chat, "client", "")
+                    let name = client == "claude" ? "Claude" : client == "codex" ? "Codex" : client.capitalized
+                    Text(T("From a \(name) chat · \(dayLabel(str(chat, "day", "")))", "\(name) sohbetinden · \(dayLabel(str(chat, "day", "")))")).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    if str(chat, "first", "") != "" {
+                        Text(T("It began with: ", "Sohbet şöyle başlamıştı: ") + "“" + str(chat, "first") + "”").font(.callout).italic().fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                    }
+                }
+            }
+        }
+    }
     var decided: [[String: Any]] { items.filter { ["accepted", "fixed", "skipped"].contains(str($0, "decision", "")) } }
     var folded: [[String: Any]] { items.filter { str($0, "decision", "") == "folded" } }
     func sectionName(_ key: String) -> String {
@@ -1444,10 +1518,19 @@ struct DigestItemsView: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            origin
             Label(open.isEmpty ? T("Every item is decided.", "Tüm maddeler karara bağlandı.")
-                               : (meeting ? T("\(open.count) item(s) from this meeting wait for you. Accept what is right: it is saved to that day's daily note.", "Bu toplantıdan \(open.count) madde sizi bekliyor. Doğru olanı kabul edin: o günün günlük notuna kaydedilir.")
-                                       : T("\(open.count) item(s) from this chat wait for you. Accept what is right: it is saved to that day's daily note.", "Bu sohbetten \(open.count) madde sizi bekliyor. Doğru olanı kabul edin: o günün günlük notuna kaydedilir.")),
+                               : (meeting ? T("\(open.count) item(s) from this meeting wait for your answer.", "Bu toplantıdan \(open.count) madde cevabını bekliyor.")
+                                       : T("\(open.count) item(s) from this chat wait for your answer.", "Bu sohbetten \(open.count) madde cevabını bekliyor.")),
                   systemImage: "checklist").foregroundStyle(.orange).fontWeight(.medium)
+            if plain.count > 1 {
+                HStack(spacing: 10) {
+                    Button(T("Accept all \(plain.count)", "\(plain.count) maddenin hepsini kabul et")) { acceptAll() }.buttonStyle(.borderedProminent)
+                    if plain.count < open.count {
+                        Text(T("Conflicts with your notes stay for you to choose.", "Notlarınla çelişenler senin seçmen için kalır.")).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
             ForEach(open.map { str($0, "id") }, id: \.self) { id in
                 card(open.first { str($0, "id") == id } ?? [:])
             }
@@ -1471,7 +1554,7 @@ struct DigestItemsView: View {
     }
     @ViewBuilder func header(_ it: [String: Any]) -> some View {
         HStack(spacing: 6) {
-            Badge(text: str(it, "tag"), color: str(it, "section") == "conflict" ? .red : .accentColor)
+            Badge(text: tagName(it), color: str(it, "section") == "conflict" ? .red : .accentColor)
             if str(it, "section") != "new" { Text(sectionName(str(it, "section"))).font(.caption).foregroundStyle(.secondary) }
             if str(it, "match", "") != "" && str(it, "section") != "conflict" && str(it, "match_text", "") == "" {
                 Text("↔ " + str(it, "match").trimmingCharacters(in: CharacterSet(charactersIn: "[]"))).font(.caption).foregroundStyle(.secondary)
@@ -1494,6 +1577,9 @@ struct DigestItemsView: View {
                 Button(T("Accept", "Kabul et")) { decide(id, "accept") }.buttonStyle(.borderedProminent)
                 Button(T("Fix…", "Düzelt…")) { editing = id; fixed = str(it, "statement") }
                 Button(T("Skip", "Atla")) { decide(id, "skip") }
+                Text(isOpenItem(it) ? T("Accepted, it goes to the daily note and stays in your work on Home until you mark it done.", "Kabul edersen günlük nota yazılır ve Bitti diyene kadar ana sayfada İşlerin listesinde durur.")
+                                    : T("Accepted, it goes to that day's daily note.", "Kabul edersen o günün günlük notuna yazılır."))
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
     }
@@ -1504,7 +1590,7 @@ struct DigestItemsView: View {
         let conflict = str(it, "section") == "conflict"
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text(conflict ? T("Your note says", "Notunuzda yazan") : T("Related note (checked: not a conflict)", "İlgili not (kontrol edildi: çelişki değil)"))
+                Text(conflict ? T("Your note says", "Notunda yazan") : T("Related note (checked: not a conflict)", "İlgili not (kontrol edildi: çelişki değil)"))
                     .font(.caption.weight(.semibold)).foregroundStyle(conflict ? .red : .secondary)
                 Text(name).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 Spacer()
@@ -1512,7 +1598,7 @@ struct DigestItemsView: View {
                     Button(T("Open note", "Notu aç")) { model.openNote(str(it, "match_path")) }.buttonStyle(.link).font(.caption)
                 }
             }
-            Text(str(it, "match_text", "") != "" ? str(it, "match_text") : T("(Carry could not find the line; open the note.)", "(Carry satırı bulamadı; notu açın.)"))
+            Text(str(it, "match_text", "") != "" ? str(it, "match_text") : T("(Carry could not find the line; open the note.)", "(Carry satırı bulamadı; notu aç.)"))
                 .font(.callout).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
             if str(it, "why", "") != "" {
                 Text((conflict ? T("Why it conflicts: ", "Neden çelişiyor: ") : T("Why: ", "Neden: ")) + str(it, "why"))
@@ -1520,7 +1606,7 @@ struct DigestItemsView: View {
             }
             if conflict {
                 Text(T("Accepting saves this version to the daily note and leaves the note as it is; you decide which one is right.",
-                       "Kabul ederseniz bu hâli günlük nota yazılır, not olduğu gibi kalır; hangisinin doğru olduğuna siz karar verin."))
+                       "Kabul edersen bu hâli günlük nota yazılır, not olduğu gibi kalır; hangisinin doğru olduğuna sen karar ver."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }.padding(8).background((conflict ? Color.red : Color.secondary).opacity(0.05)).clipShape(RoundedRectangle(cornerRadius: 6))
@@ -1545,7 +1631,24 @@ struct DigestItemsView: View {
     }
     func foldedLine(_ it: [String: Any]) -> String { "• " + sectionName(str(it, "section")) + ": " + str(it, "statement") }
     func load() {
-        model.run("digest_items", ["path": path, "source_id": model.noteSource], quiet: true) { v in items = v["items"] as? [[String: Any]] ?? [] }
+        model.run("digest_items", ["path": path, "source_id": model.noteSource], quiet: true) { v in
+            items = v["items"] as? [[String: Any]] ?? []; chat = v["chat"] as? [String: Any] ?? [:]
+        }
+    }
+    func acceptAll() {
+        let next = model.nextDraft(after: path)
+        model.run("digest_accept_all", ["path": path, "source_id": model.noteSource]) { v in
+            let accepted = Int(num(v, "accepted"))
+            model.loadWork()
+            if v["done"] as? Bool == true {
+                model.loadVault()
+                model.notice = T("\(accepted) item(s) accepted; the draft left Review.", "\(accepted) madde kabul edildi; taslak İncele'den çıktı.")
+                if let next { model.openNote(next) } else { model.reloadNote() }
+            } else {
+                load(); model.reloadNote()
+                model.notice = T("\(accepted) item(s) accepted. The conflicts wait for your choice.", "\(accepted) madde kabul edildi. Çelişenler senin seçimini bekliyor.")
+            }
+        }
     }
     func decide(_ id: String, _ decision: String, _ text: String? = nil) {
         var fields: [String: Any] = ["path": path, "source_id": model.noteSource, "item": id, "decision": decision]
@@ -1554,6 +1657,7 @@ struct DigestItemsView: View {
         model.run("digest_decide", fields) { v in
             editing = ""
             let logged = str(v, "logged", "")
+            model.loadWork()
             if v["done"] as? Bool == true {
                 model.loadVault()
                 model.notice = T("Every item is decided; the digest left the review list.", "Tüm maddeler karara bağlandı; taslak inceleme listesinden çıktı.")
@@ -1566,50 +1670,34 @@ struct DigestItemsView: View {
     }
 }
 
-/// A large, clearly clickable card for the few things people come to Carry to do.
-struct ActionCard: View {
-    let icon: String; let title: String; let detail: String
-    var highlight = false
+/// A small button at the top of Home: Review with how many drafts wait, search, a new note.
+struct Pill: View {
+    let title: String; let icon: String
+    var count = 0
     let action: () -> Void
     var body: some View {
         Button(action: action) {
-            HStack(alignment: .top, spacing: 14) {
-                Image(systemName: icon).font(.system(size: 26)).foregroundStyle(highlight ? Color.white : Color.accentColor).frame(width: 34)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title).font(.title3.weight(.semibold)).foregroundStyle(highlight ? Color.white : Color.primary)
-                    Text(detail).font(.callout).foregroundStyle(highlight ? Color.white.opacity(0.9) : Color.secondary).fixedSize(horizontal: false, vertical: true).multilineTextAlignment(.leading)
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                Text(title)
+                if count > 0 {
+                    Text("\(count)").font(.caption.bold()).padding(.horizontal, 6).padding(.vertical, 1)
+                        .background(Color.orange).foregroundStyle(.white).clipShape(Capsule())
                 }
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.right").foregroundStyle(highlight ? Color.white.opacity(0.8) : Color.secondary)
             }
-            .padding(16).frame(maxWidth: .infinity, minHeight: 88, alignment: .topLeading)
-            .background(highlight ? Color.accentColor : Color.secondary.opacity(0.08)).clipShape(RoundedRectangle(cornerRadius: 12))
-            .contentShape(Rectangle())
+            .padding(.horizontal, 12).padding(.vertical, 7).background(Color.secondary.opacity(0.1)).clipShape(Capsule()).contentShape(Capsule())
         }.buttonStyle(.plain)
     }
 }
 
-/// One sentence when everything works; the full checklist only when something needs doing.
+/// The setup checklist, only while something needs doing; a working setup says nothing.
 struct StatusSummary: View {
     @ObservedObject var model: Model
-    @State private var details = false
     var index: [String: Any] { model.snapshot["index"] as? [String: Any] ?? [:] }
-    var ready: Bool { str(index, "state") == "fresh" && model.anyAssistantConnected && !model.localSources.isEmpty }
+    // An index catching up with the last edits is working, not a problem.
+    var ready: Bool { ["fresh", "stale"].contains(str(index, "state")) && model.anyAssistantConnected && !model.localSources.isEmpty }
     var body: some View {
-        if ready && !details {
-            HStack(spacing: 10) {
-                Image(systemName: "checkmark.seal.fill").foregroundStyle(.green).font(.title3)
-                Text(model.ownNotes == 0 ? T("Setup is complete. Start by writing your first note.", "Kurulum tamamlandı. İlk notunuzu yazarak başlayın.")
-                     : T("All set. Your assistant can search your \(str(index, "indexed_files", "0")) notes.", "Her şey hazır. Asistanınız \(str(index, "indexed_files", "0")) notunuzda arama yapabiliyor."))
-                Spacer()
-                Button(T("Details", "Ayrıntılar")) { details = true }.buttonStyle(.link)
-            }.padding(12).background(Color.green.opacity(0.07)).clipShape(RoundedRectangle(cornerRadius: 10))
-        } else {
-            VStack(alignment: .trailing, spacing: 4) {
-                SetupChecklist(model: model)
-                if ready { Button(T("Hide", "Gizle")) { details = false }.buttonStyle(.link).font(.caption) }
-            }
-        }
+        if !ready { SetupChecklist(model: model) }
     }
 }
 
@@ -1617,53 +1705,175 @@ struct Overview: View {
     @ObservedObject var model: Model
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
+            VStack(alignment: .leading, spacing: 18) {
                 if model.snapshot.isEmpty {
                     PageIntro(icon: "tray.full", title: T("Welcome to Carry", "Carry'ye hoş geldiniz"),
                               text: T("Carry connects your AI assistant to your knowledge base.", "Carry, yapay zekâ asistanınızı bilgi bankanıza bağlar."))
                     Button(T("Start setup", "Kuruluma başla")) { model.startOnboarding() }.buttonStyle(.borderedProminent).controlSize(.large)
                 } else {
-                    Text(pageName("Overview")).font(.largeTitle.bold())
+                    Text(T("Your work", "İşlerin")).font(.largeTitle.bold())
+                    FlowLayout(spacing: 8) {
+                        Pill(title: T("Review", "İncele"), icon: "checkmark.circle", count: model.reviewFiles.count) { model.page = "Review" }
+                        Pill(title: T("Search notes", "Notlarda ara"), icon: "magnifyingglass") { model.page = "Search" }
+                        Pill(title: T("New note", "Yeni not"), icon: "square.and.pencil") { model.showNewNote = true }
+                    }
                     StatusSummary(model: model)
-                    let toReview = model.reviewFiles.count
-                    HStack(spacing: 16) {
-                        ActionCard(icon: "checkmark.circle", title: T("Review", "İncele"),
-                                   detail: toReview > 0 ? T("\(toReview) draft(s) wait for you", "\(toReview) taslak sizi bekliyor") : T("Nothing waits for you", "Bekleyen bir şey yok"),
-                                   highlight: toReview > 0) { model.page = "Review" }
-                        ActionCard(icon: "magnifyingglass", title: T("Search notes", "Notlarda ara"),
-                                   detail: T("Ask a question, see what Carry finds", "Bir soru sorun, Carry'nin ne bulduğunu görün")) { model.page = "Search" }
-                        ActionCard(icon: "square.and.pencil", title: T("New note", "Yeni not"),
-                                   detail: T("Write something your assistant should know", "Asistanınızın bilmesini istediğiniz bir şey yazın")) { model.showNewNote = true }
-                    }
-                    HStack(alignment: .top, spacing: 18) {
-                        VStack(alignment: .leading, spacing: 18) {
-                            TrelloCards(model: model)
-                            RecentChats(model: model)
-                        }.frame(maxWidth: .infinity)
-                        GroupBox(T("Recently changed", "Son değişenler")) {
-                            VStack(alignment: .leading, spacing: 6) {
-                                let recent = Array((model.vault["recent"] as? [[String: Any]] ?? []).prefix(6))
-                                ForEach(recent.indices, id: \.self) { i in
-                                    let f = recent[i]
-                                    Button { model.openNote(str(f, "path")) } label: {
-                                        HStack {
-                                            VStack(alignment: .leading, spacing: 1) {
-                                                Text(displayTitle(f)).lineLimit(2)
-                                                Text(folderLabel(str(f, "folder", "(root)"))).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                                            }
-                                            Spacer()
-                                            Text(ago(num(f, "modified"))).font(.caption).foregroundStyle(.secondary)
-                                        }.contentShape(Rectangle())
-                                    }.buttonStyle(.plain)
-                                }
-                                if recent.isEmpty { Text(T("No notes yet.", "Henüz not yok.")).foregroundStyle(.secondary) }
-                                else { Button(T("All notes", "Tüm notlar")) { model.showVault("recent") }.buttonStyle(.link).font(.callout).padding(.top, 4) }
-                            }.padding(8).frame(maxWidth: .infinity, alignment: .leading)
-                        }.frame(width: 360)
-                    }
+                    WorkList(model: model)
                 }
             }.padding(30).frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+}
+
+/// "Today", "Yesterday" or "19 Oct" for a day (the first ten characters of an ISO date).
+func dayLabel(_ iso: String) -> String {
+    let parse = DateFormatter(); parse.locale = Locale(identifier: "en_US_POSIX"); parse.dateFormat = "yyyy-MM-dd"
+    guard let day = parse.date(from: String(iso.prefix(10))) else { return iso }
+    if Calendar.current.isDateInToday(day) { return T("Today", "Bugün") }
+    if Calendar.current.isDateInYesterday(day) { return T("Yesterday", "Dün") }
+    let out = DateFormatter(); out.locale = Lang.locale; out.setLocalizedDateFormatFromTemplate("d MMM")
+    return out.string(from: day)
+}
+
+/// Opens what a work row or badge points at: a Trello card in the browser, a note in Carry.
+@MainActor func openWork(_ model: Model, _ target: [String: Any]) {
+    if let url = target["url"] as? String, !url.isEmpty, let link = URL(string: url) { NSWorkspace.shared.open(link); return }
+    let path = str(target, "path", "")
+    guard !path.isEmpty else { return }
+    let sid = str(target, "source_id", "")
+    model.openNote(path, source: sid.isEmpty ? nil : sid)
+}
+
+/// İşlerin: one row per piece of work, its sources as badges; dated work first.
+struct WorkList: View {
+    @ObservedObject var model: Model
+    @State private var all = false
+    @State private var showOwned = false
+    @State private var showDecisions = false
+    static let first = 12
+    var rows: [[String: Any]] { model.work["items"] as? [[String: Any]] ?? [] }
+    var owned: [[String: Any]] { model.work["owned"] as? [[String: Any]] ?? [] }
+    var decisions: [[String: Any]] { model.work["decisions"] as? [[String: Any]] ?? [] }
+    var trello: [String: Any] { model.work["trello"] as? [String: Any] ?? [:] }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if !model.signedIn {
+                HStack(spacing: 12) {
+                    Image(systemName: "person.crop.circle").font(.title2).foregroundStyle(Color.accentColor)
+                    Text(T("Sign in with your company mail to see your Trello cards and the team notes waiting for you here.",
+                           "Trello kartlarını ve seni bekleyen ekip notlarını burada görmek için şirket mailinle giriş yap.")).fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    Button(T("Sign in", "Giriş yap")) { model.signIn() }.buttonStyle(.borderedProminent)
+                }.padding(12).background(Color.accentColor.opacity(0.07)).clipShape(RoundedRectangle(cornerRadius: 10))
+            } else if trello["connected"] as? Bool != true && !model.work.isEmpty {
+                HStack {
+                    Text(T("Trello is not connected, so your cards are not here yet.", "Trello bağlı değil; kartların bu yüzden burada değil.")).foregroundStyle(.secondary)
+                    Spacer()
+                    Button(T("Connect Trello", "Trello'yu bağla")) { model.signIn(step: 1) }
+                }
+            }
+            if let error = trello["error"] as? String, !error.isEmpty {
+                Text(T("Trello could not be reached; these are the cards seen last.", "Trello'ya ulaşılamadı; bunlar son görülen kartlar.")).font(.caption).foregroundStyle(.orange)
+            }
+            if model.work.isEmpty {
+                ProgressView().controlSize(.small)
+            } else if rows.isEmpty {
+                Text(T("Nothing waits for you. Your Trello cards and the work you accept in Review show up here.",
+                       "Seni bekleyen bir iş yok. Trello kartların ve İncele'de kabul ettiğin işler burada görünür.")).foregroundStyle(.secondary)
+            } else {
+                let shown = all ? rows : Array(rows.prefix(Self.first))
+                VStack(spacing: 0) {
+                    ForEach(shown.indices, id: \.self) { i in
+                        WorkRow(model: model, row: shown[i])
+                        if i < shown.count - 1 { Divider() }
+                    }
+                }.padding(.horizontal, 14).background(Color.secondary.opacity(0.05)).clipShape(RoundedRectangle(cornerRadius: 10))
+                if rows.count > Self.first {
+                    HStack {
+                        if !all { Text(T("\(rows.count - Self.first) more", "\(rows.count - Self.first) iş daha")).foregroundStyle(.secondary) }
+                        Button(all ? T("Show fewer", "Daha az göster") : T("Show all", "Tümünü göster")) { all.toggle() }.buttonStyle(.link)
+                    }.font(.callout)
+                }
+            }
+            if !owned.isEmpty {
+                DisclosureGroup(isExpanded: $showOwned) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(owned.indices, id: \.self) { i in
+                            let note = owned[i]
+                            Button { openWork(model, note) } label: {
+                                HStack { Text(str(note, "title")).lineLimit(1); Spacer(); Text(dayLabel(str(note, "touched", ""))).font(.caption).foregroundStyle(.secondary) }.contentShape(Rectangle())
+                            }.buttonStyle(.plain)
+                        }
+                    }.padding(.top, 6)
+                } label: {
+                    Text(T("Your other team notes (\(owned.count))", "Senin diğer ekip notların (\(owned.count))")).font(.headline)
+                }
+            }
+            if !decisions.isEmpty {
+                DisclosureGroup(isExpanded: $showDecisions) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(decisions.indices, id: \.self) { i in
+                            let d = decisions[i]
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Image(systemName: "checkmark.seal").foregroundStyle(.green).font(.caption)
+                                Text(inline(str(d, "text"))).lineLimit(2).help(str(d, "text", "")).frame(maxWidth: .infinity, alignment: .leading)
+                                Text(dayLabel(str(d, "day", ""))).font(.caption).foregroundStyle(.secondary)
+                                Button { openWork(model, ["path": str(d, "digest", ""), "source_id": str(d, "source_id", "")]) } label: { Image(systemName: "doc.text").foregroundStyle(.secondary) }
+                                    .buttonStyle(.plain).help(T("Where it came from", "Nereden geldi?"))
+                            }
+                        }
+                    }.padding(.top, 6)
+                } label: {
+                    Text(T("Recent decisions (\(decisions.count))", "Son kararlar (\(decisions.count))")).font(.headline)
+                }
+            }
+        }
+    }
+}
+
+struct WorkRow: View {
+    @ObservedObject var model: Model
+    let row: [String: Any]
+    var badges: [[String: Any]] { row["badges"] as? [[String: Any]] ?? [] }
+    var done: [[String: Any]] { row["done"] as? [[String: Any]] ?? [] }
+    var icon: (String, Color) {
+        switch str(badges.first ?? [:], "kind", "") {
+        case "trello": return ("square.stack", .blue)
+        case "okb": return ("person.2", .purple)
+        case "meeting": return ("waveform", .teal)
+        default: return ("bubble.left", .orange)
+        }
+    }
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon.0).foregroundStyle(icon.1).frame(width: 18).padding(.top, 2)
+            VStack(alignment: .leading, spacing: 5) {
+                Button { openWork(model, row["open"] as? [String: Any] ?? [:]) } label: {
+                    Text(str(row, "title")).lineLimit(2).multilineTextAlignment(.leading).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                }.buttonStyle(.plain).help(str(row, "title", ""))
+                FlowLayout(spacing: 6) { ForEach(badges.indices, id: \.self) { i in badge(badges[i]) } }
+            }
+            VStack(alignment: .trailing, spacing: 6) {
+                if let due = trelloDue(str(row, "due", "")) { Text(due.text).font(.caption.weight(.medium)).foregroundStyle(due.late ? .red : .secondary) }
+                if !done.isEmpty {
+                    Button(T("Done", "Bitti")) { model.run("work_done", ["done": done], quiet: true) { model.work = $0 } }
+                        .controlSize(.small).help(T("Leaves the list; the chat it came from stays as it is.", "Listeden çıkar; geldiği sohbet olduğu gibi kalır."))
+                }
+            }
+        }.padding(.vertical, 10)
+    }
+    func label(_ b: [String: Any]) -> String {
+        switch str(b, "kind", "") {
+        case "trello": return ["Trello", str(b, "board", ""), str(b, "list", "")].filter { !$0.isEmpty }.joined(separator: " · ")
+        case "okb": return str(b, "state", "") == "handed" ? T("Team notes · handed to you", "OKB · sana devredildi") : T("Team notes · waiting for your review", "OKB · inceleme bekliyor")
+        case "meeting": return T("Meeting · ", "Toplantı · ") + dayLabel(str(b, "day", ""))
+        default: return T("Chat · ", "Sohbet · ") + dayLabel(str(b, "day", ""))
+        }
+    }
+    func badge(_ b: [String: Any]) -> some View {
+        Button { openWork(model, b) } label: {
+            Text(label(b)).font(.caption).lineLimit(1).padding(.horizontal, 7).padding(.vertical, 2).background(Color.secondary.opacity(0.12)).clipShape(Capsule())
+        }.buttonStyle(.plain).help(T("Open", "Aç"))
     }
 }
 
@@ -1733,47 +1943,6 @@ func trelloDue(_ iso: String) -> (text: String, late: Bool)? {
     return (out.string(from: date), date < Date())
 }
 
-/// The open Trello cards assigned to the owner, nearest due date first; a click opens the card in Trello.
-struct TrelloCards: View {
-    @ObservedObject var model: Model
-    var body: some View {
-        let cards = model.trello["cards"] as? [[String: Any]] ?? []
-        GroupBox(T("Your cards in Trello", "Trello'da üzerimdeki işler")) {
-            VStack(alignment: .leading, spacing: 8) {
-                if model.trello["connected"] as? Bool != true {
-                    Text(T("Not connected. To see the open cards assigned to you, run carry trello connect in Terminal.",
-                           "Bağlı değil. Size atanmış açık kartları görmek için Terminal'de carry trello connect çalıştırın.")).foregroundStyle(.secondary)
-                } else if cards.isEmpty {
-                    Text(T("No open cards are assigned to you.", "Size atanmış açık kart yok.")).foregroundStyle(.secondary)
-                }
-                ForEach(Array(cards.prefix(8).enumerated()), id: \.offset) { _, card in
-                    Button { if let url = URL(string: str(card, "url")) { NSWorkspace.shared.open(url) } } label: {
-                        HStack(alignment: .firstTextBaseline) {
-                            Image(systemName: "square.stack").foregroundStyle(.blue)
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(str(card, "name")).lineLimit(2)
-                                Text([str(card, "board", ""), str(card, "list", "")].filter { !$0.isEmpty }.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                            }
-                            Spacer()
-                            if let due = trelloDue(str(card, "due")) { Text(due.text).font(.caption).foregroundStyle(due.late ? .red : .secondary) }
-                        }.contentShape(Rectangle())
-                    }.buttonStyle(.plain)
-                }
-                if model.trello["connected"] as? Bool == true {
-                    HStack {
-                        if cards.count > 8 { Text(T("\(cards.count - 8) more in Trello", "Trello'da \(cards.count - 8) kart daha")).font(.caption).foregroundStyle(.secondary) }
-                        Spacer()
-                        Button(T("Choose boards", "Panoları seç")) { model.page = "Settings"; model.settingsTab = "General" }.buttonStyle(.link).font(.caption)
-                    }
-                }
-                if let error = model.trello["error"] as? String, !error.isEmpty {
-                    Text(T("Trello could not be reached; these are the cards seen last.", "Trello'ya ulaşılamadı; son görülen kartlar.")).font(.caption).foregroundStyle(.orange)
-                }
-            }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-}
-
 /// Which Trello boards Home shows and from which day. Saved at once; the cards are not fetched again.
 struct TrelloSettings: View {
     @ObservedObject var model: Model
@@ -1788,8 +1957,11 @@ struct TrelloSettings: View {
         GroupBox("Trello") {
             VStack(alignment: .leading, spacing: 10) {
                 if model.trello["connected"] as? Bool != true {
-                    Text(T("Not connected. Run carry trello connect in Terminal; Carry asks Trello for a read-only token.",
-                           "Bağlı değil. Terminal'de carry trello connect çalıştırın; Carry Trello'dan yalnız okuma izni olan bir token ister.")).foregroundStyle(.secondary)
+                    HStack {
+                        Text(T("Not connected. Carry asks Trello only for permission to read.", "Bağlı değil. Carry Trello'dan yalnız okuma izni ister.")).foregroundStyle(.secondary)
+                        Spacer()
+                        Button(T("Connect Trello", "Trello'yu bağla")) { model.signIn(step: 1) }
+                    }
                 } else {
                     Text(T("Home shows the open cards assigned to you on these boards. Cards in a Done list are left out.",
                            "Ana sayfa bu panolarda size atanmış açık kartları gösterir. Done listesindeki kartlar gösterilmez.")).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -1816,71 +1988,6 @@ struct TrelloSettings: View {
                            "Kartın günü son tarihidir; son tarihi yoksa son değiştiği gündür.")).font(.caption).foregroundStyle(.secondary)
                 }
             }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-}
-
-struct RecentChats: View {
-    @ObservedObject var model: Model
-    var body: some View {
-        let chats = model.vault["chats"] as? [String: Any] ?? [:]
-        let opens = chats["open"] as? [[String: Any]] ?? []
-        let decisions = chats["decisions"] as? [[String: Any]] ?? []
-        let commits = chats["commits"] as? [[String: Any]] ?? []
-        VStack(alignment: .leading, spacing: 18) {
-            GroupBox(T("Unfinished work from your chats", "Sohbetlerinizden yarım kalan işler")) {
-                VStack(alignment: .leading, spacing: 10) {
-                    if opens.isEmpty { Text(T("Carry has not found any to-dos in your chats yet.", "Carry henüz sohbetlerinizden yapılacak iş çıkarmadı.")).foregroundStyle(.secondary) }
-                    list(opens, icon: "circle", color: .orange)
-                }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
-            }
-            if !decisions.isEmpty {
-                GroupBox(T("Recent decisions from your chats", "Sohbetlerinizden son kararlar")) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        list(decisions, icon: "checkmark.seal", color: .green)
-                    }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-        }
-        .environment(\.openURL, OpenURLAction { url in
-            guard url.scheme == "carry-note" else { return .systemAction }
-            model.followLink(url.absoluteString.dropFirst("carry-note:".count).removingPercentEncoding ?? "")
-            return .handled
-        })
-    }
-    /// "Today", "Yesterday" or "19 Oct" for a recap's day.
-    func dayTitle(_ iso: String) -> String {
-        let parse = DateFormatter(); parse.locale = Locale(identifier: "en_US_POSIX"); parse.dateFormat = "yyyy-MM-dd"
-        guard let day = parse.date(from: iso) else { return iso }
-        if Calendar.current.isDateInToday(day) { return T("Today", "Bugün") }
-        if Calendar.current.isDateInYesterday(day) { return T("Yesterday", "Dün") }
-        let out = DateFormatter(); out.locale = Lang.locale; out.setLocalizedDateFormatFromTemplate("d MMM")
-        return out.string(from: day)
-    }
-    /// At most five items, two lines each (the whole text on hover); a day is written once, above its items.
-    func list(_ entries: [[String: Any]], icon: String, color: Color) -> some View {
-        let shown = Array(entries.prefix(5))
-        return VStack(alignment: .leading, spacing: 8) {
-            ForEach(shown.indices, id: \.self) { i in
-                let day = str(shown[i], "day", "")
-                if i == 0 || day != str(shown[i - 1], "day", "") {
-                    Text(dayTitle(day)).font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.top, i == 0 ? 0 : 4)
-                }
-                item(shown[i], icon: icon, color: color)
-            }
-            if entries.count > shown.count {
-                Text(T("\(entries.count - shown.count) more", "\(entries.count - shown.count) madde daha")).font(.caption).foregroundStyle(.secondary)
-            }
-        }
-    }
-    func item(_ entry: [String: Any], icon: String, color: Color) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: icon).foregroundStyle(color).font(.caption)
-            Text(inline(str(entry, "text"))).lineLimit(2).help(str(entry, "text", "")).frame(maxWidth: .infinity, alignment: .leading)
-            if let digest = entry["digest"] as? String {
-                Button { model.openNote(digest) } label: { Image(systemName: "doc.text").foregroundStyle(.secondary) }
-                    .buttonStyle(.plain).help(T("Where it came from", "Nereden geldi?"))
-            }
         }
     }
 }
@@ -1988,7 +2095,7 @@ struct VaultView: View {
                 Button(T("Approve all", "Hepsini onayla")) { model.approveMany(approvable) }
             } message: {
                 Text(T("Their draft mark is removed; the text does not change. Locked notes and raw records (chat logs, clips) are left as they are. Approve only what you trust without reading.",
-                       "Taslak işaretleri kaldırılır; metin değişmez. Kilitli notlar ve ham kayıtlar (sohbet kaydı, kırpıntı) olduğu gibi kalır. Yalnızca okumadan güvendiğiniz taslakları onaylayın."))
+                       "Taslak işaretleri kaldırılır; metin değişmez. Kilitli notlar ve ham kayıtlar (sohbet kaydı, kırpıntı) olduğu gibi kalır. Yalnızca okumadan güvendiğin taslakları onayla."))
             }
         }
     }
@@ -4922,6 +5029,205 @@ struct MeetingMenuLabel: View {
     }
 }
 
+// MARK: - Sign-in and profile
+
+/// Sign-in: the company mail and the name the team notes use, then Trello. There is no password:
+/// it only tells Carry whose cards and notes to show. The token goes to the core, never to a log.
+struct LoginSheet: View {
+    @ObservedObject var model: Model
+    @Environment(\.dismiss) private var dismiss
+    @State private var email = ""
+    @State private var name = ""
+    @State private var guessed = ""
+    @State private var typed = false
+    @State private var key = ""
+    @State private var token = ""
+    @State private var error = ""
+    @State private var working = false
+    static let other = "\u{0}other"
+    var names: [String] { model.profile["names"] as? [String] ?? [] }
+    var domains: [String] { model.profile["email_domains"] as? [String] ?? [] }
+    var needsKey: Bool { model.profile["trello_key_known"] as? Bool != true }
+    var picked: Binding<String> {
+        Binding(get: { typed ? Self.other : name },
+                set: { value in if value == Self.other { typed = true; name = "" } else { typed = false; name = value } })
+    }
+    var authorizeURL: URL? {
+        if let url = model.profile["trello_authorize_url"] as? String { return URL(string: url) }
+        let k = key.trimmingCharacters(in: .whitespaces)
+        guard !k.isEmpty, var c = URLComponents(string: "https://trello.com/1/authorize") else { return nil }
+        c.queryItems = [URLQueryItem(name: "expiration", value: "never"), URLQueryItem(name: "scope", value: "read"),
+                        URLQueryItem(name: "response_type", value: "token"), URLQueryItem(name: "name", value: "Carry"), URLQueryItem(name: "key", value: k)]
+        return c.url
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if model.loginStep == 0 { mailStep } else { trelloStep }
+            if !error.isEmpty { Text(error).foregroundStyle(.red).font(.callout).fixedSize(horizontal: false, vertical: true) }
+        }
+        .padding(28).frame(width: 500)
+        .onAppear {
+            email = str(model.me, "email", ""); name = str(model.me, "name", "")
+            typed = !name.isEmpty && !names.contains(name)
+            if model.profile.isEmpty { model.loadProfile() }
+        }
+    }
+    @ViewBuilder var mailStep: some View {
+        Label(T("Sign in to Carry", "Carry'ye giriş"), systemImage: "person.crop.circle").font(.title2.bold())
+        Text(T("Your company mail tells Carry whose Trello cards and team notes to show on Home. There is no password; the mail stays on this Mac.",
+               "Şirket mailin, Carry'nin ana sayfada hangi Trello kartlarını ve ekip notlarını göstereceğini belirler. Şifre yok; mail yalnız bu Mac'te durur."))
+            .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        TextField(T("Company mail", "Şirket mailin"), text: $email).textFieldStyle(.roundedBorder).textContentType(.emailAddress)
+            .onChange(of: email) { suggest() }
+        if !domains.isEmpty {
+            Text(T("Ends with ", "Şununla bitmeli: ") + domains.map { "@" + $0 }.joined(separator: T(" or ", " ya da "))).font(.caption).foregroundStyle(.secondary)
+        }
+        Picker(T("Your name in the team notes", "OKB'deki adın"), selection: picked) {
+            Text(T("Choose", "Seç")).tag("")
+            ForEach(names, id: \.self) { Text($0).tag($0) }
+            Text(T("Not in the list", "Listede yok")).tag(Self.other)
+        }
+        if typed { TextField(T("Your name", "Adın"), text: $name).textFieldStyle(.roundedBorder) }
+        Text(T("The name in the owner field of the team notes: notes waiting for your review then show up among your work.",
+               "Ekip notlarının sahip alanında geçen adın: incelemeni bekleyen notlar böylece işlerinin arasında görünür."))
+            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        HStack {
+            Button(model.signedIn ? T("Cancel", "Vazgeç") : T("Later", "Sonra")) { dismiss() }
+            Spacer()
+            if working { ProgressView().controlSize(.small) }
+            Button(T("Continue", "Devam")) { save() }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                .disabled(email.trimmingCharacters(in: .whitespaces).isEmpty || name.trimmingCharacters(in: .whitespaces).isEmpty || working)
+        }.padding(.top, 6)
+    }
+    @ViewBuilder var trelloStep: some View {
+        Label(T("Connect Trello", "Trello'yu bağla"), systemImage: "square.stack").font(.title2.bold())
+        Text(T("Home then shows the open cards assigned to you. Carry asks Trello only for permission to read: it never changes a card.",
+               "Böylece ana sayfa sana atanmış açık kartları gösterir. Carry Trello'dan yalnız okuma izni ister: hiçbir kartı değiştirmez."))
+            .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        if needsKey {
+            SecureField(T("Trello API key (trello.com/app-key)", "Trello API anahtarı (trello.com/app-key)"), text: $key).textFieldStyle(.roundedBorder)
+        }
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text("1.").bold()
+            VStack(alignment: .leading, spacing: 6) {
+                Text(T("Allow Carry in Trello. Trello then shows a long token.", "Trello'da Carry'ye izin ver. Trello sana uzun bir token gösterir."))
+                Button(T("Allow in Trello", "Trello'da izin ver")) { if let url = authorizeURL { NSWorkspace.shared.open(url) } }.disabled(authorizeURL == nil)
+            }
+        }
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text("2.").bold()
+            VStack(alignment: .leading, spacing: 6) {
+                Text(T("Copy that token and paste it here.", "O token'ı kopyalayıp buraya yapıştır."))
+                SecureField("Token", text: $token).textFieldStyle(.roundedBorder)
+            }
+        }
+        HStack {
+            Button(T("Skip for now", "Şimdilik atla")) { dismiss() }
+            Spacer()
+            if working { ProgressView().controlSize(.small) }
+            Button(T("Connect", "Bağla")) { connect() }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                .disabled(token.trimmingCharacters(in: .whitespaces).isEmpty || (needsKey && key.isEmpty) || working)
+        }.padding(.top, 6)
+    }
+    /// The name a mail suggests, unless one was already chosen by hand.
+    func suggest() {
+        guard email.contains("@"), name.isEmpty || name == guessed else { return }
+        model.run("profile", ["email": email], clearError: false, quiet: true) { value in
+            let guess = str(value, "guess", "")
+            guard !guess.isEmpty, name.isEmpty || name == guessed else { return }
+            guessed = guess; name = guess; typed = false
+        }
+    }
+    func save() {
+        error = ""; working = true
+        model.request("profile_save", ["email": email, "name": name], clearError: false, quiet: true, orElse: { e in
+            working = false; error = e.localizedDescription
+        }) { value in
+            working = false; model.profileChanged(value)
+            if value["trello_connected"] as? Bool == true { dismiss() } else { model.loginStep = 1 }
+        }
+    }
+    func connect() {
+        error = ""; working = true
+        var fields: [String: Any] = ["token": token]
+        if needsKey { fields["key"] = key }
+        model.request("trello_connect", fields, clearError: false, quiet: true, orElse: { e in
+            working = false; error = e.localizedDescription
+        }) { value in
+            working = false; token = ""; key = ""; model.profileChanged(value)
+            model.notice = T("Trello is connected. Your open cards show on Home.", "Trello bağlandı. Açık kartların ana sayfada görünüyor.")
+            dismiss()
+        }
+    }
+}
+
+/// Bottom left of the sidebar: who is signed in; a click opens the profile menu.
+struct ProfileButton: View {
+    @ObservedObject var model: Model
+    @State private var open = false
+    @State private var confirmLogout = false
+    var initials: String {
+        str(model.me, "name", "").split(separator: " ").prefix(2).compactMap { $0.first.map { String($0).uppercased(with: Locale(identifier: "tr")) } }.joined()
+    }
+    var body: some View {
+        Button { open = true } label: {
+            HStack(spacing: 10) {
+                ZStack {
+                    Circle().fill(model.signedIn ? Color.accentColor : Color.secondary.opacity(0.25))
+                    if model.signedIn { Text(initials).font(.caption.bold()).foregroundStyle(.white) }
+                    else { Image(systemName: "person.fill").foregroundStyle(.secondary) }
+                }.frame(width: 30, height: 30)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(model.signedIn ? str(model.me, "name") : T("Sign in", "Giriş yap")).fontWeight(.medium).lineLimit(1)
+                    Text(model.signedIn ? str(model.me, "email") : T("See your own work", "Kendi işlerini gör")).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                }
+                Spacer(minLength: 0)
+            }.contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $open, arrowEdge: .trailing) { menu }
+        .confirmationDialog(T("Sign out of Carry on this Mac?", "Bu Mac'te Carry'den çıkış yapılsın mı?"), isPresented: $confirmLogout) {
+            Button(T("Sign out", "Çıkış yap"), role: .destructive) { model.run("profile_logout") { model.profileChanged($0) } }
+        } message: {
+            Text(T("Your profile and Trello connection are removed from this Mac. Your notes, index and settings stay.",
+                   "Profilin ve Trello bağlantın bu Mac'ten silinir. Notların, indeksin ve ayarların kalır."))
+        }
+    }
+    func item(_ title: String, _ icon: String, role: ButtonRole? = nil, action: @escaping () -> Void) -> some View {
+        Button(role: role) { open = false; action() } label: { Label(title, systemImage: icon).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle()) }
+            .buttonStyle(.plain).padding(.vertical, 3)
+    }
+    var menu: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if model.signedIn {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(str(model.me, "name")).font(.headline)
+                    Text(str(model.me, "email")).font(.callout).foregroundStyle(.secondary)
+                }
+                Divider()
+                Label(model.trelloConnected ? T("Trello connected", "Trello bağlı") : T("Trello not connected", "Trello bağlı değil"),
+                      systemImage: model.trelloConnected ? "checkmark.circle.fill" : "circle").foregroundStyle(model.trelloConnected ? .green : .secondary)
+                if model.trelloConnected {
+                    item(T("Disconnect Trello", "Trello bağlantısını kes"), "xmark.circle") { model.run("trello_disconnect") { model.profileChanged($0) } }
+                } else {
+                    item(T("Connect Trello", "Trello'yu bağla"), "link") { model.signIn(step: 1) }
+                }
+                Divider()
+                item(T("Edit profile", "Profili düzenle"), "pencil") { model.signIn() }
+                item(T("How Carry works", "Carry nasıl çalışır?"), "questionmark.circle") { model.showGuide = true }
+                Divider()
+                item(T("Sign out", "Çıkış yap"), "rectangle.portrait.and.arrow.right", role: .destructive) { confirmLogout = true }
+            } else {
+                Text(T("Sign in with your company mail: Home then shows your Trello cards and the team notes waiting for you.",
+                       "Şirket mailinle giriş yap: ana sayfa böylece Trello kartlarını ve seni bekleyen ekip notlarını gösterir."))
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                item(T("Sign in", "Giriş yap"), "person.crop.circle") { model.signIn() }
+                item(T("How Carry works", "Carry nasıl çalışır?"), "questionmark.circle") { model.showGuide = true }
+            }
+        }.padding(16).frame(width: 280)
+    }
+}
+
 struct ContentView: View {
     @StateObject private var model = Model()
     private let ticks = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
@@ -4941,8 +5247,7 @@ struct ContentView: View {
                             .badge(item.0 == "Review" ? model.reviewFiles.count + model.pendingReview : 0)
                     }
                 }.listStyle(.sidebar)
-                Button { model.showGuide = true } label: { Label(T("How Carry works", "Carry nasıl çalışır?"), systemImage: "questionmark.circle") }
-                    .buttonStyle(.borderless).padding(.horizontal, 20).padding(.top, 8)
+                ProfileButton(model: model).padding(.horizontal, 14).padding(.top, 8)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(T("PILOT · LOCAL", "PİLOT · YEREL")).fontWeight(.semibold)
                     if let version = versionLabel { Text(version) }
@@ -4984,7 +5289,8 @@ struct ContentView: View {
             }
         } } }.environment(\.locale, Lang.locale).frame(minWidth: 1020, minHeight: 680)
         .sheet(isPresented: $model.showGuide) { GuideSheet(model: model) }
-        .sheet(isPresented: $model.showNewNote) { NewNoteSheet(model: model) }.onReceive(ticks) { _ in model.tick() }.onAppear {
+        .sheet(isPresented: $model.showNewNote) { NewNoteSheet(model: model) }
+        .sheet(isPresented: $model.showLogin) { LoginSheet(model: model) }.onReceive(ticks) { _ in model.tick() }.onAppear {
             if ProcessInfo.processInfo.environment["CARRY_MEASURE_STARTUP"] == "1" { print("carry_ui_ready"); fflush(stdout) }
             MainWindow.open = openWindow
             model.refresh()
