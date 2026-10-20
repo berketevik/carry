@@ -244,6 +244,24 @@ class DigestTest(unittest.TestCase):
         with self.assertRaisesRegex(CarryError, 'item_not_unsure'):
             digest.settle(self.ws, self.sid, self.rel, listed['The build takes 32 seconds.']['id'], 'reject')
 
+    def test_the_app_core_passes_settles_and_undoes(self):
+        # The requests the app sends, through the core it talks to.
+        from carry import maintenance
+        from carry.desktop import Bridge
+        bridge = Bridge()
+        call = lambda action, **f: bridge.dispatch(dict(action=action, workspace=str(self.ws.state_dir), path=self.rel, **f))
+        item = self.ids()['The build takes 32 seconds.']['id']
+        with patch.object(maintenance, 'start') as start:
+            passed = call('digest_decide', item=item, decision='pass')
+            self.assertEqual([it['statement'] for it in call('digest_unsure')['items']], ['The build takes 32 seconds.'])
+            settled = call('digest_settle', item=item, decision='accept')
+            self.assertEqual((settled['decision'], call('digest_unsure')['items']), ('accepted', []))
+            call('digest_undo', undo=settled['undo'])
+            self.assertEqual(len(call('digest_unsure')['items']), 1)
+            call('digest_undo', undo=passed['undo'])
+            self.assertEqual(call('digest_items')['waiting'], 4)
+        self.assertEqual(start.call_count, 4)  # each write re-indexes the daily log
+
     def test_settling_with_a_fix_rewrites_the_line_and_can_be_taken_back(self):
         items = self.ids()
         digest.decide(self.ws, self.sid, self.rel, items['The build takes 32 seconds.']['id'], 'pass')

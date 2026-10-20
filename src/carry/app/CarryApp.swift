@@ -1572,6 +1572,7 @@ struct ReviewView: View {
         let path = str(it, "path"), source = model.vaultSource
         model.request("digest_settle", ["path": path, "source_id": source, "item": str(it, "id"), "decision": decision], clearError: true, quiet: false, orElse: nil) { v in
             model.loadWork()
+            if str(model.note, "path", "") == path { model.digestEpoch += 1; model.reloadNote() }  // its counts on the right change too
             model.decided(v, path: path, source: source, notice: decision == "accept"
                           ? T("Saved as settled; the unsure mark is gone from the daily note.", "Kesin olarak kaydedildi; günlük nottaki şüpheli işareti kalktı.")
                           : T("Removed from the daily note.", "Günlük nottan silindi."))
