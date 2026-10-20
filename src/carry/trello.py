@@ -2,7 +2,8 @@
 
 Carry asks Trello for a read-only token (`scope=read`) under an API key: the team's, from the
 team notes, or one the owner gives the CLI. Once connected, both are read from TRELLO_API_KEY
-and TRELLO_TOKEN or the macOS Keychain (service carry-trello), never from workspace files. Only
+and TRELLO_TOKEN or the macOS Keychain (service carry-trello; the Credential Manager on Windows),
+never from workspace files. Only
 GET requests are made. The cards go to the state's trello.json and are fetched again in the
 background once they are five minutes old, so the page never waits for Trello; nothing is
 written into the notes. Which boards the page leaves out and from which day is the owner's choice
@@ -15,6 +16,7 @@ fragment, and a page on localhost hands it to Carry. That listener answers on lo
 a random path, and stops after the token or ten minutes. The CLI keeps the pasted token.
 """
 import datetime
+import errno
 import json
 import os
 import re
@@ -66,7 +68,18 @@ def authorize_url(key, return_url=None):
     return f'https://trello.com/1/authorize?{urllib.parse.urlencode(fields)}'
 
 
+def _wincred_target(account):
+    """On Windows the Keychain item is a generic credential in the Credential Manager, as jev's key."""
+    return f'{KEYCHAIN}:{account}'
+
+
 def _keychain_read(account):
+    if sys.platform == 'win32':
+        from . import wincred
+        try:
+            return (wincred.read(_wincred_target(account)) or '').strip() or None
+        except (OSError, ValueError):  # ValueError: a credential another tool wrote, not UTF-16
+            return None
     if sys.platform != 'darwin':
         return None
     try:
@@ -80,6 +93,13 @@ def _keychain_read(account):
 
 
 def _keychain_write(account, value):
+    if sys.platform == 'win32':
+        from . import wincred
+        try:
+            wincred.write(_wincred_target(account), account, value)
+        except OSError:
+            raise CarryError('trello_keychain_failed') from None
+        return
     if sys.platform != 'darwin':
         raise CarryError('trello_needs_keychain')
     try:
@@ -91,6 +111,13 @@ def _keychain_write(account, value):
 
 
 def _keychain_delete(account):
+    if sys.platform == 'win32':
+        from . import wincred
+        try:
+            wincred.delete(_wincred_target(account))
+        except OSError:
+            pass  # nothing kept, or nothing Carry can remove: disconnecting goes on
+        return
     if sys.platform == 'darwin':
         subprocess.run(['/usr/bin/security', 'delete-generic-password', '-s', KEYCHAIN, '-a', account],
                        capture_output=True, timeout=10)
@@ -219,6 +246,7 @@ class Login:
         self.path = '/trello/' + secrets.token_urlsafe(16)
         self._lock = threading.Lock()
         self._stopped = False
+        self._closed = threading.Event()
         try:
             self.servers = [_Server(('127.0.0.1', PORT if port is None else port), _Handler)]
         except OSError:
@@ -226,8 +254,12 @@ class Login:
         port = self.servers[0].server_address[1]
         try:
             self.servers.append(_Server6(('::1', port), _Handler))
-        except OSError:
-            pass  # no IPv6 loopback: the browser reaches localhost on 127.0.0.1
+        except OSError as exc:
+            # Another app on [::1] would get the browser's answer, since localhost is often tried there first.
+            if exc.errno == errno.EADDRINUSE:
+                self.servers[0].server_close()
+                raise CarryError('trello_port_busy') from None
+            # Otherwise there is no IPv6 loopback: the browser reaches localhost on 127.0.0.1.
         self.host = f'localhost:{port}'
         self.origin = 'http://' + self.host
         for server in self.servers:
@@ -270,15 +302,20 @@ class Login:
         self.stop()
 
     def stop(self):
-        """Close the listener; a second call does nothing."""
+        """Close the listener. A second call, such as Try again while the answer is still closing
+        it, returns once both addresses are free, so the next sign-in can take the port."""
         with self._lock:
-            if self._stopped:
-                return
-            self._stopped = True
-        self.timer.cancel()
-        for server in self.servers:
-            server.shutdown()
-            server.server_close()
+            first, self._stopped = not self._stopped, True
+        if not first:
+            self._closed.wait(5)
+            return
+        try:
+            self.timer.cancel()
+            for server in self.servers:
+                server.shutdown()
+                server.server_close()
+        finally:
+            self._closed.set()
 
 
 def _saved_settings(state_dir):

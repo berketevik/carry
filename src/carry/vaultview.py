@@ -490,7 +490,6 @@ def overview(ws, source_id):
     recent = sorted((f for f in files if not f['path'].endswith('_index.md')), key=lambda f: f['modified'], reverse=True)[:12]
     root = Path(listing['root'])
     schedule = schedule_for(ws)
-    chats = recent_chats(root)
     log = ws.state_dir / 'harvest.log'
     try:
         tail = [line for line in log.read_text(encoding='utf-8', errors='ignore').splitlines() if line.strip()][-8:]
@@ -501,38 +500,9 @@ def overview(ws, source_id):
                 awaiting_review=sum(f['review'] for f in files),
                 inbox=len(inbox), changed_this_week=sum(f['modified'] >= week for f in files),
                 folders=[dict(name=k, count=v) for k, v in sorted(folders.items(), key=lambda kv: -kv[1])],
-                recent=recent, chats=chats, harvest_log=tail, schedule=schedule,
+                recent=recent, harvest_log=tail, schedule=schedule,
                 draft_language=harvest.draft_language(ws, root), truncated=listing['truncated'],
                 assistants=assistants(ws, root))
-
-
-def recent_chats(root):
-    """Open items, decisions and commits the next chat starts from (same rules as `carry context`)."""
-    import subprocess
-    from . import context
-    opens, decisions, seen = [], [], set()
-    digests = context._digests(root)
-    for day, path in digests:
-        try:
-            items = context._items(path)
-        except OSError:
-            continue
-        for kind, statement, assistant in items:
-            if statement.lower() in seen:
-                continue
-            seen.add(statement.lower())
-            entry = dict(day=day.isoformat(), text=statement, digest=path.relative_to(root).as_posix())
-            if kind in context.OPEN_TAGS:
-                opens.append(entry)
-            elif kind in context.DECISION_TAGS and not assistant:
-                decisions.append(entry)
-    try:
-        log = subprocess.run(['git', '-C', str(root), 'log', '-10', '--format=%ad\t%s', '--date=short'],
-                             capture_output=True, text=True, encoding='utf-8', timeout=5).stdout
-    except (OSError, subprocess.SubprocessError):
-        log = ''
-    commits = [dict(day=d, text=t) for d, _, t in (l.partition('\t') for l in log.splitlines()) if t]
-    return dict(open=opens[:12], decisions=decisions[:8], commits=commits, digests=len(digests))
 
 
 # -- settings ------------------------------------------------------------------

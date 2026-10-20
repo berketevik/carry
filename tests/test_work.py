@@ -2,6 +2,7 @@
 
 Each piece of work is one row; its sources are badges. A chat's open item joins only once the owner
 accepted it and stays until they mark it done; done is kept in the state, never in the notes."""
+import datetime
 import json
 from unittest.mock import patch
 
@@ -160,3 +161,29 @@ class WorkTest(WorkspaceCase):
             result = call('work_done', done=[dict(digest=rel, item=digest.item_id('Kabul edilen iş'))])
         self.assertNotIn('Kabul edilen iş', self.titles(result))
         self.assertEqual(json.loads((self.state / work.DONE).read_text(encoding='utf-8'))['done'][0]['digest'], rel)
+
+    def test_a_note_or_recap_is_read_again_only_once_it_changed(self):
+        from carry import vaultview
+        self.digest('2026-10-19', [('open item', 'Kabul edilen iş', 'accepted')])
+        self.build(cards=[])
+        with patch.object(vaultview, '_meta', wraps=vaultview._meta) as meta, \
+                patch.object(work.digest, 'parse', wraps=digest.parse) as parse:
+            self.build(cards=[])
+            self.assertEqual((meta.call_count, parse.call_count), (0, 0))
+            self.okb('Bütçe', 'ismail', 'open', body='daha uzun bir gövde')
+            self.digest('2026-10-19', [('open item', 'Kabul edilen iş', 'accepted'), ('open item', 'Yeni iş', 'accepted')])
+            titles = self.titles(self.build(cards=[]))
+            self.assertEqual((meta.call_count, parse.call_count), (1, 1))
+        self.assertIn('Yeni iş', titles)
+        (self.team / 'Bütçe.md').unlink()
+        self.assertNotIn('Bütçe', self.titles(self.build(cards=[])))
+        self.assertNotIn(self.team.resolve() / 'Bütçe.md', profile._fronts)
+
+    def test_the_latest_activity_compares_trello_times_note_times_and_chat_days(self):
+        # Trello's time is UTC, a note's is local without a zone, a chat has its day alone (noon).
+        day = datetime.datetime(2026, 10, 20)
+        note = (day + datetime.timedelta(hours=11)).isoformat(timespec='seconds')
+        card = (day + datetime.timedelta(hours=13)).astimezone(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
+        times = dict(card=card, chat='2026-10-20', note=note)
+        self.assertEqual(sorted(times, key=lambda k: work.moment(times[k]), reverse=True), ['card', 'chat', 'note'])
+        self.assertEqual(work.moment(''), 0.0)

@@ -191,10 +191,15 @@ def items(ws, source_id, relative):
 
 def accept_all(ws, source_id, relative, today=None):
     """Accept every item that waits, except conflicts with a note and items marked To review
-    (probably withdrawn): those need the owner to choose."""
+    (probably withdrawn): those need the owner to choose. So does a statement that waits twice:
+    both copies share one id, and the owner tells them apart."""
     _, _, text, _ = _open(ws, source_id, relative)
-    plain = [it['id'] for it in parse(text)['items'] if it['decision'] is None and it['section'] not in ('conflict', 'review')]
-    result = dict(waiting=sum(1 for it in parse(text)['items'] if it['decision'] is None), done=False, logged=None)
+    waiting = [it for it in parse(text)['items'] if it['decision'] is None]
+    copies = {}
+    for it in waiting:
+        copies[it['id']] = copies.get(it['id'], 0) + 1
+    plain = [it['id'] for it in waiting if it['section'] not in ('conflict', 'review') and copies[it['id']] == 1]
+    result = dict(waiting=len(waiting), done=False, logged=None)
     for item in plain:
         result = decide(ws, source_id, relative, item, 'accept', today=today)
     return dict(accepted=len(plain), waiting=result['waiting'], done=result['done'], logged=result.get('logged'))
@@ -248,7 +253,10 @@ def decide(ws, source_id, relative, item, action, text=None, today=None):
     if front.get('lock') is True:
         raise CarryError('note_locked')
     parsed = parse(body)
-    found = next((it for it in parsed['items'] if it['id'] == item), None)
+    # An id comes from the statement, so a statement found twice has one id: the copy that
+    # still waits is the one decided, and the other can be decided after it.
+    same = [it for it in parsed['items'] if it['id'] == item]
+    found = next((it for it in same if it['decision'] is None), same[0] if same else None)
     if found is None:
         raise CarryError('item_not_found')
     if found['decision'] == 'folded':

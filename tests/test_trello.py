@@ -317,6 +317,7 @@ class LoginTest(unittest.TestCase):
         port = int(self.login.host.split(':')[1])
         self.call('POST', self.login.path + '/token', dict(error='denied'))
         self.assertTrue(self.closed(self.login))
+        self.login.cancel()  # as the app does before Try again: it waits until [::1] is free too
         again = self.start(port)
         self.assertEqual(self.call('GET', again.path, login=again)[0], 200)
         again.cancel()
@@ -328,6 +329,25 @@ class LoginTest(unittest.TestCase):
         with self.assertRaises(CarryError) as caught:
             trello.Login(self.state, 'k' * 32, port=port)
         self.assertEqual(str(caught.exception), 'trello_port_busy')
+
+    def test_a_port_busy_on_ipv6_loopback_is_named_too(self):
+        import socket
+        try:
+            other = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+            other.bind(('::1', 0))
+        except OSError:
+            self.skipTest('no IPv6 loopback')
+        self.addCleanup(other.close)
+        other.listen()
+        port = other.getsockname()[1]
+        # The browser may try [::1] first: the answer would reach the other app, so Carry does not start.
+        with self.assertRaises(CarryError) as caught:
+            trello.Login(self.state, 'k' * 32, port=port)
+        self.assertEqual(str(caught.exception), 'trello_port_busy')
+        # The IPv4 side it had taken is free again.
+        free = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.addCleanup(free.close)
+        free.bind(('127.0.0.1', port))
 
 
 class DoneListTest(unittest.TestCase):
@@ -355,6 +375,24 @@ class KeychainTest(unittest.TestCase):
                 _support.KEYCHAIN['write']('token', 'secret-token')
         self.assertEqual(str(caught.exception), 'trello_keychain_failed')
         self.assertIsNone(caught.exception.__cause__)
+        self.assertNotIn('secret-token', repr(caught.exception))
+
+    def test_windows_keeps_the_permission_in_the_credential_manager(self):
+        from carry import wincred
+        store = {}
+        with patch.object(trello.sys, 'platform', 'win32'), \
+                patch.object(wincred, 'write', side_effect=lambda target, user, secret: store.__setitem__(target, secret)), \
+                patch.object(wincred, 'read', side_effect=lambda target: store.get(target)), \
+                patch.object(wincred, 'delete', side_effect=lambda target: store.pop(target, None)):
+            _support.KEYCHAIN['write']('token', 'secret-token')
+            self.assertEqual(store, {'carry-trello:token': 'secret-token'})
+            self.assertEqual(_support.KEYCHAIN['read']('token'), 'secret-token')
+            _support.KEYCHAIN['delete']('token')
+            self.assertIsNone(_support.KEYCHAIN['read']('token'))
+            with patch.object(wincred, 'write', side_effect=OSError('denied: secret-token')):
+                with self.assertRaises(CarryError) as caught:
+                    _support.KEYCHAIN['write']('token', 'secret-token')
+        self.assertEqual(str(caught.exception), 'trello_keychain_failed')
         self.assertNotIn('secret-token', repr(caught.exception))
 
 

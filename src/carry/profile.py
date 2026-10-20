@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 import re
 
-from . import okf, team, trello
+from . import team, trello
 from .errors import CarryError
 from .paths import walk_markdown
 from .persistence import atomic_text
@@ -22,6 +22,7 @@ EMAIL_RE = re.compile(r'^[^@\s]+@([a-z0-9-]+(\.[a-z0-9-]+)+)$')
 FOLD = str.maketrans('İIıŞşĞğÜüÖöÇç', 'iiissgguuoocc')
 # Template placeholders and the team itself are no one's name.
 NOT_PEOPLE = {'team', 'ekip', 'name', 'tbd', 'todo', 'owner', 'yok', '-'}
+_fronts = {}  # path: ((mtime, size), frontmatter) of the team notes read so far
 
 
 def fold(name):
@@ -48,7 +49,9 @@ def owned_by(value, name):
 
 
 def team_notes(workspace):
-    """(source, relative path, path, frontmatter) of every note in the team sources."""
+    """(source, relative path, path, frontmatter) of every note in the team sources. Home and the
+    sign-in ask on every request, and the app's bridge lives as long as the app, so a note is read
+    again only once it changed (`_fronts`). The frontmatter is shared: callers never change it."""
     from .vaultview import _meta
     for source in workspace.sources:
         if source.scope != 'team':
@@ -56,8 +59,21 @@ def team_notes(workspace):
         root = Path(source.root).expanduser()
         if not root.is_dir():
             continue
+        seen = set()
         for relative, path in walk_markdown(root, extensions=tuple(source.extensions), max_bytes=float('inf')):
-            yield source, relative.replace('\\', '/'), path, _meta(path)
+            try:
+                info = path.stat()
+            except OSError:
+                continue
+            stamp, cached = (info.st_mtime_ns, info.st_size), _fronts.get(path)
+            if not cached or cached[0] != stamp:
+                cached = _fronts[path] = (stamp, _meta(path))
+            seen.add(path)
+            yield source, relative.replace('\\', '/'), path, cached[1]
+        # A note gone from the folder leaves the cache too.
+        resolved = root.resolve()
+        for gone in [p for p in _fronts if p not in seen and resolved in p.parents]:
+            del _fronts[gone]
 
 
 def names(workspace):
