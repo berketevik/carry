@@ -34,6 +34,8 @@ class ProfileTest(WorkspaceCase):
             self.base / 'state2', sources=[SourceConfig('corpus', self.corpus), SourceConfig('team', self.team, scope='team')],
             embedding=HASHING, retrieval=RetrievalConfig(top_k=6, auto_refresh=False))
         self.state = self.workspace.state_dir
+        login = patch('carry.setup_wizard.getpass.getuser', return_value='ismail')  # never this Mac's login
+        login.start(); self.addCleanup(login.stop)
 
     def team_json(self, payload):
         (self.team / '.carry').mkdir(exist_ok=True)
@@ -56,12 +58,14 @@ class ProfileTest(WorkspaceCase):
         self.assertTrue(profile.owned_by('İsmail, Sude', 'ismail'))
         self.assertFalse(profile.owned_by('team', 'İsmail'))
 
-    def test_signing_in_keeps_the_mail_here_and_sets_a_short_owner_id(self):
-        view = profile.save(self.workspace, ' Ismaily@Ornek.com.tr ', 'İsmail')
+    def test_signing_in_keeps_the_mail_here_and_names_the_owner_as_setup_does(self):
+        # The owner id is the Mac's login name, as setup gives it (two Denizes stay two people), never the mail.
+        with patch('carry.setup_wizard.getpass.getuser', return_value='İsmail.Y'):
+            view = profile.save(self.workspace, ' Ismaily@Ornek.com.tr ', 'İsmail')
         self.assertEqual((view['profile']['email'], view['profile']['name']), ('ismaily@ornek.com.tr', 'İsmail'))
         saved = json.loads((self.state / profile.PROFILE).read_text(encoding='utf-8'))
         self.assertEqual(saved['email'], 'ismaily@ornek.com.tr')
-        self.assertEqual(okf.owner(self.state), 'human:ismail')
+        self.assertEqual(okf.owner(self.state), 'human:ismail.y')
         # An owner id already chosen is never replaced, and the mail never becomes one.
         okf.set_owner(self.state, 'isa')
         profile.save(self.workspace, 'deniz.kaya@ornek.com.tr', 'Deniz Kaya')

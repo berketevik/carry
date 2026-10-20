@@ -123,11 +123,10 @@ def save(workspace, email, name):
         raise CarryError('profile_email_domain')
     created = (load(workspace.state_dir) or {}).get('created') or datetime.date.today().isoformat()
     atomic_text(workspace.state_dir / PROFILE, json.dumps(dict(email=email, name=name, created=created), ensure_ascii=False) + '\n')
-    # The owner id goes into notes: a short form of the name, set once, never the mail.
-    if okf.owner(workspace.state_dir) == okf.DEFAULT_OWNER:
-        short = re.sub(r'[^a-z0-9._-]', '', fold(name).split()[0])
-        if short:
-            okf.set_owner(workspace.state_dir, short)
+    # The owner id goes into notes: on a Mac set up before setup named it, the login name as
+    # setup gives it, set once; never the mail.
+    from .setup_wizard import _default_owner
+    _default_owner(workspace)
     return view(workspace)
 
 
